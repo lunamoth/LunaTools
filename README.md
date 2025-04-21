@@ -14,7 +14,7 @@
 ## 설치 방법
 
  1. LunaTools 폴더 만듦
- 2. 깃허브 https://github.com/lunamoth/LunaTools 에서 background.js, content_script.js, manifest.json 파일을 다운로드해서 복사합니다. https://github.com/lunamoth/LunaTools/releases/ 에서 릴리즈 버전 다운로드 받아서 압축을 해제해도 됩니다
+ 2. https://github.com/lunamoth/LunaTools/ 에서 릴리즈 버전 다운로드 받아서 압축을 해제합니다
  3. 아이콘은 없습니다
  4. LunaTools 폴더를 구글 크롬 확장 프로그램 설정으로 드래그앤드롭 합니다.
  5. 끝
