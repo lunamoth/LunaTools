@@ -545,6 +545,126 @@
       // console.log("LunaTools KB Nav: Skipping initialization in non-top frame.");
   }
 
-  console.log("LunaTools: Content script fully initialized (Gestures & Keyboard Nav).");
+  // =======================================================================
+  // === LunaTools: PICTURE-IN-PICTURE (PiP) LOGIC (from User Script)    ===
+  // =======================================================================
+  console.log("LunaTools PiP: Helper (Ctrl+Shift+P, 강제 활성화 시도) 스크립트 로드됨.");
+
+  // PiP 토글 함수
+  async function togglePictureInPicture() {
+      console.log("LunaTools PiP: Ctrl+Shift+P 감지됨. PiP 토글 시도...");
+
+      // 현재 PiP 모드인 요소가 있는지 확인
+      const currentPipElement = document.pictureInPictureElement;
+
+      // 페이지 내의 모든 비디오 요소 찾기
+      const videos = Array.from(document.querySelectorAll('video'));
+
+      // 재생 중이고, 화면에 보이며, 소리가 꺼져있지 않은 비디오 필터링 (우선순위)
+      let potentialVideos = videos.filter(video =>
+          !video.paused && // 재생 중
+          video.readyState > 2 && // 재생 준비 완료 (데이터 충분)
+          video.offsetHeight > 0 && // 화면에 보임 (높이 존재)
+          video.offsetWidth > 0 && // 화면에 보임 (너비 존재)
+          !video.muted // 소리 켜짐 (광고 등이 아닐 확률 높음)
+      );
+
+      // 위 조건에 맞는 비디오가 없다면, 재생 중이고 화면에 보이는 비디오로 재시도
+      if (potentialVideos.length === 0) {
+          console.log("LunaTools PiP: 소리 켜진 재생 중인 비디오 없음. 보이는 재생 중 비디오 검색...");
+          potentialVideos = videos.filter(video =>
+              !video.paused &&
+              video.readyState > 2 &&
+              video.offsetHeight > 0 &&
+              video.offsetWidth > 0
+          );
+      }
+
+      // 그래도 없다면, 화면에 보이는 가장 큰 비디오 시도 (일시정지 상태일 수도 있음)
+       if (potentialVideos.length === 0) {
+           console.log("LunaTools PiP: 재생 중인 비디오 없음. 보이는 가장 큰 비디오 검색...");
+           potentialVideos = videos.filter(video => video.offsetHeight > 0 && video.offsetWidth > 0)
+                                   .sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight));
+       }
+
+
+      if (potentialVideos.length === 0 && !currentPipElement) {
+          console.log("LunaTools PiP: PiP를 실행할 비디오를 찾을 수 없습니다.");
+          // alert("PiP를 실행할 비디오를 찾을 수 없습니다. 비디오가 재생 중인지 확인해주세요."); // 사용자 요청에 따라 제거 가능
+          return;
+      }
+
+      // 대상 비디오 선정 (가장 크기가 큰 비디오 우선)
+      let targetVideo = potentialVideos.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight))[0];
+
+      try {
+          if (currentPipElement) {
+              // 현재 PiP 모드 실행 중
+              console.log("LunaTools PiP: 이미 PiP 모드 실행 중. 종료 시도:", currentPipElement);
+              await document.exitPictureInPicture();
+              console.log("LunaTools PiP: PiP 모드 종료됨.");
+          } else if (targetVideo) {
+               // PiP 모드 시작
+
+               // PiP가 비활성화 되어 있다면 강제로 disablePictureInPicture 속성을 false로 변경 시도
+               if (targetVideo.disablePictureInPicture) {
+                   console.warn(`LunaTools PiP: 선택된 비디오(src: ${targetVideo.currentSrc || 'N/A'})에서 PiP가 비활성화되어 있었으나, 강제 활성화를 시도합니다.`);
+                   try {
+                       // 이 속성은 일반적으로 getter만 있고 setter가 없을 수 있습니다.
+                       // 직접 할당하는 것이 효과가 없을 수 있지만, 시도는 해봅니다.
+                       // 보다 확실한 방법은 Object.defineProperty를 사용하는 것이지만,
+                       // 이는 웹페이지의 원래 JavaScript와 충돌할 가능성이 더 높습니다.
+                       // 여기서는 간단하게 직접 할당을 시도합니다.
+                       targetVideo.disablePictureInPicture = false;
+                       console.log("LunaTools PiP: disablePictureInPicture 속성을 false로 변경 시도했습니다.");
+                   } catch (e) {
+                       console.error("LunaTools PiP: disablePictureInPicture 속성 변경 중 오류 발생 (예상 가능):", e.message);
+                       // 속성 변경이 실패하더라도 PiP 요청은 계속 진행합니다.
+                   }
+               }
+
+               console.log("LunaTools PiP: PiP 모드 시작 시도:", targetVideo);
+               await targetVideo.requestPictureInPicture();
+               console.log("LunaTools PiP: PiP 모드 시작됨.");
+
+               // PiP 창이 닫힐 때 콘솔 로그 (선택사항)
+               targetVideo.addEventListener('leavepictureinpicture', () => {
+                  console.log('LunaTools PiP: PiP 모드가 사용자에 의해 닫혔습니다.');
+               }, { once: true });
+
+          } else {
+               console.log("LunaTools PiP: PiP를 시작할 대상 비디오를 확정할 수 없습니다.");
+          }
+      } catch (error) {
+          console.error("LunaTools PiP: PiP 작업 중 오류 발생:", error);
+          if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+              alert(`PiP 실행이 차단되었습니다. 웹사이트 또는 브라우저 설정에 의해 PiP가 허용되지 않을 수 있습니다.\n오류: ${error.message}`);
+          } else if (error.name === 'NotFoundError') {
+               alert(`PiP를 실행할 비디오를 찾을 수 없거나, 비디오가 PiP를 지원하지 않는 상태입니다.\n오류: ${error.message}`);
+          }
+          else {
+              alert(`PiP 작업 중 오류가 발생했습니다: ${error.message}`);
+          }
+      }
+  }
+
+  // 키보드 이벤트 리스너 추가
+  document.addEventListener('keydown', function(event) {
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p') {
+          // Check if the event target is an input, textarea, or contenteditable element
+          const target = event.target;
+          if (target && (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+              // console.log("LunaTools PiP: Ctrl+Shift+P ignored in input field.");
+              return; // Don't trigger PiP if in an input field
+          }
+          event.preventDefault();
+          togglePictureInPicture();
+      }
+  });
+
+  console.log("LunaTools: PiP logic initialized.");
+
+
+  console.log("LunaTools: Content script fully initialized (Gestures, Keyboard Nav & PiP).");
 
 })(); // End of the main IIFE
