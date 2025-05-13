@@ -6,7 +6,6 @@
 // --- Constants ---
 const NEW_TAB_URL = "chrome://newtab/";
 const PERFORM_GESTURE_ACTION = 'perform-gesture';
-const LOG_PREFIX = "LunaTools:";
 
 // --- Utility Functions ---
 function isTabAccessError(error) {
@@ -30,7 +29,6 @@ function isWindowAccessError(error) {
  * @param {number} tabId - The ID of the tab where the gesture originated.
  */
 async function handleGestureAction(gesture, tabId) {
-  console.log(`${LOG_PREFIX} Handling gesture '${gesture}' for tab ${tabId}`);
   const activeTabOptions = { active: true };
 
   try {
@@ -53,13 +51,12 @@ async function handleGestureAction(gesture, tabId) {
         await chrome.tabs.goBack(tabId);
         break;
       default:
-        console.warn(`${LOG_PREFIX} Unknown gesture received: ${gesture}`);
+        // Unknown gesture received
     }
   } catch (error) {
     if (!isTabAccessError(error)) {
-      console.warn(`${LOG_PREFIX} Error performing gesture action '${gesture}' on tab ${tabId}:`, error.message);
+      console.error(`LunaTools: Error performing gesture action '${gesture}' on tab ${tabId}:`, error.message);
     }
-    // Common errors like 'cannot go back/forward' or 'tab closed' are suppressed by isTabAccessError.
   }
 }
 
@@ -69,10 +66,8 @@ class TabManager {
     this.urlCache = new Map(); // Map<tabId, {url: URL, windowId: number}>
     this.reverseUrlLookup = new Map(); // Map<urlString, Array<{tabId: number, windowId: number}>>
 
-    // Bind methods used as event handlers
     this.handleTabRemoved = this.handleTabRemoved.bind(this);
     this.handleTabUpdate = this.handleTabUpdate.bind(this);
-    // No need to bind compareUrls if only used like this.compareUrls
   }
 
   _isTabNotFoundError(error) {
@@ -80,41 +75,36 @@ class TabManager {
   }
 
   async sortTabsInCurrentWindow() {
-    console.log(`${LOG_PREFIX} Sorting tabs in current window...`);
     try {
       const currentWindow = await chrome.windows.getCurrent({ populate: false, windowTypes: ['normal'] });
       if (!currentWindow?.id) {
-        console.error(`${LOG_PREFIX} Could not get current window ID.`);
+        console.error("LunaTools: Could not get current window ID.");
         return;
       }
       await this._sortAndMoveTabsInWindow(currentWindow.id);
     } catch (error) {
-      console.error(`${LOG_PREFIX} Error sorting tabs:`, error);
+      console.error("LunaTools: Error sorting tabs:", error);
     }
   }
 
   async _sortAndMoveTabsInWindow(windowId) {
     try {
-      console.log(`${LOG_PREFIX} Sorting tabs in window ${windowId}...`);
       const tabsInWindow = await chrome.tabs.query({ windowId });
       const tabsWithParsedUrls = this._getTabsWithParsedUrls(tabsInWindow);
       const sortableTabs = tabsWithParsedUrls.filter(tab => tab.parsedUrl);
 
       const originalIndices = new Map(tabsInWindow.map(tab => [tab.id, tab.index]));
-      sortableTabs.sort(this._compareUrls.bind(this)); // Bind if necessary, or use arrow function
+      sortableTabs.sort(this._compareUrls.bind(this));
 
       const moveOperations = this._createMoveOperations(sortableTabs, originalIndices, windowId);
       if (moveOperations.length > 0) {
         await Promise.all(moveOperations);
-        console.log(`${LOG_PREFIX} Moved ${moveOperations.length} tabs for sorting in window ${windowId}.`);
-      } else {
-        console.log(`${LOG_PREFIX} Tabs in window ${windowId} are already sorted or no sortable tabs found.`);
       }
     } catch (error) {
       if (isWindowAccessError(error)) {
-        console.warn(`${LOG_PREFIX} Window ${windowId} not found during sorting, likely closed.`);
+        // Window not found during sorting, likely closed.
       } else {
-        console.error(`${LOG_PREFIX} Error sorting tabs in window ${windowId}:`, error);
+        console.error(`LunaTools: Error sorting tabs in window ${windowId}:`, error);
       }
     }
   }
@@ -126,9 +116,9 @@ class TabManager {
         const movePromise = chrome.tabs.move(tab.id, { index: desiredIndex })
           .catch(error => {
             if (this._isTabNotFoundError(error)) {
-              console.warn(`${LOG_PREFIX} Tab ${tab.id} likely closed before moving (in window ${windowId}), skipping.`);
+              // Tab likely closed before moving, skipping.
             } else {
-              console.error(`${LOG_PREFIX} Error moving tab ${tab.id} in window ${windowId}:`, error);
+              console.error(`LunaTools: Error moving tab ${tab.id} in window ${windowId}:`, error);
             }
           });
         movePromises.push(movePromise);
@@ -138,7 +128,6 @@ class TabManager {
   }
 
   _getTabUrl(tab) {
-    // Prefer loaded URL if it's a standard web page, otherwise fallback to pendingUrl, then original URL.
     if (tab?.url && tab.url !== 'about:blank' && !tab.url.startsWith('chrome://') && (tab.url.startsWith('http:') || tab.url.startsWith('https:'))) {
       return tab.url;
     }
@@ -159,11 +148,10 @@ class TabManager {
     } catch (e) {
       const oldCachedInfo = this.urlCache.get(tab.id);
       if (oldCachedInfo) this._removeUrlFromCache(tab.id, oldCachedInfo.url);
-      console.warn(`${LOG_PREFIX} Invalid URL for duplicate check on tab ${tab.id}: ${tabUrlString}`);
+      // console.warn(`${LOG_PREFIX} Invalid URL for duplicate check on tab ${tab.id}: ${tabUrlString}`); // Kept as example if you need specific warnings
       return;
     }
 
-    // Ensure the URL is cached before checking for duplicates
     const cachedInfo = this.urlCache.get(tab.id);
     if (!cachedInfo || cachedInfo.url.href !== parsedUrl.href || cachedInfo.windowId !== tab.windowId) {
       this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
@@ -177,11 +165,10 @@ class TabManager {
       const duplicateTabIdsInWindow = await this._findDuplicateTabIdsInSameWindow(currentTab, parsedUrl);
 
       if (duplicateTabIdsInWindow.length > 0) {
-        console.log(`${LOG_PREFIX} Found ${duplicateTabIdsInWindow.length} duplicate(s) for tab ${currentTab.id} (${parsedUrl.href}) in window ${currentTab.windowId}`);
         await this._handleDuplicateTab(currentTab, duplicateTabIdsInWindow, parsedUrl);
       }
     } catch (error) {
-      console.error(`${LOG_PREFIX} Error checking/handling duplicates for tab ${currentTab.id}:`, error);
+      console.error(`LunaTools: Error checking/handling duplicates for tab ${currentTab.id}:`, error);
     }
   }
 
@@ -194,13 +181,13 @@ class TabManager {
       if (tabId === currentTab.id || windowId !== currentTab.windowId) continue;
 
       try {
-        await chrome.tabs.get(tabId); // Verify tab still exists
+        await chrome.tabs.get(tabId);
         duplicateTabIds.push(tabId);
       } catch (error) {
         if (this._isTabNotFoundError(error)) {
-          this._removeUrlFromCache(tabId, parsedUrl); // Clean up cache for non-existent tab
+          this._removeUrlFromCache(tabId, parsedUrl);
         } else {
-          console.error(`${LOG_PREFIX} Error verifying potential duplicate tab ${tabId}:`, error);
+          console.error(`LunaTools: Error verifying potential duplicate tab ${tabId}:`, error);
         }
       }
     }
@@ -209,72 +196,62 @@ class TabManager {
 
   async _handleDuplicateTab(newlyOpenedTab, existingDuplicateIds, parsedUrl) {
     const tabToCloseId = newlyOpenedTab.id;
-    const tabToFocusId = existingDuplicateIds[0]; // Focus the first found duplicate
+    const tabToFocusId = existingDuplicateIds[0];
 
     try {
-      await chrome.tabs.get(tabToCloseId); // Check if tab to close still exists
+      await chrome.tabs.get(tabToCloseId);
     } catch (e) {
       if (this._isTabNotFoundError(e)) {
-        console.warn(`${LOG_PREFIX} Tab ${tabToCloseId} (duplicate) was already closed.`);
         this._removeUrlFromCache(tabToCloseId, parsedUrl);
         return;
       }
-      throw e; // Rethrow other errors
+      throw e;
     }
     
-    // Safety: Ensure we don't close the last tab with this URL in the window (cache might lag)
     const tabsWithUrlInWindow = (this.reverseUrlLookup.get(parsedUrl.href) || []).filter(t => t.windowId === newlyOpenedTab.windowId);
     if (tabsWithUrlInWindow.length <= 1 && tabsWithUrlInWindow.some(t => t.tabId === tabToCloseId)) {
-        console.warn(`${LOG_PREFIX} Skipping duplicate removal for tab ${tabToCloseId}, seems it's the last one with URL ${parsedUrl.href} in window ${newlyOpenedTab.windowId}.`);
         return;
     }
 
     try {
-      await chrome.tabs.get(tabToFocusId); // Verify the target existing tab still exists
+      await chrome.tabs.get(tabToFocusId);
 
       if (newlyOpenedTab.active) {
         await chrome.tabs.update(tabToFocusId, { active: true }).catch(err => {
-          if (this._isTabNotFoundError(err)) console.warn(`${LOG_PREFIX} Failed to focus existing tab ${tabToFocusId} - likely closed.`);
-          else console.error(`${LOG_PREFIX} Error focusing existing tab ${tabToFocusId}:`, err);
+          if (this._isTabNotFoundError(err)) { /* Failed to focus existing tab - likely closed. */ }
+          else console.error(`LunaTools: Error focusing existing tab ${tabToFocusId}:`, err);
         });
       }
 
       await chrome.tabs.remove(tabToCloseId).catch(err => {
-        if (!this._isTabNotFoundError(err)) { // Don't log if already closed
-          console.error(`${LOG_PREFIX} Error removing duplicate tab ${tabToCloseId}:`, err);
+        if (!this._isTabNotFoundError(err)) {
+          console.error(`LunaTools: Error removing duplicate tab ${tabToCloseId}:`, err);
         }
       });
 
-      console.log(`${LOG_PREFIX} Closed duplicate tab ${tabToCloseId} and attempted to focus existing tab ${tabToFocusId}`);
       this._removeUrlFromCache(tabToCloseId, parsedUrl);
 
     } catch (error) {
-      if (this._isTabNotFoundError(error)) { // existingTabToFocusId was not found
-        console.warn(`${LOG_PREFIX} Existing duplicate tab ${tabToFocusId} not found when handling duplicate for tab ${tabToCloseId}. It was likely closed.`);
-        this._removeTabIdFromReverseLookup(tabToFocusId, parsedUrl.href); // Clean up its cache entry
-
-        // Since the 'existing' one is gone, remove the 'new' one if it still exists
+      if (this._isTabNotFoundError(error)) {
+        this._removeTabIdFromReverseLookup(tabToFocusId, parsedUrl.href);
         try {
           await chrome.tabs.remove(tabToCloseId);
-          console.log(`${LOG_PREFIX} Removed tab ${tabToCloseId} as its intended duplicate ${tabToFocusId} was already closed.`);
           this._removeUrlFromCache(tabToCloseId, parsedUrl);
         } catch (removeError) {
           if (!this._isTabNotFoundError(removeError)) {
-            console.error(`${LOG_PREFIX} Error removing tab ${tabToCloseId} after its duplicate was gone:`, removeError);
+            console.error(`LunaTools: Error removing tab ${tabToCloseId} after its duplicate was gone:`, removeError);
           }
         }
       } else {
-        console.error(`${LOG_PREFIX} Error handling duplicate tab ${tabToCloseId} (acting on existing tab ${tabToFocusId}):`, error);
+        console.error(`LunaTools: Error handling duplicate tab ${tabToCloseId} (acting on existing tab ${tabToFocusId}):`, error);
       }
     }
   }
 
   async mergeAllWindows() {
-    console.log(`${LOG_PREFIX} Merging all windows...`);
     try {
       const allWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
       if (allWindows.length <= 1) {
-        console.log(`${LOG_PREFIX} No other windows to merge or only one window exists.`);
         const singleWindow = allWindows.length === 1 ? allWindows[0] : await chrome.windows.getCurrent({ windowTypes: ['normal'] }).catch(() => null);
         if (singleWindow?.id) await this._sortAndMoveTabsInWindow(singleWindow.id);
         return;
@@ -282,12 +259,11 @@ class TabManager {
 
       const targetWindow = await chrome.windows.getCurrent({ windowTypes: ['normal'] });
       if (!targetWindow?.id) {
-        console.error(`${LOG_PREFIX} Could not get current window to merge into.`);
+        console.error("LunaTools: Could not get current window to merge into.");
         return;
       }
       const targetWindowId = targetWindow.id;
 
-      console.log(`${LOG_PREFIX} Moving tabs from other windows to window ${targetWindowId}...`);
       const tabsToMove = this._getNonPinnedTabsFromOtherWindows(allWindows, targetWindowId);
       
       await this._moveTabsToWindow(tabsToMove, targetWindowId);
@@ -298,50 +274,42 @@ class TabManager {
       await this._focusWindow(targetWindowId);
       await this._sortAndMoveTabsInWindow(targetWindowId);
 
-      console.log(`${LOG_PREFIX} Window merge and sort complete.`);
     } catch (error) {
-      console.error(`${LOG_PREFIX} Error merging windows:`, error);
+      console.error("LunaTools: Error merging windows:", error);
     }
   }
   
   async _moveTabsToWindow(tabs, targetWindowId) {
-    let movedCount = 0;
     const movePromises = [];
 
     for (const tab of tabs) {
         try {
-            await chrome.tabs.get(tab.id); // Check if tab still exists
+            await chrome.tabs.get(tab.id);
             movePromises.push(
                 chrome.tabs.move(tab.id, { windowId: targetWindowId, index: -1 })
-                    .then(() => { movedCount++; })
                     .catch(err => {
                         if (this._isTabNotFoundError(err)) {
-                            console.warn(`${LOG_PREFIX} Tab ${tab.id} closed before moving, skipping.`);
+                            // Tab closed before moving, skipping.
                         } else if (isWindowAccessError(err)) {
-                            console.warn(`${LOG_PREFIX} Target window ${targetWindowId} closed during merge? Skipping move for tab ${tab.id}.`);
+                            // Target window closed during merge? Skipping move for tab
                         } else {
-                            console.error(`${LOG_PREFIX} Error moving tab ${tab.id} to window ${targetWindowId}:`, err);
+                            console.error(`LunaTools: Error moving tab ${tab.id} to window ${targetWindowId}:`, err);
                         }
-                        // Ensure cache is cleaned up for unmovable tab if it was in cache
                         const cachedInfo = this.urlCache.get(tab.id);
                         if(cachedInfo) this._removeUrlFromCache(tab.id, cachedInfo.url);
                     })
             );
         } catch (getErr) {
              if (this._isTabNotFoundError(getErr)) {
-                 console.warn(`${LOG_PREFIX} Tab ${tab.id} to be moved was already closed, skipping.`);
                  const cachedInfo = this.urlCache.get(tab.id);
                  if(cachedInfo) this._removeUrlFromCache(tab.id, cachedInfo.url);
              } else {
-                  console.error(`${LOG_PREFIX} Error checking tab ${tab.id} before move:`, getErr);
+                  console.error(`LunaTools: Error checking tab ${tab.id} before move:`, getErr);
              }
         }
     }
     if (movePromises.length > 0) {
       await Promise.all(movePromises);
-      console.log(`${LOG_PREFIX} Attempted to move ${movePromises.length} tabs, successfully moved ${movedCount} to window ${targetWindowId}.`);
-    } else {
-       console.log(`${LOG_PREFIX} No non-pinned tabs found in other windows to move, or all encountered errors.`);
     }
   }
 
@@ -361,18 +329,16 @@ class TabManager {
 
     if (windowsToClose.length === 0) return;
 
-    console.log(`${LOG_PREFIX} Closing ${windowsToClose.length} other window(s)...`);
     const closePromises = windowsToClose.map(win =>
       chrome.windows.remove(win.id).catch(err => {
         if (isWindowAccessError(err)) {
-          console.warn(`${LOG_PREFIX} Window ${win.id} already closed.`);
+          // Window already closed.
         } else {
-          console.error(`${LOG_PREFIX} Error closing window ${win.id}:`, err);
+          console.error(`LunaTools: Error closing window ${win.id}:`, err);
         }
       })
     );
     await Promise.all(closePromises);
-    console.log(`${LOG_PREFIX} Finished closing other windows.`);
   }
 
   async _focusWindow(windowId) {
@@ -380,9 +346,9 @@ class TabManager {
       await chrome.windows.update(windowId, { focused: true });
     } catch (error) {
       if (isWindowAccessError(error)) {
-        console.warn(`${LOG_PREFIX} Window ${windowId} not found for focusing.`);
+        // Window not found for focusing.
       } else {
-        console.error(`${LOG_PREFIX} Error focusing window ${windowId}:`, error);
+        console.error(`LunaTools: Error focusing window ${windowId}:`, error);
       }
     }
   }
@@ -398,7 +364,6 @@ class TabManager {
 
     if (!isHttpUrl(newUrlString)) {
       if (oldCachedInfo) {
-        // console.log(`${LOG_PREFIX} Tab ${tab.id} navigated away from ${oldUrl.href} or to non-http URL, removing from cache.`);
         this._removeUrlFromCache(tab.id, oldUrl);
       }
       return;
@@ -408,7 +373,7 @@ class TabManager {
     try {
       newUrl = new URL(newUrlString);
     } catch (e) {
-      console.warn(`${LOG_PREFIX} Invalid URL during update for tab ${tab.id}: ${newUrlString}`, e);
+      // console.warn(`${LOG_PREFIX} Invalid URL during update for tab ${tab.id}: ${newUrlString}`, e);
       if (oldCachedInfo) this._removeUrlFromCache(tab.id, oldUrl);
       return;
     }
@@ -417,39 +382,31 @@ class TabManager {
     const windowChanged = oldCachedInfo && oldCachedInfo.windowId !== tab.windowId;
 
     if (urlChanged || windowChanged) {
-      // console.log(`${LOG_PREFIX} URL/WindowId changed for tab ${tab.id}: ${oldUrl?.href} (Win ${oldCachedInfo?.windowId}) -> ${newUrl.href} (Win ${tab.windowId})`);
       if (oldUrl) this._removeUrlFromCache(tab.id, oldUrl);
       this._addUrlToCache(tab.id, newUrl, tab.windowId);
       await this.checkForDuplicateAndFocusExisting(tab);
     } else if (tab.status === 'complete') {
-      // URL href didn't change, but page might have internally redirected or finished loading.
-      // Re-check for duplicates to be safe.
       await this.checkForDuplicateAndFocusExisting(tab);
     }
   }
 
   handleTabRemoved(tabId, removeInfo) {
     if (removeInfo?.isWindowClosing) {
-      // console.log(`${LOG_PREFIX} Window ${removeInfo.windowId} closing, removing its tabs from cache.`);
       this._removeWindowTabsFromCache(removeInfo.windowId);
       return;
     }
     const cachedInfo = this.urlCache.get(tabId);
     if (cachedInfo) {
-      // console.log(`${LOG_PREFIX} Tab ${tabId} removed, removing URL ${cachedInfo.url.href} from cache.`);
       this._removeUrlFromCache(tabId, cachedInfo.url);
     }
   }
 
   _removeWindowTabsFromCache(windowId) {
-    let removedCount = 0;
     for (const [tabId, cachedInfo] of this.urlCache.entries()) {
       if (cachedInfo.windowId === windowId) {
-        this._removeUrlFromCache(tabId, cachedInfo.url); // This also handles reverseUrlLookup
-        removedCount++;
+        this._removeUrlFromCache(tabId, cachedInfo.url);
       }
     }
-    // console.log(`${LOG_PREFIX} Removed ${removedCount} tabs associated with closed window ${windowId} from cache.`);
   }
 
   _getTabsWithParsedUrls(tabs) {
@@ -462,7 +419,7 @@ class TabManager {
         if (urlString && urlString !== NEW_TAB_URL && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
           try {
             parsedUrl = new URL(urlString);
-            this._addUrlToCache(tab.id, parsedUrl, tab.windowId); // Cache if parsed successfully
+            this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
           } catch (e) {
             // console.warn(`${LOG_PREFIX} Could not parse URL for tab ${tab.id} in _getTabsWithParsedUrls: ${urlString}`, e);
             parsedUrl = null;
@@ -478,7 +435,7 @@ class TabManager {
     const urlB = tabB.parsedUrl;
 
     if (!urlA && !urlB) return 0;
-    if (!urlA) return 1; // Invalid URLs (null parsedUrl) go last
+    if (!urlA) return 1;
     if (!urlB) return -1;
 
     const hostCompare = urlA.hostname.localeCompare(urlB.hostname);
@@ -509,19 +466,16 @@ class TabManager {
     if (existingEntryIndex === -1) {
       entries.push({ tabId, windowId });
     } else {
-      // Update windowId if it changed (e.g., tab moved between windows)
       if (entries[existingEntryIndex].windowId !== windowId) {
         entries[existingEntryIndex].windowId = windowId;
       }
     }
-    // console.log(`${LOG_PREFIX} Added/Updated tab ${tabId} (Win ${windowId}, URL ${urlKey}). Cache sizes: url=${this.urlCache.size}, reverse=${this.reverseUrlLookup.size}`);
   }
 
   _removeUrlFromCache(tabId, urlInstance) {
     if (!(urlInstance instanceof URL) || typeof tabId !== 'number') return;
     this.urlCache.delete(tabId);
     this._removeTabIdFromReverseLookup(tabId, urlInstance.href);
-    // console.log(`${LOG_PREFIX} Removed tab ${tabId} (${urlInstance.href}) from cache. Cache sizes: url=${this.urlCache.size}, reverse=${this.reverseUrlLookup.size}`);
   }
 
   _removeTabIdFromReverseLookup(tabId, urlKey) {
@@ -532,37 +486,30 @@ class TabManager {
 
     if (filteredEntries.length === 0) {
       this.reverseUrlLookup.delete(urlKey);
-      // console.log(`${LOG_PREFIX} URL ${urlKey} removed from reverse lookup as no more tabs point to it.`);
     } else if (filteredEntries.length < entries.length) {
       this.reverseUrlLookup.set(urlKey, filteredEntries);
-      // console.log(`${LOG_PREFIX} Removed tab ${tabId} from reverse lookup for URL ${urlKey}.`);
     }
   }
 
   async initializeCache() {
-    console.log(`${LOG_PREFIX} Initializing TabManager cache...`);
     this.urlCache.clear();
     this.reverseUrlLookup.clear();
     try {
       const allTabs = await chrome.tabs.query({ windowType: 'normal' });
-      console.log(`${LOG_PREFIX} Found ${allTabs.length} existing tabs to cache.`);
-      let cachedCount = 0;
       allTabs.forEach(tab => {
-        if (tab.id === undefined || tab.windowId === undefined) return; // Skip incomplete tab objects
+        if (tab.id === undefined || tab.windowId === undefined) return;
         const urlString = this._getTabUrl(tab);
         if (urlString && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
           try {
             const parsedUrl = new URL(urlString);
             this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
-            cachedCount++;
           } catch (e) {
-            console.warn(`${LOG_PREFIX} Could not parse initial URL for tab ${tab.id}: ${urlString}`, e);
+            // console.warn(`${LOG_PREFIX} Could not parse initial URL for tab ${tab.id}: ${urlString}`, e);
           }
         }
       });
-      console.log(`${LOG_PREFIX} Cache initialized. Cached ${cachedCount} tabs. urlCache size: ${this.urlCache.size}, reverseUrlLookup size: ${this.reverseUrlLookup.size}`);
     } catch (error) {
-      console.error(`${LOG_PREFIX} Error initializing TabManager cache:`, error);
+      console.error("LunaTools: Error initializing TabManager cache:", error);
     }
   }
 }
@@ -570,62 +517,53 @@ class TabManager {
 // --- Initialization and Event Listeners ---
 const tabManager = new TabManager();
 
-// Initialize cache on startup
 (async () => {
   await tabManager.initializeCache();
 })();
 
-// Command Listener (Sort Tabs)
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === "sort-tabs") {
     await tabManager.sortTabsInCurrentWindow();
   }
 });
 
-// Message Listener (Gestures from content script)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === PERFORM_GESTURE_ACTION && message.gesture && sender?.tab?.id != null) {
     handleGestureAction(message.gesture, sender.tab.id);
-    return true; // Indicate async handling
+    return true;
   }
-  return false; // Message not handled
+  return false;
 });
 
-// Action Listener (Merge Windows on icon click)
 chrome.action.onClicked.addListener(async () => {
-  console.log(`${LOG_PREFIX} Browser action clicked.`);
   await tabManager.mergeAllWindows();
 });
 
-// Tab Event Listeners
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.id === undefined || tab.windowId === undefined) return;
-  // Initial caching attempt for faster duplicate detection.
-  // URL might be pending, so handleTabUpdate will refine this.
   const urlString = tabManager._getTabUrl(tab);
   if (urlString && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
     try {
       const parsedUrl = new URL(urlString);
       tabManager._addUrlToCache(tab.id, parsedUrl, tab.windowId);
-    } catch (e) { /* Ignore invalid pending URLs, onUpdated will handle */ }
+    } catch (e) { /* Ignore */ }
   }
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  // Ensure we have a tab object with necessary properties
   let tabToProcess = tab;
   if (!tabToProcess || typeof tabToProcess.windowId === 'undefined' || typeof tabToProcess.id === 'undefined') {
-    if (changeInfo.status === 'complete' || changeInfo.url) { // Only fetch if there's a meaningful change
+    if (changeInfo.status === 'complete' || changeInfo.url) {
         try {
             tabToProcess = await chrome.tabs.get(tabId);
         } catch (error) {
             if (!tabManager._isTabNotFoundError(error)) {
-                console.warn(`${LOG_PREFIX} Error fetching full tab info for updated tab ${tabId}:`, error);
+                console.error(`LunaTools: Error fetching full tab info for updated tab ${tabId}:`, error);
             }
-            return; // Cannot process without tab info
+            return;
         }
     } else {
-        return; // Not enough info to process
+        return;
     }
   }
 
@@ -639,20 +577,16 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
 });
 
 chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
-  // console.log(`${LOG_PREFIX} Tab ${tabId} attached to window ${attachInfo.newWindowId}`);
   try {
     const tab = await chrome.tabs.get(tabId);
-    if (tab) await tabManager.handleTabUpdate(tab); // Treat as an update to correct windowId in cache
+    if (tab) await tabManager.handleTabUpdate(tab);
   } catch (error) {
     if (!tabManager._isTabNotFoundError(error)) {
-      console.warn(`${LOG_PREFIX} Error getting attached tab ${tabId} info:`, error);
+      console.error(`LunaTools: Error getting attached tab ${tabId} info:`, error);
     }
   }
 });
 
 chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
-  // console.log(`${LOG_PREFIX} Tab ${tabId} detached from window ${detachInfo.oldWindowId}`);
-  // No immediate action needed, onAttached to a new window or onRemoved will handle the final state and cache.
+  // No immediate action needed
 });
-
-console.log(`${LOG_PREFIX} Background script loaded and listeners attached.`);
