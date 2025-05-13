@@ -1,258 +1,205 @@
 (() => {
-  'use strict'; // Use strict mode for the entire script
+  'use strict';
+
+  const CS_LOG_PREFIX = "LunaTools CS:";
 
   // =======================================================================
-  // === LunaTools: MOUSE GESTURE LOGIC                                  ===
+  // === MOUSE GESTURE LOGIC                                             ===
   // =======================================================================
+  const Gestures = {
+    MIN_DRAG_DISTANCE_SQ: 100, // Min squared distance to consider it a drag (10px)
+    MIN_FINAL_DISTANCE_SQ: 625, // Min squared distance for gesture recognition (25px)
+    MESSAGE_ACTION: 'perform-gesture',
 
-  // Constants for Gestures
-  const GESTURE_MIN_DRAG_DISTANCE_SQ = 100; // Min squared distance to trigger gesture (10px)
-  const GESTURE_MIN_FINAL_DISTANCE_SQ = 625; // Min squared distance for gesture recognition (25px)
-  const GESTURE_PERFORM_ACTION = 'perform-gesture'; // Action name for sending message
+    isMouseDown: false,
+    startX: 0,
+    startY: 0,
+    didMove: false,
 
-  // State variables for Gestures
-  let gesture_isMouseDown = false;
-  let gesture_startX = 0;
-  let gesture_startY = 0;
-  let gesture_didMove = false;
-  const gesture_currentWindow = window; // Use specific variable name
+    resetState() {
+      this.isMouseDown = false;
+      this.didMove = false;
+    },
 
-  // Reset state function for Gestures
-  const gesture_resetState = () => {
-    gesture_isMouseDown = false;
-    gesture_didMove = false;
+    handleMouseDown(event) {
+      if (event.button === 2) { // Right-click
+        this.isMouseDown = true;
+        this.startX = event.clientX;
+        this.startY = event.clientY;
+        this.didMove = false;
+        // console.log(`${CS_LOG_PREFIX} Gesture: Mouse down`);
+      }
+    },
+
+    handleMouseMove(event) {
+      if (this.isMouseDown && !this.didMove) {
+        const deltaX = event.clientX - this.startX;
+        const deltaY = event.clientY - this.startY;
+        if ((deltaX ** 2 + deltaY ** 2) > this.MIN_DRAG_DISTANCE_SQ) {
+          this.didMove = true;
+          // console.log(`${CS_LOG_PREFIX} Gesture: Drag detected`);
+        }
+      }
+    },
+
+    handleMouseUp(event) {
+      if (this.isMouseDown && event.button !== 2) { // Gesture cancelled by other mouse button
+        // console.log(`${CS_LOG_PREFIX} Gesture: Cancelled (wrong button mouseup)`);
+        this.resetState();
+        return;
+      }
+      if (!this.isMouseDown || event.button !== 2) { // Not a right-click release we tracked
+        return;
+      }
+
+      const deltaX = event.clientX - this.startX;
+      const deltaY = event.clientY - this.startY;
+      const distanceSq = deltaX ** 2 + deltaY ** 2;
+      let gestureDirection = null;
+
+      if (distanceSq >= this.MIN_FINAL_DISTANCE_SQ) {
+        if (Math.abs(deltaY) > Math.abs(deltaX)) {
+          gestureDirection = deltaY < 0 ? 'U' : 'D'; // Up or Down
+        } else {
+          gestureDirection = deltaX > 0 ? 'R' : 'L'; // Right or Left
+        }
+        // console.log(`${CS_LOG_PREFIX} Gesture: Recognized: ${gestureDirection}`);
+      } else {
+        // console.log(`${CS_LOG_PREFIX} Gesture: Mouse up, but distance too short`);
+      }
+
+      if (gestureDirection) {
+        try {
+          chrome.runtime.sendMessage({ action: this.MESSAGE_ACTION, gesture: gestureDirection });
+        } catch (error) {
+          // This catch block might not be effective for "Extension context invalidated" errors
+          // if the script is detached from the page.
+          if (error.message?.includes("Extension context invalidated")) {
+            // console.warn(`${CS_LOG_PREFIX} Gesture: Extension context invalidated. Cannot send message.`);
+          } else {
+            console.warn(`${CS_LOG_PREFIX} Gesture: Failed to send message to background.`, error);
+          }
+        }
+      }
+      // State reset is handled by contextmenu listener to allow context menu on simple right click
+    },
+
+    handleContextMenu(event) {
+      if (this.didMove) { // Prevent context menu only if a gesture was performed
+        // console.log(`${CS_LOG_PREFIX} Gesture: Preventing context menu due to gesture.`);
+        event.preventDefault();
+      }
+      this.resetState(); // Always reset after a right-click interaction (gesture or simple click)
+    },
+
+    handleBlur() {
+      if (this.isMouseDown) { // Reset if window loses focus during a potential gesture
+        // console.log(`${CS_LOG_PREFIX} Gesture: Cancelled (window blur)`);
+        this.resetState();
+      }
+    },
+
+    init() {
+      const passiveOptions = { capture: true, passive: true };
+      const captureOptions = { capture: true }; // For mousedown, mouseup, contextmenu
+
+      window.addEventListener('mousedown', this.handleMouseDown.bind(this), captureOptions);
+      window.addEventListener('mousemove', this.handleMouseMove.bind(this), passiveOptions);
+      window.addEventListener('mouseup', this.handleMouseUp.bind(this), captureOptions);
+      window.addEventListener('contextmenu', this.handleContextMenu.bind(this), captureOptions);
+      window.addEventListener('blur', this.handleBlur.bind(this), passiveOptions);
+      console.log(`${CS_LOG_PREFIX} Mouse Gesture logic initialized.`);
+    }
   };
 
-  // Event listener options for Gestures
-  const gesture_passiveOptions = { capture: true, passive: true };
-  const gesture_captureOptions = { capture: true };
-
-  // --- Gesture Event Listeners ---
-
-  gesture_currentWindow.addEventListener('mousedown', (event) => {
-    if (event.button === 2) { // Right-click
-      gesture_isMouseDown = true;
-      gesture_startX = event.clientX;
-      gesture_startY = event.clientY;
-      gesture_didMove = false;
-      // console.log("LunaTools Gesture: Mouse down");
-    }
-  }, gesture_captureOptions);
-
-  gesture_currentWindow.addEventListener('mousemove', (event) => {
-    if (gesture_isMouseDown && !gesture_didMove) {
-      const deltaX = event.clientX - gesture_startX;
-      const deltaY = event.clientY - gesture_startY;
-      if ((deltaX ** 2 + deltaY ** 2) > GESTURE_MIN_DRAG_DISTANCE_SQ) {
-        gesture_didMove = true;
-        // console.log("LunaTools Gesture: Moved significantly");
-      }
-    }
-  }, gesture_passiveOptions);
-
-  gesture_currentWindow.addEventListener('mouseup', (event) => {
-    if (gesture_isMouseDown && event.button !== 2) { // Cancelled gesture
-      // console.log("LunaTools Gesture: Cancelled (wrong button mouseup)");
-      gesture_resetState();
-      return;
-    }
-    if (!gesture_isMouseDown || event.button !== 2) { // Not a right-click release we tracked
-      return;
-    }
-
-    const deltaX = event.clientX - gesture_startX;
-    const deltaY = event.clientY - gesture_startY;
-    const distanceSq = deltaX ** 2 + deltaY ** 2;
-    let gesture = null;
-
-    if (distanceSq >= GESTURE_MIN_FINAL_DISTANCE_SQ) {
-      if (Math.abs(deltaY) > Math.abs(deltaX)) {
-        gesture = deltaY < 0 ? 'U' : 'D';
-      } else {
-        gesture = deltaX > 0 ? 'R' : 'L';
-      }
-      // console.log(`LunaTools Gesture: Recognized gesture: ${gesture}`);
-    } else {
-       // console.log("LunaTools Gesture: Mouse up, but distance too short");
-    }
-
-    if (gesture) {
-      try {
-        // Send the recognized gesture to the background script
-        chrome.runtime.sendMessage({ action: GESTURE_PERFORM_ACTION, gesture: gesture });
-      } catch (error) {
-        console.warn('LunaTools Gesture: Failed to send message to background.', error);
-      }
-    }
-    // State reset is handled by contextmenu listener
-  }, gesture_captureOptions);
-
-  gesture_currentWindow.addEventListener('contextmenu', (event) => {
-    // Prevent context menu only if a gesture was performed
-    if (gesture_didMove) {
-      // console.log("LunaTools Gesture: Preventing context menu");
-      event.preventDefault();
-    }
-    // Always reset gesture state after a right-click interaction finishes
-    gesture_resetState();
-  }, gesture_captureOptions);
-
-  gesture_currentWindow.addEventListener('blur', () => {
-    // Reset gesture state if the window loses focus during a potential gesture
-    if (gesture_isMouseDown) {
-      // console.log("LunaTools Gesture: Cancelled (window blur)");
-      gesture_resetState();
-    }
-  }, gesture_passiveOptions);
-
-  console.log("LunaTools: Mouse Gesture logic initialized.");
+  Gestures.init();
 
   // =======================================================================
-  // === LunaTools: KEYBOARD NAVIGATION LOGIC (from User Script)         ===
+  // === KEYBOARD NAVIGATION LOGIC                                       ===
   // =======================================================================
-
-  // Only run Keyboard Navigation logic in the top-level frame
   if (window.self === window.top) {
+    const KB_NAV_LOG_PREFIX = `${CS_LOG_PREFIX} KB Nav:`;
 
-    /**
-     * Configuration object
-     */
     const KB_NAV_CONFIG = Object.freeze({
-      cache: {
-        MAX_SIZE: 100,
-        MAX_AGE_MS: 30 * 60 * 1000,
-      },
-      navigation: {
-        RESET_DELAY: 150,
-        MIN_PAGE: 1,
-        MAX_PAGE: 9999,
-        DEBOUNCE_DELAY: 100
-      },
+      cache: { MAX_SIZE: 100, MAX_AGE_MS: 30 * 60 * 1000 },
+      navigation: { RESET_DELAY_MS: 150, MIN_PAGE: 1, MAX_PAGE: 9999, DEBOUNCE_DELAY_MS: 100 },
       observer: {
         TARGET_SELECTORS: ['nav[aria-label="pagination"]', '.pagination', '#pagination'],
-        FALLBACK_TARGET_SELECTORS: ['main', '#main', '#content', 'article'],
-        DEBOUNCE_DELAY: 100,
-        MAX_OBSERVE_TIME: 30 * 1000,
-        REACTIVATION_INTERVAL: 5 * 60 * 1000,
-        REACTIVATION_THROTTLE: 1000
+        FALLBACK_TARGET_SELECTORS: ['main', '#main', '#content', 'article', 'body'], // Added body as ultimate fallback
+        DEBOUNCE_DELAY_MS: 100,
+        MAX_OBSERVE_TIME_MS: 30 * 1000,
+        REACTIVATION_INTERVAL_MS: 5 * 60 * 1000,
+        REACTIVATION_THROTTLE_MS: 1000
       },
       patterns: {
-        url: [
-          /[?&]page=(\d{1,4})/i,
-          /[?&]po=(\d{1,4})/i,
-          /[?&]p=(\d{1,4})/i,
-          /page\/(\d{1,4})/i,
-          /\/(\d{1,4})$/i // Matches /<number> at the end of the path (before query string or hash)
-        ],
-        ignore: [
-          /\/status\/\d{10,}/i,
-          /\/\d{10,}/i
-        ]
+        url: [/[?&]page=(\d{1,4})/i, /[?&]po=(\d{1,4})/i, /[?&]p=(\d{1,4})/i, /page\/(\d{1,4})/i, /\/(\d{1,4})(?:[/?#]|$)/i], // Ensure number is followed by end, ?, /, or #
+        ignore: [/\/status\/\d{10,}/i, /\/commit\/\w{7,40}/i, /\/\d{8,}/i] // Added common commit hash, ignore long numbers likely IDs
       }
     });
 
-    /**
-     * Utility functions
-     */
     const KB_NAV_Utils = {
-      debounce(func, wait) {
+      debounce(func, waitMs) {
         let timeoutId;
         const debounced = function (...args) {
           clearTimeout(timeoutId);
-          timeoutId = setTimeout(() => {
-            func.apply(this, args);
-          }, wait);
+          timeoutId = setTimeout(() => func.apply(this, args), waitMs);
         };
-        debounced.cancel = () => { clearTimeout(timeoutId); };
+        debounced.cancel = () => clearTimeout(timeoutId);
         return debounced;
       },
-      throttle(func, wait) {
-        let throttling = false;
-        let lastArgs = null;
-        let timeoutId = null;
+      throttle(func, waitMs) {
+        let throttling = false; let lastArgs = null; let timeoutId = null;
         function throttled(...args) {
-           lastArgs = args;
-           if (!throttling) {
-             throttling = true;
-             func.apply(this, lastArgs);
-             lastArgs = null;
-             timeoutId = setTimeout(() => {
-               throttling = false;
-               if (lastArgs) { throttled.apply(this, lastArgs); }
-             }, wait);
-           }
+          lastArgs = args;
+          if (!throttling) {
+            throttling = true; func.apply(this, lastArgs); lastArgs = null;
+            timeoutId = setTimeout(() => {
+              throttling = false; if (lastArgs) throttled.apply(this, lastArgs);
+            }, waitMs);
+          }
         }
-         throttled.cancel = () => {
-           clearTimeout(timeoutId);
-           throttling = false;
-           lastArgs = null;
-         };
-         return throttled;
+        throttled.cancel = () => { clearTimeout(timeoutId); throttling = false; lastArgs = null; };
+        return throttled;
       }
     };
 
-    /**
-     * Simple LRU Cache with Max Age.
-     */
     class KB_NAV_Cache {
-      constructor(maxSize) {
-        this.maxSize = maxSize;
-        this.cache = new Map();
-      }
+      constructor(maxSize) { this.maxSize = maxSize; this.cache = new Map(); }
       get(key) {
         if (!this.cache.has(key)) return undefined;
         const item = this.cache.get(key);
-        const now = Date.now();
-        if (now - item.timestamp > KB_NAV_CONFIG.cache.MAX_AGE_MS) {
-          this.cache.delete(key);
-          // console.log(`LunaTools KB Nav Cache: Item expired: ${key}`);
-          return undefined;
+        if (Date.now() - item.timestamp > KB_NAV_CONFIG.cache.MAX_AGE_MS) {
+          this.cache.delete(key); /* console.log(`${KB_NAV_LOG_PREFIX} Cache item expired: ${key}`); */ return undefined;
         }
-        const value = item.value;
-        this.cache.delete(key); // LRU: Remove
-        this.set(key, value);   // LRU: Re-insert at end
-        // console.log(`LunaTools KB Nav Cache: Item retrieved: ${key}`);
-        return value;
+        // LRU: Refresh timestamp by re-inserting
+        this.cache.delete(key);
+        this.cache.set(key, item);
+        return item.value;
       }
       set(key, value) {
         if (this.cache.has(key)) this.cache.delete(key);
         else if (this.cache.size >= this.maxSize) {
             const leastUsedKey = this.cache.keys().next().value;
             this.cache.delete(leastUsedKey);
-            // console.log(`LunaTools KB Nav Cache: Cache full. Removed: ${leastUsedKey}`);
+            /* console.log(`${KB_NAV_LOG_PREFIX} Cache full. Removed: ${leastUsedKey}`); */
         }
         this.cache.set(key, { value, timestamp: Date.now() });
-        // console.log(`LunaTools KB Nav Cache: Item set: ${key}`);
+        /* console.log(`${KB_NAV_LOG_PREFIX} Cache item set: ${key}`); */
       }
-      clear() {
-        this.cache.clear();
-        // console.log("LunaTools KB Nav Cache: Cleared.");
-      }
+      clear() { this.cache.clear(); /* console.log(`${KB_NAV_LOG_PREFIX} Cache cleared.`); */ }
       removeExpired() {
-        const now = Date.now();
-        let removedCount = 0;
+        const now = Date.now(); let removedCount = 0;
         for (const [key, item] of this.cache.entries()) {
-          if (now - item.timestamp > KB_NAV_CONFIG.cache.MAX_AGE_MS) {
-            this.cache.delete(key);
-            removedCount++;
-          }
+          if (now - item.timestamp > KB_NAV_CONFIG.cache.MAX_AGE_MS) { this.cache.delete(key); removedCount++; }
         }
-        // if (removedCount > 0) console.log(`LunaTools KB Nav Cache: Removed ${removedCount} expired items.`);
+        // if (removedCount > 0) console.log(`${KB_NAV_LOG_PREFIX} Cache: Removed ${removedCount} expired items.`);
       }
     }
 
-    /**
-     * Handles URL pattern matching and page number extraction.
-     */
     class KB_NAV_UrlManager {
       constructor() {
         this.urlCache = new KB_NAV_Cache(KB_NAV_CONFIG.cache.MAX_SIZE);
-        this.setupCacheCleanup();
-      }
-      setupCacheCleanup() {
-        this.cleanupInterval = setInterval(() => {
-          this.urlCache.removeExpired();
-        }, KB_NAV_CONFIG.observer.REACTIVATION_INTERVAL);
+        this.cleanupInterval = setInterval(() => this.urlCache.removeExpired(), KB_NAV_CONFIG.cache.MAX_AGE_MS / 2); // Clean more frequently
       }
       findPagePattern(url) {
         const cachedResult = this.urlCache.get(url);
@@ -262,409 +209,392 @@
           const match = pattern.exec(url);
           if (!match || !match[1]) continue;
           const pageNumber = parseInt(match[1], 10);
-          if (isNaN(pageNumber) || pageNumber < KB_NAV_CONFIG.navigation.MIN_PAGE || pageNumber > KB_NAV_CONFIG.navigation.MAX_PAGE) {
-              continue;
-          }
-          const patternInfo = { pattern: pattern, currentPage: pageNumber };
+          if (isNaN(pageNumber) || pageNumber < KB_NAV_CONFIG.navigation.MIN_PAGE || pageNumber > KB_NAV_CONFIG.navigation.MAX_PAGE) continue;
+          
+          const patternInfo = { pattern: pattern, currentPage: pageNumber, originalMatch: match[0] };
           this.urlCache.set(url, patternInfo);
           return patternInfo;
         }
-        this.urlCache.set(url, null); // Cache null if no match
-        return null;
+        this.urlCache.set(url, null); return null;
       }
       updatePageInUrl(url, patternInfo, direction) {
-        const { pattern, currentPage } = patternInfo;
-        const newPage = Math.max(
-          KB_NAV_CONFIG.navigation.MIN_PAGE,
-          Math.min(KB_NAV_CONFIG.navigation.MAX_PAGE, currentPage + direction)
-        );
-        if (newPage === currentPage) return url; // No change needed
-
-         // Ensure replacement happens correctly even if number is at the end ($)
-         // Use a function to reconstruct the replacement string carefully
-         return url.replace(pattern, (match, ...args) => {
-             // The captured number is usually the first argument after the full match
-             const capturedPageNumber = args[0];
-             // If the pattern matches more than just the number (e.g., 'page='),
-             // we need to replace only the number part within the match.
-             return match.replace(capturedPageNumber, newPage.toString());
-         });
+        const { pattern, currentPage, originalMatch } = patternInfo; // Use pattern only for reference if needed
+        const newPage = Math.max(KB_NAV_CONFIG.navigation.MIN_PAGE, Math.min(KB_NAV_CONFIG.navigation.MAX_PAGE, currentPage + direction));
+        if (newPage === currentPage) return url;
+        
+        // Replace the originally matched part containing the page number.
+        const newPageStringInMatch = originalMatch.replace(currentPage.toString(), newPage.toString());
+        return url.replace(originalMatch, newPageStringInMatch);
       }
-      shouldIgnore(url) {
-        return KB_NAV_CONFIG.patterns.ignore.some(pattern => pattern.test(url));
-      }
-      cleanup() {
-          clearInterval(this.cleanupInterval);
-          this.urlCache.clear();
-      }
+      shouldIgnore(url) { return KB_NAV_CONFIG.patterns.ignore.some(pattern => pattern.test(url)); }
+      cleanup() { clearInterval(this.cleanupInterval); this.urlCache.clear(); }
     }
 
-    /**
-     * Handles DOM operations: finding navigation links and observing DOM changes.
-     */
     class KB_NAV_DomMonitor {
       constructor() {
         this.cachedLinks = null;
         this.invalidateCacheDebounced = KB_NAV_Utils.debounce(() => {
-            this.cachedLinks = null;
-            // console.log("LunaTools KB Nav DOM: Invalidated cached nav links.");
-        }, KB_NAV_CONFIG.observer.DEBOUNCE_DELAY);
-        this.isObserving = false;
-        this.observer = null;
-        this.observerTarget = null;
-        this.eventListeners = [];
-        this.reactivationInterval = null;
-        this.stopLifecycleTimer = null;
+            this.cachedLinks = null; /* console.log(`${KB_NAV_LOG_PREFIX} DOM: Invalidated cached nav links.`); */
+        }, KB_NAV_CONFIG.observer.DEBOUNCE_DELAY_MS);
+        
+        this.isObserving = false; this.observer = null; this.observerTarget = null;
+        this.eventListeners = []; this.reactivationInterval = null; this.stopLifecycleTimer = null;
         this.throttledReactivate = null;
-        this.initializeObserver();
-        this.setupObserverLifecycle();
+        
+        this._initializeObserver();
       }
-      initializeObserver() {
-        this.findObserverTarget();
-        const observerCallback = (mutationsList) => {
-          if (!this.isObserving) return;
-          this.invalidateCacheDebounced();
-        };
-        this.observer = new MutationObserver(observerCallback);
-        this.startObserver(); // Start initially
+      _initializeObserver() {
+        this._findObserverTarget();
+        this.observer = new MutationObserver(() => { if (this.isObserving) this.invalidateCacheDebounced(); });
+        this.startObserving();
       }
-      findObserverTarget() {
-        for (const selector of KB_NAV_CONFIG.observer.TARGET_SELECTORS) {
+      _findObserverTarget() {
+        const selectors = [...KB_NAV_CONFIG.observer.TARGET_SELECTORS, ...KB_NAV_CONFIG.observer.FALLBACK_TARGET_SELECTORS];
+        for (const selector of selectors) {
           this.observerTarget = document.querySelector(selector);
-          if (this.observerTarget) return;
+          if (this.observerTarget) {
+            // console.log(`${KB_NAV_LOG_PREFIX} DOM: Observer target found:`, this.observerTarget);
+            return;
+          }
         }
-        for (const selector of KB_NAV_CONFIG.observer.FALLBACK_TARGET_SELECTORS) {
-          this.observerTarget = document.querySelector(selector);
-          if (this.observerTarget) return;
-        }
+        // Should always find 'body' as the ultimate fallback if nothing else.
         this.observerTarget = document.body;
+        // console.log(`${KB_NAV_LOG_PREFIX} DOM: Observer target defaulted to body.`);
       }
-      startObserver() {
+      startObserving() {
         if (this.observer && this.observerTarget && !this.isObserving) {
           try {
-              this.observer.observe(this.observerTarget, { childList: true, subtree: true });
-              this.isObserving = true;
-              // console.log("LunaTools KB Nav DOM: Observer started.");
-              if (this.stopLifecycleTimer) { this.stopLifecycleTimer(); this.stopLifecycleTimer = null; }
-              this.setupObserverLifecycle(); // Restart lifecycle timer
-          } catch (error) { console.error("LunaTools KB Nav: Error starting Observer:", error); this.isObserving = false; }
+            this.observer.observe(this.observerTarget, { childList: true, subtree: true });
+            this.isObserving = true; /* console.log(`${KB_NAV_LOG_PREFIX} DOM: Observer started on`, this.observerTarget); */
+            if (this.stopLifecycleTimer) { this.stopLifecycleTimer(); this.stopLifecycleTimer = null; }
+            this._setupObserverLifecycle();
+          } catch (error) { console.error(`${KB_NAV_LOG_PREFIX} Error starting Observer:`, error); this.isObserving = false; }
         }
       }
-      stopObserver() {
+      stopObserving() {
         if (this.observer && this.isObserving) {
-          if (this.invalidateCacheDebounced?.cancel) this.invalidateCacheDebounced.cancel();
-          this.observer.disconnect();
-          this.isObserving = false;
-          // console.log("LunaTools KB Nav DOM: Observer stopped.");
+          this.invalidateCacheDebounced?.cancel();
+          this.observer.disconnect(); this.isObserving = false;
+          /* console.log(`${KB_NAV_LOG_PREFIX} DOM: Observer stopped.`); */
           if (this.stopLifecycleTimer) { this.stopLifecycleTimer(); this.stopLifecycleTimer = null; }
         }
       }
-      setupObserverLifecycle() {
-         if (this.stopLifecycleTimer) this.stopLifecycleTimer();
-         const timerId = setTimeout(() => {
-           // console.log(`LunaTools KB Nav DOM: Stopping observer due to MAX_OBSERVE_TIME.`);
-           this.stopObserver();
-           this.setupReactivationEvents();
-         }, KB_NAV_CONFIG.observer.MAX_OBSERVE_TIME);
-         this.stopLifecycleTimer = () => clearTimeout(timerId);
+      _setupObserverLifecycle() {
+        if (this.stopLifecycleTimer) this.stopLifecycleTimer();
+        const timerId = setTimeout(() => {
+          /* console.log(`${KB_NAV_LOG_PREFIX} DOM: Stopping observer due to MAX_OBSERVE_TIME.`); */
+          this.stopObserving(); this._setupReactivationEvents();
+        }, KB_NAV_CONFIG.observer.MAX_OBSERVE_TIME_MS);
+        this.stopLifecycleTimer = () => clearTimeout(timerId);
       }
-      setupReactivationEvents() {
-         this.clearReactivationEvents();
-         const reactivateObserver = () => {
-           if (!this.isObserving) {
-             // console.log("LunaTools KB Nav DOM: Reactivating observer.");
-             this.startObserver();
-           }
-         };
-         this.throttledReactivate = KB_NAV_Utils.throttle(reactivateObserver, KB_NAV_CONFIG.observer.REACTIVATION_THROTTLE);
-         const events = ['scroll', 'click', 'keydown'];
-         this.eventListeners = [];
-         events.forEach(eventType => {
-           const listener = this.throttledReactivate;
-           window.addEventListener(eventType, listener, { passive: true });
-           this.eventListeners.push({ type: eventType, listener });
-         });
-         this.reactivationInterval = setInterval(() => {
-           if (!this.isObserving) { reactivateObserver(); }
-         }, KB_NAV_CONFIG.observer.REACTIVATION_INTERVAL);
+      _setupReactivationEvents() {
+        this._clearReactivationEvents();
+        const reactivateObserver = () => { if (!this.isObserving) { /* console.log(`${KB_NAV_LOG_PREFIX} DOM: Reactivating observer.`); */ this.startObserving(); } };
+        this.throttledReactivate = KB_NAV_Utils.throttle(reactivateObserver, KB_NAV_CONFIG.observer.REACTIVATION_THROTTLE_MS);
+        
+        const events = ['scroll', 'click', 'keydown'];
+        events.forEach(eventType => {
+          const listener = this.throttledReactivate;
+          window.addEventListener(eventType, listener, { passive: true, capture: true }); // Capture phase for broader reach
+          this.eventListeners.push({ type: eventType, listener });
+        });
+        this.reactivationInterval = setInterval(() => { if (!this.isObserving) reactivateObserver(); }, KB_NAV_CONFIG.observer.REACTIVATION_INTERVAL_MS);
       }
-      clearReactivationEvents() {
-          clearInterval(this.reactivationInterval); this.reactivationInterval = null;
-          if (this.throttledReactivate?.cancel) this.throttledReactivate.cancel();
-          this.eventListeners.forEach(({ type, listener }) => window.removeEventListener(type, listener));
-          this.eventListeners = [];
-      }
-      cleanup() {
-        // console.log("LunaTools KB Nav DOM: Cleaning up...");
-        this.stopObserver();
-        if (this.stopLifecycleTimer) { this.stopLifecycleTimer(); this.stopLifecycleTimer = null; }
-        if (this.invalidateCacheDebounced?.cancel) this.invalidateCacheDebounced.cancel();
-        this.clearReactivationEvents();
-        this.cachedLinks = null;
+      _clearReactivationEvents() {
+        clearInterval(this.reactivationInterval); this.reactivationInterval = null;
+        this.throttledReactivate?.cancel();
+        this.eventListeners.forEach(({ type, listener }) => window.removeEventListener(type, listener, {capture: true}));
+        this.eventListeners = [];
       }
       isFocusable(element) {
         if (!element) return false;
-        const tagName = element.tagName;
-        // Added SELECT and contentEditable check
-        return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || element.isContentEditable;
+        if (element.isContentEditable) return true;
+        const tagName = element.tagName.toUpperCase();
+        switch (tagName) {
+          case 'INPUT':
+            // Check for input types that are typically not for text entry where arrows are used for navigation
+            const type = element.type?.toLowerCase();
+            if (type === 'button' || type === 'submit' || type === 'reset' || type === 'image' || type === 'checkbox' || type === 'radio' || type === 'range' || type === 'color' || type === 'file') {
+                return false;
+            }
+            return !(element.disabled || element.readOnly);
+          case 'TEXTAREA': case 'SELECT':
+            return !(element.disabled || element.readOnly);
+          default: return false;
+        }
       }
       findNavigationLinks() {
         if (this.cachedLinks) return this.cachedLinks;
         const links = document.querySelectorAll('a[rel="next"], a[rel="prev"]');
-        let nextLink = null;
-        let prevLink = null;
+        let nextLink = null; let prevLink = null;
         for (const link of links) {
-          if (!link.href) continue; // Basic validity check
+          if (!link.href || link.href === window.location.href || !link.offsetParent) continue; // Ignore invalid, self, or hidden links
           if (link.rel === 'next' && !nextLink) nextLink = link;
           if (link.rel === 'prev' && !prevLink) prevLink = link;
           if (nextLink && prevLink) break;
         }
         this.cachedLinks = { nextLink, prevLink };
-        // console.log("LunaTools KB Nav DOM: Found nav links:", this.cachedLinks);
+        /* console.log(`${KB_NAV_LOG_PREFIX} DOM: Found nav links:`, this.cachedLinks); */
         return this.cachedLinks;
+      }
+      cleanup() {
+        /* console.log(`${KB_NAV_LOG_PREFIX} DOM: Cleaning up...`); */
+        this.stopObserving();
+        if (this.stopLifecycleTimer) { this.stopLifecycleTimer(); this.stopLifecycleTimer = null; }
+        this.invalidateCacheDebounced?.cancel();
+        this._clearReactivationEvents(); this.cachedLinks = null;
       }
     }
 
-    /**
-     * Main class orchestrating the keyboard navigation functionality.
-     */
     class KB_NAV_KeyboardNavigator {
       constructor() {
-        // Check if already initialized in this frame to prevent multiple instances
-        if (window.lunaToolsKbNavInitialized) {
-            console.log("LunaTools KB Nav: Already initialized in this frame.");
-            return;
-        }
-        window.lunaToolsKbNavInitialized = true; // Set flag
+        if (window.lunaToolsKbNavInitialized) { /* console.log(`${KB_NAV_LOG_PREFIX} Already initialized.`); */ return; }
+        window.lunaToolsKbNavInitialized = true;
 
         this.urlManager = new KB_NAV_UrlManager();
         this.domMonitor = new KB_NAV_DomMonitor();
         this.isNavigating = false;
-        this.processKeyDebounced = KB_NAV_Utils.debounce(this.processKey.bind(this), KB_NAV_CONFIG.navigation.DEBOUNCE_DELAY);
-        this.handleKeydown = this.handleKeydown.bind(this);
-        this.handlePageShow = this.handlePageShow.bind(this);
-        this.handlePageHide = this.handlePageHide.bind(this); // Added pagehide handler
-        this.initialize();
+        this.processKeyDebounced = KB_NAV_Utils.debounce(this._processKey.bind(this), KB_NAV_CONFIG.navigation.DEBOUNCE_DELAY_MS);
+        
+        this._boundHandleKeydown = this._handleKeydown.bind(this);
+        this._boundHandlePageShow = this._handlePageShow.bind(this);
+        this._boundHandlePageHide = this._handlePageHide.bind(this);
+        this._initialize();
       }
-      initialize() {
-        document.addEventListener('keydown', this.handleKeydown);
-        window.addEventListener('pageshow', this.handlePageShow);
-        window.addEventListener('pagehide', this.handlePageHide); // Listen for pagehide
-        console.log("LunaTools KB Nav: Initialized.");
+      _initialize() {
+        document.addEventListener('keydown', this._boundHandleKeydown);
+        window.addEventListener('pageshow', this._boundHandlePageShow);
+        window.addEventListener('pagehide', this._boundHandlePageHide);
+        console.log(`${KB_NAV_LOG_PREFIX} Initialized.`);
       }
-      handlePageShow(event) {
-        if (event.persisted) {
-          // console.log("LunaTools KB Nav: Page restored from bfcache. Resetting.");
+      _handlePageShow(event) {
+        if (event.persisted) { // Page restored from bfcache
+          /* console.log(`${KB_NAV_LOG_PREFIX} Page restored from bfcache. Resetting state.`); */
           this.isNavigating = false;
-          this.urlManager.urlCache.clear();
-          this.domMonitor.cachedLinks = null;
-          // Re-create DomMonitor after bfcache restore
-          this.domMonitor.cleanup(); // Clean up old instance first
-          this.domMonitor = new KB_NAV_DomMonitor(); // Create new instance
+          this.urlManager.urlCache.clear(); // Clear URL pattern cache
+          
+          // Re-initialize DomMonitor as its internal state (observer, listeners) might be stale
+          this.domMonitor.cleanup();
+          this.domMonitor = new KB_NAV_DomMonitor();
         }
       }
-       handlePageHide(event) {
-         // Perform full cleanup only if the page is *not* going into bfcache
-         if (!event.persisted) {
-             // console.log("LunaTools KB Nav: Page unloading. Cleaning up.");
-             this.cleanup();
-         }
-       }
-      handleKeydown(event) {
+      _handlePageHide(event) {
+        if (!event.persisted) { // Page is being fully unloaded, not put into bfcache
+          /* console.log(`${KB_NAV_LOG_PREFIX} Page unloading. Cleaning up all resources.`); */
+          this.cleanup();
+        }
+      }
+      _handleKeydown(event) {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-        if (this.shouldIgnoreKeyEvent(event)) return;
+        if (this._shouldIgnoreKeyEvent(event)) return;
         event.preventDefault();
-        this.processKeyDebounced(event);
+        event.stopPropagation(); // Prevent event from bubbling further if handled.
+        this.processKeyDebounced(event.key);
       }
-      shouldIgnoreKeyEvent(event) {
-        // Ignore if modifier keys (except Shift for potential future use) are pressed
-        if (event.altKey || event.ctrlKey || event.metaKey) {
-            return true;
-        }
+      _shouldIgnoreKeyEvent(event) {
+        if (event.altKey || event.ctrlKey || event.metaKey) return true; // Ignore with modifiers
         const activeEl = document.activeElement;
         return activeEl && this.domMonitor.isFocusable(activeEl);
       }
-      processKey(event) {
+      _processKey(key) {
         if (this.isNavigating) return;
-        const direction = event.key === 'ArrowRight' ? 1 : -1;
-        // console.log(`LunaTools KB Nav: Processing key: ${event.key}`);
-        this.navigate(direction);
+        const direction = key === 'ArrowRight' ? 1 : -1;
+        /* console.log(`${KB_NAV_LOG_PREFIX} Processing key: ${key}`); */
+        this._navigate(direction);
       }
-      navigate(direction) {
+      _navigate(direction) {
         if (this.isNavigating) return;
         const currentUrl = window.location.href;
         if (this.urlManager.shouldIgnore(currentUrl)) {
-          // console.log(`LunaTools KB Nav: Ignoring URL: ${currentUrl}`);
+          /* console.log(`${KB_NAV_LOG_PREFIX} Ignoring URL for navigation: ${currentUrl}`); */
           return;
         }
-        this.isNavigating = true;
-        const targetUrl = this.getTargetUrl(currentUrl, direction);
+        
+        const targetUrl = this._getTargetUrl(currentUrl, direction);
         if (targetUrl && targetUrl !== currentUrl) {
-          // console.log(`LunaTools KB Nav: Navigating to: ${targetUrl}`);
+          this.isNavigating = true; // Set before navigation to prevent re-entry
+          /* console.log(`${KB_NAV_LOG_PREFIX} Navigating to: ${targetUrl}`); */
           window.location.href = targetUrl;
-          // State reset handled by pageshow/pagehide
+          // `isNavigating` will be reset by `_handlePageShow` if bfcache is used,
+          // or implicitly on full page load. A timeout isn't strictly needed here for successful navigation.
         } else {
-          // console.log("LunaTools KB Nav: Navigation failed.");
-          this.resetNavigationState(); // Reset only if navigation doesn't proceed
+          /* console.log(`${KB_NAV_LOG_PREFIX} Navigation failed (no target URL or target is current).`); */
+          // If navigation doesn't happen, we need to reset isNavigating
+          this._resetNavigationStateAfterDelay(); 
         }
       }
-      getTargetUrl(currentUrl, direction) {
+      _getTargetUrl(currentUrl, direction) {
         const patternInfo = this.urlManager.findPagePattern(currentUrl);
         if (patternInfo) {
           const updatedUrl = this.urlManager.updatePageInUrl(currentUrl, patternInfo, direction);
-          return updatedUrl !== currentUrl ? updatedUrl : null;
+          return updatedUrl; // This will be same as currentUrl if no actual page change (e.g., at min/max page)
         }
         const links = this.domMonitor.findNavigationLinks();
         if (direction > 0 && links.nextLink) return links.nextLink.href;
         if (direction < 0 && links.prevLink) return links.prevLink.href;
         return null;
       }
-      resetNavigationState() {
+      _resetNavigationStateAfterDelay() {
+         // Only reset if navigation didn't occur, to allow next key press.
+         // If navigation occurred, pageshow/pagehide will handle state.
          setTimeout(() => {
             this.isNavigating = false;
-            // console.log("LunaTools KB Nav: Navigation state reset.");
-         }, KB_NAV_CONFIG.navigation.RESET_DELAY);
+            /* console.log(`${KB_NAV_LOG_PREFIX} Navigation state reset after delay (likely no nav occurred).`); */
+         }, KB_NAV_CONFIG.navigation.RESET_DELAY_MS);
       }
       cleanup() {
-        console.log("LunaTools KB Nav: Cleaning up...");
-        document.removeEventListener('keydown', this.handleKeydown);
-        window.removeEventListener('pageshow', this.handlePageShow);
-        window.removeEventListener('pagehide', this.handlePageHide); // Remove pagehide listener
+        console.log(`${KB_NAV_LOG_PREFIX} Cleaning up keyboard navigator globally...`);
+        document.removeEventListener('keydown', this._boundHandleKeydown);
+        window.removeEventListener('pageshow', this._boundHandlePageShow);
+        window.removeEventListener('pagehide', this._boundHandlePageHide);
         this.domMonitor.cleanup();
         this.urlManager.cleanup();
-        if (this.processKeyDebounced?.cancel) this.processKeyDebounced.cancel();
-        window.lunaToolsKbNavInitialized = false; // Reset initialization flag
+        this.processKeyDebounced?.cancel();
+        window.lunaToolsKbNavInitialized = false;
       }
     }
-
-    // === Initialize Keyboard Navigation ===
-    new KB_NAV_KeyboardNavigator();
+    // Initialize only if the document is fully loaded or interactive, to ensure body exists for observer.
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => new KB_NAV_KeyboardNavigator());
+    } else {
+        new KB_NAV_KeyboardNavigator();
+    }
 
   } else {
-      // Optional: Log if script is in an iframe and KB nav is skipped
-      // console.log("LunaTools KB Nav: Skipping initialization in non-top frame.");
+    // console.log(`${CS_LOG_PREFIX} KB Nav: Skipping initialization in non-top frame.`);
   }
 
   // =======================================================================
-  // === LunaTools: PICTURE-IN-PICTURE (PiP) LOGIC (from User Script)    ===
+  // === PICTURE-IN-PICTURE (PiP) LOGIC                                  ===
   // =======================================================================
-  console.log("LunaTools PiP: Helper (Ctrl+Shift+P, 강제 활성화 시도) 스크립트 로드됨.");
+  const PiP = {
+    LOG_PREFIX: `${CS_LOG_PREFIX} PiP:`,
 
-  // PiP 토글 함수
-  async function togglePictureInPicture() {
-      console.log("LunaTools PiP: Ctrl+Shift+P 감지됨. PiP 토글 시도...");
-
-      // 현재 PiP 모드인 요소가 있는지 확인
-      const currentPipElement = document.pictureInPictureElement;
-
-      // 페이지 내의 모든 비디오 요소 찾기
+    _findBestVideoForPiP() {
       const videos = Array.from(document.querySelectorAll('video'));
+      if (videos.length === 0) return null;
 
-      // 재생 중이고, 화면에 보이며, 소리가 꺼져있지 않은 비디오 필터링 (우선순위)
-      let potentialVideos = videos.filter(video =>
-          !video.paused && // 재생 중
-          video.readyState > 2 && // 재생 준비 완료 (데이터 충분)
-          video.offsetHeight > 0 && // 화면에 보임 (높이 존재)
-          video.offsetWidth > 0 && // 화면에 보임 (너비 존재)
-          !video.muted // 소리 켜짐 (광고 등이 아닐 확률 높음)
-      );
+      const isVisibleAndPlayable = (video) => 
+          video.offsetHeight > 0 && 
+          video.offsetWidth > 0 &&
+          video.readyState > 2 && // HAVE_CURRENT_DATA or more
+          video.hasAttribute('src') && video.currentSrc; // Ensure it has a source
 
-      // 위 조건에 맞는 비디오가 없다면, 재생 중이고 화면에 보이는 비디오로 재시도
-      if (potentialVideos.length === 0) {
-          console.log("LunaTools PiP: 소리 켜진 재생 중인 비디오 없음. 보이는 재생 중 비디오 검색...");
-          potentialVideos = videos.filter(video =>
-              !video.paused &&
-              video.readyState > 2 &&
-              video.offsetHeight > 0 &&
-              video.offsetWidth > 0
-          );
+      // Priority 1: Playing, visible, audible, playable
+      let candidates = videos.filter(v => !v.paused && isVisibleAndPlayable(v) && !v.muted);
+      if (candidates.length > 0) {
+        // console.log(this.LOG_PREFIX, "Found playing, visible, audible, playable videos.");
+        return candidates.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight))[0];
       }
 
-      // 그래도 없다면, 화면에 보이는 가장 큰 비디오 시도 (일시정지 상태일 수도 있음)
-       if (potentialVideos.length === 0) {
-           console.log("LunaTools PiP: 재생 중인 비디오 없음. 보이는 가장 큰 비디오 검색...");
-           potentialVideos = videos.filter(video => video.offsetHeight > 0 && video.offsetWidth > 0)
-                                   .sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight));
-       }
+      // Priority 2: Playing, visible, playable (muted is OK)
+      candidates = videos.filter(v => !v.paused && isVisibleAndPlayable(v));
+      if (candidates.length > 0) {
+        // console.log(this.LOG_PREFIX, "Found playing, visible, playable videos (any mute state).");
+        return candidates.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight))[0];
+      }
+      
+      // Priority 3: Visible, playable (paused is OK)
+      candidates = videos.filter(v => isVisibleAndPlayable(v));
+      if (candidates.length > 0) {
+        // console.log(this.LOG_PREFIX, "Found visible, playable videos (any play/mute state).");
+        return candidates.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight))[0];
+      }
+      
+      // Fallback: any video with a source, even if not "visible" by offsetHeight/Width (e.g. in shadow DOM, or CSS hidden)
+      // This is a last resort.
+      candidates = videos.filter(v => v.hasAttribute('src') && v.currentSrc);
+       if (candidates.length > 0) {
+        // console.log(this.LOG_PREFIX, "Found any video with a source as fallback.");
+        return candidates.sort((a,b) => { // Prefer videos that are at least somewhat loaded
+            if (a.readyState !== b.readyState) return b.readyState - a.readyState;
+            return (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight);
+        })[0];
+      }
+      
+      return null; // No suitable video found
+    },
 
+    async toggle() {
+      // console.log(this.LOG_PREFIX, "Ctrl+Shift+P detected. Toggling PiP...");
 
-      if (potentialVideos.length === 0 && !currentPipElement) {
-          console.log("LunaTools PiP: PiP를 실행할 비디오를 찾을 수 없습니다.");
-          // alert("PiP를 실행할 비디오를 찾을 수 없습니다. 비디오가 재생 중인지 확인해주세요."); // 사용자 요청에 따라 제거 가능
-          return;
+      const currentPipElement = document.pictureInPictureElement;
+      
+      if (currentPipElement) {
+        // console.log(this.LOG_PREFIX, "Exiting PiP mode for element:", currentPipElement);
+        try {
+          await document.exitPictureInPicture();
+          // console.log(this.LOG_PREFIX, "PiP mode exited.");
+        } catch (error) {
+          console.error(this.LOG_PREFIX, "Error exiting PiP mode:", error);
+        }
+        return;
+      }
+      
+      const targetVideo = this._findBestVideoForPiP();
+
+      if (!targetVideo) {
+        console.warn(this.LOG_PREFIX, "No suitable video found to enter PiP mode.");
+        // alert("PiP를 실행할 비디오를 찾을 수 없습니다."); // Consider removing alerts
+        return;
       }
 
-      // 대상 비디오 선정 (가장 크기가 큰 비디오 우선)
-      let targetVideo = potentialVideos.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight))[0];
-
+      // console.log(this.LOG_PREFIX, "Attempting to enter PiP mode for video:", targetVideo);
       try {
-          if (currentPipElement) {
-              // 현재 PiP 모드 실행 중
-              console.log("LunaTools PiP: 이미 PiP 모드 실행 중. 종료 시도:", currentPipElement);
-              await document.exitPictureInPicture();
-              console.log("LunaTools PiP: PiP 모드 종료됨.");
-          } else if (targetVideo) {
-               // PiP 모드 시작
-
-               // PiP가 비활성화 되어 있다면 강제로 disablePictureInPicture 속성을 false로 변경 시도
-               if (targetVideo.disablePictureInPicture) {
-                   console.warn(`LunaTools PiP: 선택된 비디오(src: ${targetVideo.currentSrc || 'N/A'})에서 PiP가 비활성화되어 있었으나, 강제 활성화를 시도합니다.`);
-                   try {
-                       // 이 속성은 일반적으로 getter만 있고 setter가 없을 수 있습니다.
-                       // 직접 할당하는 것이 효과가 없을 수 있지만, 시도는 해봅니다.
-                       // 보다 확실한 방법은 Object.defineProperty를 사용하는 것이지만,
-                       // 이는 웹페이지의 원래 JavaScript와 충돌할 가능성이 더 높습니다.
-                       // 여기서는 간단하게 직접 할당을 시도합니다.
-                       targetVideo.disablePictureInPicture = false;
-                       console.log("LunaTools PiP: disablePictureInPicture 속성을 false로 변경 시도했습니다.");
-                   } catch (e) {
-                       console.error("LunaTools PiP: disablePictureInPicture 속성 변경 중 오류 발생 (예상 가능):", e.message);
-                       // 속성 변경이 실패하더라도 PiP 요청은 계속 진행합니다.
-                   }
-               }
-
-               console.log("LunaTools PiP: PiP 모드 시작 시도:", targetVideo);
-               await targetVideo.requestPictureInPicture();
-               console.log("LunaTools PiP: PiP 모드 시작됨.");
-
-               // PiP 창이 닫힐 때 콘솔 로그 (선택사항)
-               targetVideo.addEventListener('leavepictureinpicture', () => {
-                  console.log('LunaTools PiP: PiP 모드가 사용자에 의해 닫혔습니다.');
-               }, { once: true });
-
-          } else {
-               console.log("LunaTools PiP: PiP를 시작할 대상 비디오를 확정할 수 없습니다.");
+        if (targetVideo.disablePictureInPicture) {
+          console.warn(this.LOG_PREFIX, `Video (src: ${targetVideo.currentSrc || 'N/A'}) has disablePictureInPicture=true. Attempting to override.`);
+          // This is a best-effort attempt and might not work on all sites or be overridden by browser.
+          try { 
+            Object.defineProperty(targetVideo, 'disablePictureInPicture', {
+                configurable: true,
+                writable: true,
+                value: false
+            });
+          } catch (e) { /* Expected to fail sometimes if not configurable */ 
+            try { targetVideo.disablePictureInPicture = false; } catch (e2) {/* ignore */}
           }
+        }
+        await targetVideo.requestPictureInPicture();
+        // console.log(this.LOG_PREFIX, "PiP mode entered.");
+        targetVideo.addEventListener('leavepictureinpicture', () => {
+          // console.log(this.LOG_PREFIX, 'PiP mode was left (e.g., closed by user).');
+        }, { once: true });
       } catch (error) {
-          console.error("LunaTools PiP: PiP 작업 중 오류 발생:", error);
-          if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-              alert(`PiP 실행이 차단되었습니다. 웹사이트 또는 브라우저 설정에 의해 PiP가 허용되지 않을 수 있습니다.\n오류: ${error.message}`);
-          } else if (error.name === 'NotFoundError') {
-               alert(`PiP를 실행할 비디오를 찾을 수 없거나, 비디오가 PiP를 지원하지 않는 상태입니다.\n오류: ${error.message}`);
-          }
-          else {
-              alert(`PiP 작업 중 오류가 발생했습니다: ${error.message}`);
-          }
+        console.error(this.LOG_PREFIX, "Error entering PiP mode:", error.name, error.message);
+        // if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+        //   alert(`PiP 실행이 차단되었습니다...\n오류: ${error.message}`);
+        // } else if (error.name === 'NotFoundError'){
+        //    alert(`PiP를 실행할 비디오를 찾을 수 없거나, 비디오가 PiP를 지원하지 않는 상태입니다...\n오류: ${error.message}`);
+        // } else if (error.name === 'InvalidStateError'){
+        //    alert(`비디오가 PiP를 시작하기에 적절한 상태가 아닙니다 (예: 로드되지 않음)...\n오류: ${error.message}`);
+        // }
       }
-  }
+    },
 
-  // 키보드 이벤트 리스너 추가
-  document.addEventListener('keydown', function(event) {
-      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p') {
-          // Check if the event target is an input, textarea, or contenteditable element
-          const target = event.target;
-          if (target && (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
-              // console.log("LunaTools PiP: Ctrl+Shift+P ignored in input field.");
-              return; // Don't trigger PiP if in an input field
-          }
-          event.preventDefault();
-          togglePictureInPicture();
+    _handleKeyDown(event) {
+      if (event.ctrlKey && event.shiftKey && (event.key === 'P' || event.key === 'p')) {
+        const target = event.target;
+        const isEditable = target && (target.isContentEditable || 
+                           ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName?.toUpperCase()));
+        if (isEditable) {
+          // console.log(PiP.LOG_PREFIX, "Ctrl+Shift+P ignored in input field.");
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggle();
       }
-  });
+    },
 
-  console.log("LunaTools: PiP logic initialized.");
+    init() {
+      // Use a bound function for the event listener
+      this._boundHandleKeyDown = this._handleKeyDown.bind(this);
+      document.addEventListener('keydown', this._boundHandleKeyDown, true); // Use capture phase
+      console.log(this.LOG_PREFIX, "Logic initialized (Ctrl+Shift+P).");
+    }
+  };
 
+  PiP.init();
 
-  console.log("LunaTools: Content script fully initialized (Gestures, Keyboard Nav & PiP).");
-
-})(); // End of the main IIFE
+  console.log(`${CS_LOG_PREFIX} Content script fully initialized (Gestures, Keyboard Nav & PiP).`);
+})();
