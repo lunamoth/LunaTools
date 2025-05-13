@@ -1,674 +1,637 @@
 /**
  * LunaTools Background Script
- * Handles tab organization, deduplication, and gesture actions.
+ * Handles tab organization, deduplication, window merging, and gesture actions.
  */
 
-// Constants
+// --- Constants ---
 const NEW_TAB_URL = "chrome://newtab/";
-const PERFORM_GESTURE_ACTION = 'perform-gesture'; // Action name for gesture messages
+const PERFORM_GESTURE_ACTION = 'perform-gesture';
+const LOG_PREFIX = "LunaTools:";
 
+// --- Utility Functions ---
+function isTabAccessError(error) {
+  const message = error?.message?.toLowerCase() || "";
+  return message.includes("no tab with id") ||
+         message.includes("invalid tab id") ||
+         message.includes("cannot go back") ||
+         message.includes("cannot go forward") ||
+         message.includes("tab id not found");
+}
+
+function isWindowAccessError(error) {
+  const message = error?.message?.toLowerCase() || "";
+  return message.includes("no window with id");
+}
+
+// --- Gesture Handling ---
 /**
- * Handles tab actions based on gesture messages received from the content script.
+ * Handles tab actions based on gesture messages from the content script.
  * @param {string} gesture - The gesture direction ('U', 'D', 'L', 'R').
  * @param {number} tabId - The ID of the tab where the gesture originated.
  */
-const handleGestureAction = (gesture, tabId) => {
-  console.log(`LunaTools: Handling gesture '${gesture}' for tab ${tabId}`);
-  let actionPromise;
+async function handleGestureAction(gesture, tabId) {
+  console.log(`${LOG_PREFIX} Handling gesture '${gesture}' for tab ${tabId}`);
   const activeTabOptions = { active: true };
 
-  switch (gesture) {
-    case 'U': // Up - New Tab
-      actionPromise = chrome.tabs.get(tabId)
-        .then(
-          tab => chrome.tabs.create({
-            index: (tab?.index != null) ? tab.index + 1 : undefined,
-            openerTabId: tabId,
-            ...activeTabOptions
-          }),
-          () => chrome.tabs.create(activeTabOptions) // Fallback
-        );
-      break;
-    case 'D': // Down - Close Tab
-      actionPromise = chrome.tabs.remove(tabId);
-      break;
-    case 'R': // Right - Go Forward
-      actionPromise = chrome.tabs.goForward(tabId);
-      break;
-    case 'L': // Left - Go Back
-      actionPromise = chrome.tabs.goBack(tabId);
-      break;
-    default:
-      console.warn(`LunaTools: Unknown gesture received: ${gesture}`);
-      actionPromise = Promise.resolve();
-  }
-
-  actionPromise.catch(error => {
-    if (error && error.message && !(error.message.includes("No tab with id") || error.message.includes("Invalid tab ID") || error.message.includes("Cannot go back") || error.message.includes("Cannot go forward"))) {
-       console.warn(`LunaTools: Error performing gesture action '${gesture}' on tab ${tabId}:`, error.message);
+  try {
+    switch (gesture) {
+      case 'U': // Up - New Tab
+        const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+        await chrome.tabs.create({
+          index: currentTab ? currentTab.index + 1 : undefined,
+          openerTabId: tabId,
+          ...activeTabOptions
+        });
+        break;
+      case 'D': // Down - Close Tab
+        await chrome.tabs.remove(tabId);
+        break;
+      case 'R': // Right - Go Forward
+        await chrome.tabs.goForward(tabId);
+        break;
+      case 'L': // Left - Go Back
+        await chrome.tabs.goBack(tabId);
+        break;
+      default:
+        console.warn(`${LOG_PREFIX} Unknown gesture received: ${gesture}`);
     }
-    // Avoid logging common, expected errors like 'cannot go back/forward'
-  });
-};
-
+  } catch (error) {
+    if (!isTabAccessError(error)) {
+      console.warn(`${LOG_PREFIX} Error performing gesture action '${gesture}' on tab ${tabId}:`, error.message);
+    }
+    // Common errors like 'cannot go back/forward' or 'tab closed' are suppressed by isTabAccessError.
+  }
+}
 
 // --- TabManager Class ---
-// Manages tab state, sorting, merging, and deduplication logic.
 class TabManager {
   constructor() {
-    this.urlCache = new Map();
-    this.reverseUrlLookup = new Map();
+    this.urlCache = new Map(); // Map<tabId, {url: URL, windowId: number}>
+    this.reverseUrlLookup = new Map(); // Map<urlString, Array<{tabId: number, windowId: number}>>
+
+    // Bind methods used as event handlers
     this.handleTabRemoved = this.handleTabRemoved.bind(this);
-    this.compareUrls = this.compareUrls.bind(this);
     this.handleTabUpdate = this.handleTabUpdate.bind(this);
-    this.isTabNotFoundError = this.isTabNotFoundError.bind(this);
+    // No need to bind compareUrls if only used like this.compareUrls
   }
 
-  isTabNotFoundError(error) {
+  _isTabNotFoundError(error) {
     return error?.message?.includes("No tab with id") || error?.message?.includes("Invalid tab ID");
   }
 
-  async sortTabs() {
-    console.log("LunaTools: Sorting tabs in current window...");
+  async sortTabsInCurrentWindow() {
+    console.log(`${LOG_PREFIX} Sorting tabs in current window...`);
     try {
       const currentWindow = await chrome.windows.getCurrent({ populate: false, windowTypes: ['normal'] });
       if (!currentWindow?.id) {
-           console.error("LunaTools: Could not get current window ID.");
-           return;
+        console.error(`${LOG_PREFIX} Could not get current window ID.`);
+        return;
       }
-      await this.sortAndMoveTabsInWindow(currentWindow.id);
+      await this._sortAndMoveTabsInWindow(currentWindow.id);
     } catch (error) {
-      console.error("LunaTools: Error sorting tabs:", error);
+      console.error(`${LOG_PREFIX} Error sorting tabs:`, error);
     }
   }
 
-  async sortAndMoveTabsInWindow(windowId) {
+  async _sortAndMoveTabsInWindow(windowId) {
     try {
-        console.log(`LunaTools: Sorting tabs in window ${windowId}...`);
-        const tabs = await chrome.tabs.query({ windowId: windowId });
-        const tabsWithParsedUrls = this.getTabsWithParsedUrls(tabs);
-        const sortableTabs = tabsWithParsedUrls.filter(tab => tab.parsedUrl);
+      console.log(`${LOG_PREFIX} Sorting tabs in window ${windowId}...`);
+      const tabsInWindow = await chrome.tabs.query({ windowId });
+      const tabsWithParsedUrls = this._getTabsWithParsedUrls(tabsInWindow);
+      const sortableTabs = tabsWithParsedUrls.filter(tab => tab.parsedUrl);
 
-        // Need original indices before sorting conceptually
-        const originalIndices = new Map(tabs.map(tab => [tab.id, tab.index]));
+      const originalIndices = new Map(tabsInWindow.map(tab => [tab.id, tab.index]));
+      sortableTabs.sort(this._compareUrls.bind(this)); // Bind if necessary, or use arrow function
 
-        // Sort based on URL
-        sortableTabs.sort(this.compareUrls);
-
-        const moveOperations = this.createMoveOperations(sortableTabs, originalIndices, windowId);
-        if (moveOperations.length > 0) {
-            await Promise.all(moveOperations);
-            console.log(`LunaTools: Moved ${moveOperations.length} tabs for sorting in window ${windowId}.`);
-        } else {
-            console.log(`LunaTools: Tabs in window ${windowId} are already sorted.`);
-        }
+      const moveOperations = this._createMoveOperations(sortableTabs, originalIndices, windowId);
+      if (moveOperations.length > 0) {
+        await Promise.all(moveOperations);
+        console.log(`${LOG_PREFIX} Moved ${moveOperations.length} tabs for sorting in window ${windowId}.`);
+      } else {
+        console.log(`${LOG_PREFIX} Tabs in window ${windowId} are already sorted or no sortable tabs found.`);
+      }
     } catch (error) {
-        if (error?.message?.includes("No window with id")) {
-            console.warn(`LunaTools: Window ${windowId} not found during sorting, likely closed.`);
-        } else {
-            console.error(`LunaTools: Error sorting tabs in window ${windowId}:`, error);
-        }
+      if (isWindowAccessError(error)) {
+        console.warn(`${LOG_PREFIX} Window ${windowId} not found during sorting, likely closed.`);
+      } else {
+        console.error(`${LOG_PREFIX} Error sorting tabs in window ${windowId}:`, error);
+      }
     }
   }
 
-  createMoveOperations(sortedTabsWithParsedUrls, originalIndices, windowId) {
-    return sortedTabsWithParsedUrls.reduce((movePromises, tab, desiredIndex) => {
+  _createMoveOperations(sortedTabs, originalIndices, windowId) {
+    return sortedTabs.reduce((movePromises, tab, desiredIndex) => {
       const currentIndex = originalIndices.get(tab.id);
-      // Only move if the tab's original index doesn't match the target sorted index
       if (typeof currentIndex === 'number' && currentIndex !== desiredIndex) {
-        const movePromise = (async () => {
-          try {
-            // console.log(`LunaTools: Moving tab ${tab.id} from index ${currentIndex} to ${desiredIndex} in window ${windowId}`);
-            return await chrome.tabs.move(tab.id, { index: desiredIndex });
-          } catch (error) {
-            if (this.isTabNotFoundError(error)) {
-               console.warn(`LunaTools: Tab ${tab.id} likely closed before moving (in window ${windowId}), skipping.`);
+        const movePromise = chrome.tabs.move(tab.id, { index: desiredIndex })
+          .catch(error => {
+            if (this._isTabNotFoundError(error)) {
+              console.warn(`${LOG_PREFIX} Tab ${tab.id} likely closed before moving (in window ${windowId}), skipping.`);
             } else {
-               console.error(`LunaTools: Error moving tab ${tab.id} in window ${windowId}:`, error);
+              console.error(`${LOG_PREFIX} Error moving tab ${tab.id} in window ${windowId}:`, error);
             }
-            return undefined; // Indicate failure
-          }
-        })();
+          });
         movePromises.push(movePromise);
       }
       return movePromises;
     }, []);
   }
 
+  _getTabUrl(tab) {
+    // Prefer loaded URL if it's a standard web page, otherwise fallback to pendingUrl, then original URL.
+    if (tab?.url && tab.url !== 'about:blank' && !tab.url.startsWith('chrome://') && (tab.url.startsWith('http:') || tab.url.startsWith('https:'))) {
+      return tab.url;
+    }
+    return tab?.pendingUrl || tab?.url || null;
+  }
 
   async checkForDuplicateAndFocusExisting(tab) {
     if (!tab?.id || typeof tab.windowId === 'undefined') return;
 
-    const tabUrl = this.getTabUrl(tab);
-    // Ignore non-http URLs and new tab page for duplicate checks
-    if (!tabUrl || tabUrl === NEW_TAB_URL || !(tabUrl.startsWith('http:') || tabUrl.startsWith('https:'))) {
-        return;
+    const tabUrlString = this._getTabUrl(tab);
+    if (!tabUrlString || tabUrlString === NEW_TAB_URL || !(tabUrlString.startsWith('http:') || tabUrlString.startsWith('https:'))) {
+      return;
     }
 
     let parsedUrl;
     try {
-        parsedUrl = new URL(tabUrl);
+      parsedUrl = new URL(tabUrlString);
     } catch (e) {
-        // If the current URL is invalid, we can't check for duplicates based on it.
-        // We might still need to remove any old cache entry if the tab navigated *to* an invalid URL.
-        const oldCachedInfo = this.urlCache.get(tab.id);
-        if (oldCachedInfo) {
-            this.removeUrlFromCache(tab.id, oldCachedInfo.url);
-        }
-        console.warn(`LunaTools: Invalid URL encountered for duplicate check on tab ${tab.id}: ${tabUrl}`);
-        return;
+      const oldCachedInfo = this.urlCache.get(tab.id);
+      if (oldCachedInfo) this._removeUrlFromCache(tab.id, oldCachedInfo.url);
+      console.warn(`${LOG_PREFIX} Invalid URL for duplicate check on tab ${tab.id}: ${tabUrlString}`);
+      return;
     }
 
     // Ensure the URL is cached before checking for duplicates
-    if (!this.urlCache.has(tab.id) || this.urlCache.get(tab.id)?.url.href !== parsedUrl.href) {
-        this.addUrlToCache(tab.id, parsedUrl, tab.windowId);
+    const cachedInfo = this.urlCache.get(tab.id);
+    if (!cachedInfo || cachedInfo.url.href !== parsedUrl.href || cachedInfo.windowId !== tab.windowId) {
+      this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
     }
 
-    await this.findAndHandleDuplicates(tab, parsedUrl);
+    await this._findAndHandleDuplicates(tab, parsedUrl);
   }
 
-  async findAndHandleDuplicates(tab, parsedUrl) {
-      try {
-          const duplicateTabIds = await this.findDuplicateTabsInCurrentWindow(tab, parsedUrl);
+  async _findAndHandleDuplicates(currentTab, parsedUrl) {
+    try {
+      const duplicateTabIdsInWindow = await this._findDuplicateTabIdsInSameWindow(currentTab, parsedUrl);
 
-          if (duplicateTabIds.length > 0) {
-            console.log(`LunaTools: Found ${duplicateTabIds.length} duplicate(s) for tab ${tab.id} (${parsedUrl.href}) in window ${tab.windowId}`);
-            // Pass the array of duplicates, not just the first one
-            await this.handleDuplicateTab(tab, duplicateTabIds, parsedUrl);
-          }
-      } catch (error) {
-          console.error(`LunaTools: Error checking/handling duplicates for tab ${tab.id}:`, error);
+      if (duplicateTabIdsInWindow.length > 0) {
+        console.log(`${LOG_PREFIX} Found ${duplicateTabIdsInWindow.length} duplicate(s) for tab ${currentTab.id} (${parsedUrl.href}) in window ${currentTab.windowId}`);
+        await this._handleDuplicateTab(currentTab, duplicateTabIdsInWindow, parsedUrl);
       }
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Error checking/handling duplicates for tab ${currentTab.id}:`, error);
+    }
   }
 
-  getTabUrl(tab) {
-     // Prefer loaded URL, fallback to pending URL if loaded one isn't useful (e.g., about:blank during load)
-     return (tab && tab.url && tab.url !== 'about:blank' && !tab.url.startsWith('chrome://')) ? tab.url : (tab?.pendingUrl || tab?.url || null);
-  }
-
-  async findDuplicateTabsInCurrentWindow(tab, parsedUrl) {
+  async _findDuplicateTabIdsInSameWindow(currentTab, parsedUrl) {
     const urlKey = parsedUrl.href;
-    const potentialDuplicates = this.reverseUrlLookup.get(urlKey) || [];
-    const duplicateTabIdsInWindow = [];
+    const potentialDuplicatesInfo = this.reverseUrlLookup.get(urlKey) || [];
+    const duplicateTabIds = [];
 
-    for (const potential of potentialDuplicates) {
-      if (potential.tabId === tab.id) continue; // Skip self
+    for (const { tabId, windowId } of potentialDuplicatesInfo) {
+      if (tabId === currentTab.id || windowId !== currentTab.windowId) continue;
 
-      // Check if the potential duplicate is in the same window using cached windowId
-      if (potential.windowId === tab.windowId) {
-          try {
-              // Verify the potential duplicate tab still exists
-              await chrome.tabs.get(potential.tabId);
-              duplicateTabIdsInWindow.push(potential.tabId);
-          } catch (error) {
-              if (this.isTabNotFoundError(error)) {
-                  // console.warn(`LunaTools: Potential duplicate tab ${potential.tabId} (cached for window ${potential.windowId}) not found, removing from cache.`);
-                  // Use the *original* parsedUrl (which corresponds to the urlKey) for removal
-                  this.removeUrlFromCache(potential.tabId, parsedUrl);
-              } else {
-                  console.error(`LunaTools: Error verifying potential duplicate tab ${potential.tabId}:`, error);
-              }
-          }
+      try {
+        await chrome.tabs.get(tabId); // Verify tab still exists
+        duplicateTabIds.push(tabId);
+      } catch (error) {
+        if (this._isTabNotFoundError(error)) {
+          this._removeUrlFromCache(tabId, parsedUrl); // Clean up cache for non-existent tab
+        } else {
+          console.error(`${LOG_PREFIX} Error verifying potential duplicate tab ${tabId}:`, error);
+        }
       }
     }
-    return duplicateTabIdsInWindow;
+    return duplicateTabIds;
   }
 
-  async handleDuplicateTab(tab, duplicateTabIds, parsedUrl) {
-     // Check if the tab being considered for removal is active.
-     const isActiveTab = tab.active;
-     // Choose the first existing duplicate as the target to keep/focus.
-     const existingTabId = duplicateTabIds[0];
+  async _handleDuplicateTab(newlyOpenedTab, existingDuplicateIds, parsedUrl) {
+    const tabToCloseId = newlyOpenedTab.id;
+    const tabToFocusId = existingDuplicateIds[0]; // Focus the first found duplicate
 
-     // Sanity check: ensure the tab to remove still exists before trying to remove it.
-     try {
-         await chrome.tabs.get(tab.id);
-     } catch (e) {
-         if (this.isTabNotFoundError(e)) {
-             console.warn(`LunaTools: Tab ${tab.id} intended for removal as duplicate was already closed.`);
-             // Attempt cache cleanup for the already closed tab
-             this.removeUrlFromCache(tab.id, parsedUrl);
-             return; // Nothing more to do
-         }
-         // Rethrow other errors
-         throw e;
-     }
+    try {
+      await chrome.tabs.get(tabToCloseId); // Check if tab to close still exists
+    } catch (e) {
+      if (this._isTabNotFoundError(e)) {
+        console.warn(`${LOG_PREFIX} Tab ${tabToCloseId} (duplicate) was already closed.`);
+        this._removeUrlFromCache(tabToCloseId, parsedUrl);
+        return;
+      }
+      throw e; // Rethrow other errors
+    }
+    
+    // Safety: Ensure we don't close the last tab with this URL in the window (cache might lag)
+    const tabsWithUrlInWindow = (this.reverseUrlLookup.get(parsedUrl.href) || []).filter(t => t.windowId === newlyOpenedTab.windowId);
+    if (tabsWithUrlInWindow.length <= 1 && tabsWithUrlInWindow.some(t => t.tabId === tabToCloseId)) {
+        console.warn(`${LOG_PREFIX} Skipping duplicate removal for tab ${tabToCloseId}, seems it's the last one with URL ${parsedUrl.href} in window ${newlyOpenedTab.windowId}.`);
+        return;
+    }
 
-     // Safety check: Don't remove the tab if it's the *only* one left with this URL in this window (cache might be lagging).
-     const tabsWithUrlInWindow = (this.reverseUrlLookup.get(parsedUrl.href) || []).filter(t => t.windowId === tab.windowId);
-     if (tabsWithUrlInWindow.length <= 1) {
-         console.warn(`LunaTools: Skipping duplicate removal for tab ${tab.id}, seems it's the last one with URL ${parsedUrl.href} in window ${tab.windowId}.`);
-         return;
-     }
+    try {
+      await chrome.tabs.get(tabToFocusId); // Verify the target existing tab still exists
 
+      if (newlyOpenedTab.active) {
+        await chrome.tabs.update(tabToFocusId, { active: true }).catch(err => {
+          if (this._isTabNotFoundError(err)) console.warn(`${LOG_PREFIX} Failed to focus existing tab ${tabToFocusId} - likely closed.`);
+          else console.error(`${LOG_PREFIX} Error focusing existing tab ${tabToFocusId}:`, err);
+        });
+      }
 
-     try {
-         // Verify the target existing tab still exists before focusing/removing the new one
-         await chrome.tabs.get(existingTabId);
+      await chrome.tabs.remove(tabToCloseId).catch(err => {
+        if (!this._isTabNotFoundError(err)) { // Don't log if already closed
+          console.error(`${LOG_PREFIX} Error removing duplicate tab ${tabToCloseId}:`, err);
+        }
+      });
 
-         const focusPromise = isActiveTab
-             ? chrome.tabs.update(existingTabId, { active: true }).catch(err => {
-                 if (this.isTabNotFoundError(err)) console.warn(`LunaTools: Failed to focus existing tab ${existingTabId} - likely closed.`);
-                 else console.error(`LunaTools: Error focusing existing tab ${existingTabId}:`, err);
-             })
-             : Promise.resolve(); // No need to focus if the duplicate wasn't active
+      console.log(`${LOG_PREFIX} Closed duplicate tab ${tabToCloseId} and attempted to focus existing tab ${tabToFocusId}`);
+      this._removeUrlFromCache(tabToCloseId, parsedUrl);
 
-         const removePromise = chrome.tabs.remove(tab.id).catch(err => {
-             // Don't log error if it was already closed (caught above or race condition)
-             if (!this.isTabNotFoundError(err)) {
-                 console.error(`LunaTools: Error removing duplicate tab ${tab.id}:`, err);
-             }
-         });
+    } catch (error) {
+      if (this._isTabNotFoundError(error)) { // existingTabToFocusId was not found
+        console.warn(`${LOG_PREFIX} Existing duplicate tab ${tabToFocusId} not found when handling duplicate for tab ${tabToCloseId}. It was likely closed.`);
+        this._removeTabIdFromReverseLookup(tabToFocusId, parsedUrl.href); // Clean up its cache entry
 
-         await Promise.all([focusPromise, removePromise]);
-         console.log(`LunaTools: Closed duplicate tab ${tab.id} and attempted to focus existing tab ${existingTabId}`);
-
-         // Clean up cache for the removed tab *after* removal attempt.
-         this.removeUrlFromCache(tab.id, parsedUrl);
-
-     } catch (error) {
-         if (this.isTabNotFoundError(error)) {
-             console.warn(`LunaTools: Existing duplicate tab ${existingTabId} not found when handling duplicate for tab ${tab.id}. It was likely closed.`);
-             // Proactively clean up cache for the non-existent existingTabId
-             this.removeTabIdFromReverseLookup(existingTabId, parsedUrl.href);
-             // Since the 'existing' one is gone, we might not want to remove the 'new' one (tab.id).
-             // However, the logic currently proceeds to remove tab.id if it exists. Revisit if this causes issues.
-             // For now, we'll still attempt to remove tab.id as planned, assuming the user opened a duplicate.
-             try {
-                await chrome.tabs.remove(tab.id);
-                console.log(`LunaTools: Removed tab ${tab.id} after finding its intended duplicate ${existingTabId} was already closed.`);
-                this.removeUrlFromCache(tab.id, parsedUrl);
-             } catch (removeError) {
-                 if (!this.isTabNotFoundError(removeError)) {
-                    console.error(`LunaTools: Error removing tab ${tab.id} after its duplicate was gone:`, removeError);
-                 }
-             }
-         } else {
-             console.error(`LunaTools: Error handling duplicate tab ${tab.id} (checking/acting on existing tab ${existingTabId}):`, error);
-         }
-     }
- }
-
+        // Since the 'existing' one is gone, remove the 'new' one if it still exists
+        try {
+          await chrome.tabs.remove(tabToCloseId);
+          console.log(`${LOG_PREFIX} Removed tab ${tabToCloseId} as its intended duplicate ${tabToFocusId} was already closed.`);
+          this._removeUrlFromCache(tabToCloseId, parsedUrl);
+        } catch (removeError) {
+          if (!this._isTabNotFoundError(removeError)) {
+            console.error(`${LOG_PREFIX} Error removing tab ${tabToCloseId} after its duplicate was gone:`, removeError);
+          }
+        }
+      } else {
+        console.error(`${LOG_PREFIX} Error handling duplicate tab ${tabToCloseId} (acting on existing tab ${tabToFocusId}):`, error);
+      }
+    }
+  }
 
   async mergeAllWindows() {
-    console.log("LunaTools: Merging all windows...");
+    console.log(`${LOG_PREFIX} Merging all windows...`);
     try {
-      const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-      if (windows.length <= 1) {
-        console.log("LunaTools: No other windows to merge or only one window exists.");
-        const currentWindow = windows.length === 1 ? windows[0] : await chrome.windows.getCurrent({ windowTypes: ['normal'] });
-        if (currentWindow?.id) await this.sortAndMoveTabsInWindow(currentWindow.id);
+      const allWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+      if (allWindows.length <= 1) {
+        console.log(`${LOG_PREFIX} No other windows to merge or only one window exists.`);
+        const singleWindow = allWindows.length === 1 ? allWindows[0] : await chrome.windows.getCurrent({ windowTypes: ['normal'] }).catch(() => null);
+        if (singleWindow?.id) await this._sortAndMoveTabsInWindow(singleWindow.id);
         return;
       }
 
-      const currentWindow = await chrome.windows.getCurrent({ windowTypes: ['normal'] });
-      if (!currentWindow?.id) {
-           console.error("LunaTools: Could not get current window to merge into.");
-           return;
+      const targetWindow = await chrome.windows.getCurrent({ windowTypes: ['normal'] });
+      if (!targetWindow?.id) {
+        console.error(`${LOG_PREFIX} Could not get current window to merge into.`);
+        return;
       }
-      const targetWindowId = currentWindow.id;
+      const targetWindowId = targetWindow.id;
 
-      console.log("LunaTools: Moving tabs from other windows...");
-      const tabsToMove = this.getTabsFromOtherWindows(windows, targetWindowId);
-      let movedCount = 0;
-      const movePromises = [];
+      console.log(`${LOG_PREFIX} Moving tabs from other windows to window ${targetWindowId}...`);
+      const tabsToMove = this._getNonPinnedTabsFromOtherWindows(allWindows, targetWindowId);
+      
+      await this._moveTabsToWindow(tabsToMove, targetWindowId);
 
-      for (const tab of tabsToMove) {
-          if (tab.pinned) {
-              console.log(`LunaTools: Skipping pinned tab ${tab.id} from window ${tab.windowId}.`);
-              continue;
-          }
-          // Check if tab still exists before moving
-          try {
-              await chrome.tabs.get(tab.id);
-              movePromises.push(
-                  chrome.tabs.move(tab.id, { windowId: targetWindowId, index: -1 })
-                      .then(() => { movedCount++; })
-                      .catch(err => {
-                          if (this.isTabNotFoundError(err)) {
-                              console.warn(`LunaTools: Tab ${tab.id} likely closed before moving, skipping.`);
-                              const cachedInfo = this.urlCache.get(tab.id);
-                              if(cachedInfo) this.removeUrlFromCache(tab.id, cachedInfo.url);
-                          } else if (err.message?.includes("No window with id")) {
-                              console.warn(`LunaTools: Target window ${targetWindowId} closed during merge? Skipping move for tab ${tab.id}.`);
-                          } else {
-                              console.error(`LunaTools: Error moving tab ${tab.id} to window ${targetWindowId}:`, err);
-                          }
-                      })
-              );
-          } catch (getErr) {
-               if (this.isTabNotFoundError(getErr)) {
-                   console.warn(`LunaTools: Tab ${tab.id} to be moved was already closed, skipping.`);
-                   const cachedInfo = this.urlCache.get(tab.id);
-                   if(cachedInfo) this.removeUrlFromCache(tab.id, cachedInfo.url);
-               } else {
-                    console.error(`LunaTools: Error checking tab ${tab.id} before move:`, getErr);
-               }
-          }
-      }
-      if (movePromises.length > 0) {
-        await Promise.all(movePromises);
-        console.log(`LunaTools: Attempted to move ${movePromises.length} non-pinned tabs, successfully moved ${movedCount} to window ${targetWindowId}.`);
-      } else {
-         console.log("LunaTools: No non-pinned tabs found in other windows to move.");
-      }
-
-      // Close other windows that are now empty or only contain pinned tabs
       const remainingWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-      await this.closeOtherEmptyWindows(remainingWindows, targetWindowId);
+      await this._closeOtherEmptyOrPinnedOnlyWindows(remainingWindows, targetWindowId);
 
-      await this.focusWindow(targetWindowId);
-      await this.sortAndMoveTabsInWindow(targetWindowId); // Sort after merging
+      await this._focusWindow(targetWindowId);
+      await this._sortAndMoveTabsInWindow(targetWindowId);
 
-      console.log("LunaTools: Window merge and sort complete.");
+      console.log(`${LOG_PREFIX} Window merge and sort complete.`);
     } catch (error) {
-      console.error("LunaTools: Error merging windows:", error);
+      console.error(`${LOG_PREFIX} Error merging windows:`, error);
+    }
+  }
+  
+  async _moveTabsToWindow(tabs, targetWindowId) {
+    let movedCount = 0;
+    const movePromises = [];
+
+    for (const tab of tabs) {
+        try {
+            await chrome.tabs.get(tab.id); // Check if tab still exists
+            movePromises.push(
+                chrome.tabs.move(tab.id, { windowId: targetWindowId, index: -1 })
+                    .then(() => { movedCount++; })
+                    .catch(err => {
+                        if (this._isTabNotFoundError(err)) {
+                            console.warn(`${LOG_PREFIX} Tab ${tab.id} closed before moving, skipping.`);
+                        } else if (isWindowAccessError(err)) {
+                            console.warn(`${LOG_PREFIX} Target window ${targetWindowId} closed during merge? Skipping move for tab ${tab.id}.`);
+                        } else {
+                            console.error(`${LOG_PREFIX} Error moving tab ${tab.id} to window ${targetWindowId}:`, err);
+                        }
+                        // Ensure cache is cleaned up for unmovable tab if it was in cache
+                        const cachedInfo = this.urlCache.get(tab.id);
+                        if(cachedInfo) this._removeUrlFromCache(tab.id, cachedInfo.url);
+                    })
+            );
+        } catch (getErr) {
+             if (this._isTabNotFoundError(getErr)) {
+                 console.warn(`${LOG_PREFIX} Tab ${tab.id} to be moved was already closed, skipping.`);
+                 const cachedInfo = this.urlCache.get(tab.id);
+                 if(cachedInfo) this._removeUrlFromCache(tab.id, cachedInfo.url);
+             } else {
+                  console.error(`${LOG_PREFIX} Error checking tab ${tab.id} before move:`, getErr);
+             }
+        }
+    }
+    if (movePromises.length > 0) {
+      await Promise.all(movePromises);
+      console.log(`${LOG_PREFIX} Attempted to move ${movePromises.length} tabs, successfully moved ${movedCount} to window ${targetWindowId}.`);
+    } else {
+       console.log(`${LOG_PREFIX} No non-pinned tabs found in other windows to move, or all encountered errors.`);
     }
   }
 
-  getTabsFromOtherWindows(windows, targetWindowId) {
-    return windows.flatMap(window =>
-      (window.id !== targetWindowId && window.tabs)
-        ? window.tabs.filter(tab => !tab.pinned) // Only non-pinned
+  _getNonPinnedTabsFromOtherWindows(windows, targetWindowId) {
+    return windows.flatMap(win =>
+      (win.id !== targetWindowId && win.tabs)
+        ? win.tabs.filter(tab => !tab.pinned)
         : []
     );
   }
 
-  async closeOtherEmptyWindows(windows, targetWindowId) {
-       const windowsToClose = windows.filter(window => {
-           if (window.id === targetWindowId) return false;
-           if (!window.tabs) return true; // Should have tabs array
-           return window.tabs.every(tab => tab.pinned); // Close if only pinned tabs remain
-       });
+  async _closeOtherEmptyOrPinnedOnlyWindows(windows, targetWindowId) {
+    const windowsToClose = windows.filter(win => {
+      if (win.id === targetWindowId) return false;
+      return !win.tabs || win.tabs.every(tab => tab.pinned);
+    });
 
-       if (windowsToClose.length === 0) return;
+    if (windowsToClose.length === 0) return;
 
-       console.log(`LunaTools: Closing ${windowsToClose.length} other window(s)...`);
-       const closePromises = windowsToClose.map(window =>
-           chrome.windows.remove(window.id).catch(err => {
-               if (err.message?.includes("No window with id")) {
-                   console.warn(`LunaTools: Window ${window.id} already closed.`);
-               } else {
-                   console.error(`LunaTools: Error closing window ${window.id}:`, err);
-               }
-           })
-       );
-       await Promise.all(closePromises);
-       console.log("LunaTools: Finished closing other windows.");
-   }
+    console.log(`${LOG_PREFIX} Closing ${windowsToClose.length} other window(s)...`);
+    const closePromises = windowsToClose.map(win =>
+      chrome.windows.remove(win.id).catch(err => {
+        if (isWindowAccessError(err)) {
+          console.warn(`${LOG_PREFIX} Window ${win.id} already closed.`);
+        } else {
+          console.error(`${LOG_PREFIX} Error closing window ${win.id}:`, err);
+        }
+      })
+    );
+    await Promise.all(closePromises);
+    console.log(`${LOG_PREFIX} Finished closing other windows.`);
+  }
 
-  async focusWindow(windowId) {
+  async _focusWindow(windowId) {
     try {
       await chrome.windows.update(windowId, { focused: true });
     } catch (error) {
-        if (error.message?.includes("No window with id")) {
-             console.warn(`LunaTools: Window ${windowId} not found for focusing.`);
-        } else {
-             console.error(`LunaTools: Error focusing window ${windowId}:`, error);
-        }
+      if (isWindowAccessError(error)) {
+        console.warn(`${LOG_PREFIX} Window ${windowId} not found for focusing.`);
+      } else {
+        console.error(`${LOG_PREFIX} Error focusing window ${windowId}:`, error);
+      }
     }
   }
 
   async handleTabUpdate(tab) {
     if (!tab?.id || typeof tab.windowId === 'undefined') return;
 
-    const newUrlString = this.getTabUrl(tab);
+    const newUrlString = this._getTabUrl(tab);
     const oldCachedInfo = this.urlCache.get(tab.id);
     const oldUrl = oldCachedInfo?.url;
 
-    // Handle navigation away from valid URLs or to non-http URLs
-    if (!newUrlString || !(newUrlString.startsWith('http:') || newUrlString.startsWith('https:'))) {
-        if (oldCachedInfo) {
-            // console.log(`LunaTools: Tab ${tab.id} navigated away from ${oldUrl.href}, removing from cache.`);
-            this.removeUrlFromCache(tab.id, oldUrl);
-        }
-        return;
+    const isHttpUrl = (urlStr) => urlStr && (urlStr.startsWith('http:') || urlStr.startsWith('https:'));
+
+    if (!isHttpUrl(newUrlString)) {
+      if (oldCachedInfo) {
+        // console.log(`${LOG_PREFIX} Tab ${tab.id} navigated away from ${oldUrl.href} or to non-http URL, removing from cache.`);
+        this._removeUrlFromCache(tab.id, oldUrl);
+      }
+      return;
     }
 
     let newUrl;
     try {
-        newUrl = new URL(newUrlString);
+      newUrl = new URL(newUrlString);
     } catch (e) {
-        console.warn(`LunaTools: Invalid URL during update for tab ${tab.id}: ${newUrlString}`, e);
-        if (oldCachedInfo) this.removeUrlFromCache(tab.id, oldUrl);
-        return;
+      console.warn(`${LOG_PREFIX} Invalid URL during update for tab ${tab.id}: ${newUrlString}`, e);
+      if (oldCachedInfo) this._removeUrlFromCache(tab.id, oldUrl);
+      return;
     }
 
-    // Check if URL href changed OR window ID changed
-    if (this.isNewOrChangedUrl(oldUrl, newUrl) || (oldCachedInfo && oldCachedInfo.windowId !== tab.windowId)) {
-        // console.log(`LunaTools: URL/WindowId changed for tab ${tab.id}: ${oldUrl?.href} (Win ${oldCachedInfo?.windowId}) -> ${newUrl.href} (Win ${tab.windowId})`);
-        this.updateUrlCache(tab.id, oldUrl, newUrl, tab.windowId);
-        // Check for duplicates immediately after caching the new URL/window
-        await this.checkForDuplicateAndFocusExisting(tab);
-    }
-    // Also check for duplicates when a tab finishes loading, even if URL href didn't change (e.g., page redirected internally)
-    else if (tab.status === 'complete' && newUrl) {
-         await this.checkForDuplicateAndFocusExisting(tab);
-    }
-  }
+    const urlChanged = !oldUrl || oldUrl.href !== newUrl.href;
+    const windowChanged = oldCachedInfo && oldCachedInfo.windowId !== tab.windowId;
 
-  isNewOrChangedUrl(oldUrl, newUrl) {
-    if (!(newUrl instanceof URL)) return false;
-    if (!(oldUrl instanceof URL)) return true; // If old doesn't exist, it's new/changed
-    return oldUrl.href !== newUrl.href;
-  }
-
-  updateUrlCache(tabId, oldUrl, newUrl, windowId) {
-    if (oldUrl instanceof URL) {
-      this.removeUrlFromCache(tabId, oldUrl);
-    }
-    if (newUrl instanceof URL) {
-       this.addUrlToCache(tabId, newUrl, windowId);
+    if (urlChanged || windowChanged) {
+      // console.log(`${LOG_PREFIX} URL/WindowId changed for tab ${tab.id}: ${oldUrl?.href} (Win ${oldCachedInfo?.windowId}) -> ${newUrl.href} (Win ${tab.windowId})`);
+      if (oldUrl) this._removeUrlFromCache(tab.id, oldUrl);
+      this._addUrlToCache(tab.id, newUrl, tab.windowId);
+      await this.checkForDuplicateAndFocusExisting(tab);
+    } else if (tab.status === 'complete') {
+      // URL href didn't change, but page might have internally redirected or finished loading.
+      // Re-check for duplicates to be safe.
+      await this.checkForDuplicateAndFocusExisting(tab);
     }
   }
 
   handleTabRemoved(tabId, removeInfo) {
-     if (removeInfo?.isWindowClosing) {
-        // console.log(`LunaTools: Window ${removeInfo.windowId} closing, removing its tabs from cache.`);
-        this.removeWindowTabsFromCache(removeInfo.windowId);
-        return;
-     }
+    if (removeInfo?.isWindowClosing) {
+      // console.log(`${LOG_PREFIX} Window ${removeInfo.windowId} closing, removing its tabs from cache.`);
+      this._removeWindowTabsFromCache(removeInfo.windowId);
+      return;
+    }
     const cachedInfo = this.urlCache.get(tabId);
     if (cachedInfo) {
-      // console.log(`LunaTools: Tab ${tabId} removed, removing URL ${cachedInfo.url.href} from cache.`);
-      this.removeUrlFromCache(tabId, cachedInfo.url);
+      // console.log(`${LOG_PREFIX} Tab ${tabId} removed, removing URL ${cachedInfo.url.href} from cache.`);
+      this._removeUrlFromCache(tabId, cachedInfo.url);
     }
   }
 
-  removeWindowTabsFromCache(windowId) {
-      let removedCount = 0;
-      const tabsToRemove = [];
-      for (const [tabId, cachedInfo] of this.urlCache.entries()) {
-          if (cachedInfo.windowId === windowId) {
-              tabsToRemove.push({ tabId, url: cachedInfo.url });
-          }
+  _removeWindowTabsFromCache(windowId) {
+    let removedCount = 0;
+    for (const [tabId, cachedInfo] of this.urlCache.entries()) {
+      if (cachedInfo.windowId === windowId) {
+        this._removeUrlFromCache(tabId, cachedInfo.url); // This also handles reverseUrlLookup
+        removedCount++;
       }
-      for (const { tabId, url } of tabsToRemove) {
-          this.removeUrlFromCache(tabId, url);
-          removedCount++;
-      }
-      // console.log(`LunaTools: Removed ${removedCount} tabs associated with closed window ${windowId} from cache.`);
+    }
+    // console.log(`${LOG_PREFIX} Removed ${removedCount} tabs associated with closed window ${windowId} from cache.`);
   }
 
-  getTabsWithParsedUrls(tabs) {
+  _getTabsWithParsedUrls(tabs) {
     return tabs.map(tab => {
-        const cachedInfo = this.urlCache.get(tab.id);
-        let parsedUrl = cachedInfo?.url;
+      const cachedInfo = this.urlCache.get(tab.id);
+      let parsedUrl = cachedInfo?.url;
 
-        if (!parsedUrl) {
-            const urlString = this.getTabUrl(tab);
-            if (urlString && urlString !== NEW_TAB_URL && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
-                try {
-                    parsedUrl = new URL(urlString);
-                    this.addUrlToCache(tab.id, parsedUrl, tab.windowId); // Cache if parsed successfully
-                } catch (e) {
-                    // console.warn(`LunaTools: Could not parse URL for tab ${tab.id} in getTabsWithParsedUrls: ${urlString}`, e);
-                    parsedUrl = null;
-                }
-            }
+      if (!parsedUrl) {
+        const urlString = this._getTabUrl(tab);
+        if (urlString && urlString !== NEW_TAB_URL && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
+          try {
+            parsedUrl = new URL(urlString);
+            this._addUrlToCache(tab.id, parsedUrl, tab.windowId); // Cache if parsed successfully
+          } catch (e) {
+            // console.warn(`${LOG_PREFIX} Could not parse URL for tab ${tab.id} in _getTabsWithParsedUrls: ${urlString}`, e);
+            parsedUrl = null;
+          }
         }
-        return { ...tab, parsedUrl };
+      }
+      return { ...tab, parsedUrl };
     });
   }
 
-  compareUrls(a, b) {
-    const aValid = a.parsedUrl instanceof URL;
-    const bValid = b.parsedUrl instanceof URL;
+  _compareUrls(tabA, tabB) {
+    const urlA = tabA.parsedUrl;
+    const urlB = tabB.parsedUrl;
 
-    if (!aValid && !bValid) return 0;
-    if (!aValid) return 1; // Invalid URLs go last
-    if (!bValid) return -1;
+    if (!urlA && !urlB) return 0;
+    if (!urlA) return 1; // Invalid URLs (null parsedUrl) go last
+    if (!urlB) return -1;
 
-    const hostnameDiff = a.parsedUrl.hostname.localeCompare(b.parsedUrl.hostname);
-    if (hostnameDiff !== 0) return hostnameDiff;
+    const hostCompare = urlA.hostname.localeCompare(urlB.hostname);
+    if (hostCompare !== 0) return hostCompare;
 
-    const pathnameDiff = a.parsedUrl.pathname.localeCompare(b.parsedUrl.pathname);
-    if (pathnameDiff !== 0) return pathnameDiff;
+    const pathCompare = urlA.pathname.localeCompare(urlB.pathname);
+    if (pathCompare !== 0) return pathCompare;
+    
+    const searchCompare = urlA.search.localeCompare(urlB.search);
+    if (searchCompare !== 0) return searchCompare;
 
-    const searchDiff = a.parsedUrl.search.localeCompare(b.parsedUrl.search);
-    if (searchDiff !== 0) return searchDiff;
-
-    return a.parsedUrl.hash.localeCompare(b.parsedUrl.hash); // Finally compare hash
+    return urlA.hash.localeCompare(urlB.hash);
   }
 
-  addUrlToCache(tabId, url, windowId) {
+  _addUrlToCache(tabId, url, windowId) {
     if (!(url instanceof URL) || typeof tabId !== 'number' || typeof windowId !== 'number') return;
 
     this.urlCache.set(tabId, { url, windowId });
+
     const urlKey = url.href;
-    const entries = this.reverseUrlLookup.get(urlKey) || [];
+    let entries = this.reverseUrlLookup.get(urlKey);
+    if (!entries) {
+      entries = [];
+      this.reverseUrlLookup.set(urlKey, entries);
+    }
+
     const existingEntryIndex = entries.findIndex(entry => entry.tabId === tabId);
-
     if (existingEntryIndex === -1) {
-       entries.push({ tabId, windowId });
-       if (entries.length === 1) { // Only set if it's the first entry for this key
-            this.reverseUrlLookup.set(urlKey, entries);
-       }
+      entries.push({ tabId, windowId });
     } else {
-        if (entries[existingEntryIndex].windowId !== windowId) {
-             // console.log(`LunaTools: Updating windowId for tab ${tabId} in reverse lookup for ${urlKey}`);
-             entries[existingEntryIndex].windowId = windowId;
-         }
-    }
-     // Ensure the map holds the potentially updated array reference if it wasn't the first entry
-    if (entries.length > 0 && !this.reverseUrlLookup.has(urlKey)) {
-        this.reverseUrlLookup.set(urlKey, entries);
-    }
-    // console.log(`LunaTools: Added/Updated tab ${tabId} (Win ${windowId}, URL ${urlKey}). Cache sizes: url=${this.urlCache.size}, reverse=${this.reverseUrlLookup.size}`);
-  }
-
-  removeUrlFromCache(tabId, url) {
-     if (!(url instanceof URL) || typeof tabId !== 'number') return;
-     this.urlCache.delete(tabId);
-     this.removeTabIdFromReverseLookup(tabId, url.href);
-     // console.log(`LunaTools: Removed tab ${tabId} (${url.href}) from cache. Cache sizes: url=${this.urlCache.size}, reverse=${this.reverseUrlLookup.size}`);
-  }
-
-  removeTabIdFromReverseLookup(tabId, urlKey) {
-      const entries = this.reverseUrlLookup.get(urlKey);
-      if (!entries) return;
-
-      const filteredEntries = entries.filter(entry => entry.tabId !== tabId);
-
-      if (filteredEntries.length === 0) {
-          this.reverseUrlLookup.delete(urlKey);
-          // console.log(`LunaTools: URL ${urlKey} removed from reverse lookup.`);
-      } else if (filteredEntries.length < entries.length) {
-           // Only update if something was actually removed
-           this.reverseUrlLookup.set(urlKey, filteredEntries);
-           // console.log(`LunaTools: Removed tab ${tabId} from reverse lookup for URL ${urlKey}.`);
+      // Update windowId if it changed (e.g., tab moved between windows)
+      if (entries[existingEntryIndex].windowId !== windowId) {
+        entries[existingEntryIndex].windowId = windowId;
       }
+    }
+    // console.log(`${LOG_PREFIX} Added/Updated tab ${tabId} (Win ${windowId}, URL ${urlKey}). Cache sizes: url=${this.urlCache.size}, reverse=${this.reverseUrlLookup.size}`);
+  }
+
+  _removeUrlFromCache(tabId, urlInstance) {
+    if (!(urlInstance instanceof URL) || typeof tabId !== 'number') return;
+    this.urlCache.delete(tabId);
+    this._removeTabIdFromReverseLookup(tabId, urlInstance.href);
+    // console.log(`${LOG_PREFIX} Removed tab ${tabId} (${urlInstance.href}) from cache. Cache sizes: url=${this.urlCache.size}, reverse=${this.reverseUrlLookup.size}`);
+  }
+
+  _removeTabIdFromReverseLookup(tabId, urlKey) {
+    const entries = this.reverseUrlLookup.get(urlKey);
+    if (!entries) return;
+
+    const filteredEntries = entries.filter(entry => entry.tabId !== tabId);
+
+    if (filteredEntries.length === 0) {
+      this.reverseUrlLookup.delete(urlKey);
+      // console.log(`${LOG_PREFIX} URL ${urlKey} removed from reverse lookup as no more tabs point to it.`);
+    } else if (filteredEntries.length < entries.length) {
+      this.reverseUrlLookup.set(urlKey, filteredEntries);
+      // console.log(`${LOG_PREFIX} Removed tab ${tabId} from reverse lookup for URL ${urlKey}.`);
+    }
   }
 
   async initializeCache() {
-        console.log("LunaTools: Initializing TabManager cache...");
-        this.urlCache.clear();
-        this.reverseUrlLookup.clear();
-        try {
-            const allTabs = await chrome.tabs.query({ windowType: 'normal' });
-            console.log(`LunaTools: Found ${allTabs.length} existing tabs to cache.`);
-            let cachedCount = 0;
-            allTabs.forEach(tab => {
-                 const urlString = this.getTabUrl(tab);
-                 if (urlString && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
-                     try {
-                        const parsedUrl = new URL(urlString);
-                        this.addUrlToCache(tab.id, parsedUrl, tab.windowId);
-                        cachedCount++;
-                     } catch(e) {
-                         console.warn(`LunaTools: Could not parse initial URL for tab ${tab.id}: ${urlString}`, e);
-                     }
-                 }
-            });
-            console.log(`LunaTools: Cache initialized. Cached ${cachedCount} tabs. urlCache size: ${this.urlCache.size}, reverseUrlLookup size: ${this.reverseUrlLookup.size}`);
-        } catch (error) {
-            console.error("LunaTools: Error initializing TabManager cache:", error);
+    console.log(`${LOG_PREFIX} Initializing TabManager cache...`);
+    this.urlCache.clear();
+    this.reverseUrlLookup.clear();
+    try {
+      const allTabs = await chrome.tabs.query({ windowType: 'normal' });
+      console.log(`${LOG_PREFIX} Found ${allTabs.length} existing tabs to cache.`);
+      let cachedCount = 0;
+      allTabs.forEach(tab => {
+        if (tab.id === undefined || tab.windowId === undefined) return; // Skip incomplete tab objects
+        const urlString = this._getTabUrl(tab);
+        if (urlString && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
+          try {
+            const parsedUrl = new URL(urlString);
+            this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
+            cachedCount++;
+          } catch (e) {
+            console.warn(`${LOG_PREFIX} Could not parse initial URL for tab ${tab.id}: ${urlString}`, e);
+          }
         }
+      });
+      console.log(`${LOG_PREFIX} Cache initialized. Cached ${cachedCount} tabs. urlCache size: ${this.urlCache.size}, reverseUrlLookup size: ${this.reverseUrlLookup.size}`);
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Error initializing TabManager cache:`, error);
     }
-} // End of TabManager class
+  }
+}
 
 // --- Initialization and Event Listeners ---
 const tabManager = new TabManager();
 
 // Initialize cache on startup
 (async () => {
-    await tabManager.initializeCache();
+  await tabManager.initializeCache();
 })();
 
 // Command Listener (Sort Tabs)
-chrome.commands.onCommand.addListener(async (command, tab) => {
+chrome.commands.onCommand.addListener(async (command) => {
   if (command === "sort-tabs") {
-    await tabManager.sortTabs();
+    await tabManager.sortTabsInCurrentWindow();
   }
 });
 
-// Message Listener (Gestures)
+// Message Listener (Gestures from content script)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.action === PERFORM_GESTURE_ACTION && message.gesture && sender?.tab?.id) {
+  if (message?.action === PERFORM_GESTURE_ACTION && message.gesture && sender?.tab?.id != null) {
     handleGestureAction(message.gesture, sender.tab.id);
-    // Return true to indicate async handling, although we don't use sendResponse here
-    return true;
+    return true; // Indicate async handling
   }
-  return false; // Indicate message not handled by this listener
+  return false; // Message not handled
 });
 
-// Action Listener (Merge Windows)
-chrome.action.onClicked.addListener(async (tab) => {
-  console.log("LunaTools: Browser action clicked.");
+// Action Listener (Merge Windows on icon click)
+chrome.action.onClicked.addListener(async () => {
+  console.log(`${LOG_PREFIX} Browser action clicked.`);
   await tabManager.mergeAllWindows();
 });
 
-// Tab Event Listeners (Managed by TabManager)
+// Tab Event Listeners
 chrome.tabs.onCreated.addListener((tab) => {
-    // Initial caching attempt on creation for faster duplicate detection potential
-    const urlString = tabManager.getTabUrl(tab);
-    if (urlString && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
-        try {
-            const parsedUrl = new URL(urlString);
-            tabManager.addUrlToCache(tab.id, parsedUrl, tab.windowId);
-        } catch (e) { /* Ignore invalid pending URLs */ }
-    }
+  if (tab.id === undefined || tab.windowId === undefined) return;
+  // Initial caching attempt for faster duplicate detection.
+  // URL might be pending, so handleTabUpdate will refine this.
+  const urlString = tabManager._getTabUrl(tab);
+  if (urlString && (urlString.startsWith('http:') || urlString.startsWith('https:'))) {
+    try {
+      const parsedUrl = new URL(urlString);
+      tabManager._addUrlToCache(tab.id, parsedUrl, tab.windowId);
+    } catch (e) { /* Ignore invalid pending URLs, onUpdated will handle */ }
+  }
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-    // Need full tab object with windowId. Prioritize event's tab object.
-    if (tab && typeof tab.windowId !== 'undefined') {
-        // Handle update if URL or status changes, or if it's just completed loading
-        if (changeInfo.url || changeInfo.status) {
-            await tabManager.handleTabUpdate(tab);
+  // Ensure we have a tab object with necessary properties
+  let tabToProcess = tab;
+  if (!tabToProcess || typeof tabToProcess.windowId === 'undefined' || typeof tabToProcess.id === 'undefined') {
+    if (changeInfo.status === 'complete' || changeInfo.url) { // Only fetch if there's a meaningful change
+        try {
+            tabToProcess = await chrome.tabs.get(tabId);
+        } catch (error) {
+            if (!tabManager._isTabNotFoundError(error)) {
+                console.warn(`${LOG_PREFIX} Error fetching full tab info for updated tab ${tabId}:`, error);
+            }
+            return; // Cannot process without tab info
         }
+    } else {
+        return; // Not enough info to process
     }
-    // If tab object in event is incomplete, but status is complete, fetch full tab info.
-    else if (changeInfo.status === 'complete') {
-         try {
-             const fullTab = await chrome.tabs.get(tabId);
-             if (fullTab) await tabManager.handleTabUpdate(fullTab);
-         } catch (error) {
-              if (!tabManager.isTabNotFoundError(error)) {
-                 console.warn(`LunaTools: Error fetching full tab info for updated tab ${tabId}:`, error);
-              }
-         }
-    }
+  }
+
+  if (tabToProcess && (changeInfo.url || changeInfo.status || changeInfo.pinned !== undefined || changeInfo.audible !== undefined)) {
+    await tabManager.handleTabUpdate(tabToProcess);
+  }
 });
 
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
@@ -676,21 +639,20 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
 });
 
 chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
-    // console.log(`LunaTools: Tab ${tabId} attached to window ${attachInfo.newWindowId}`);
-    try {
-        const tab = await chrome.tabs.get(tabId);
-        if (tab) await tabManager.handleTabUpdate(tab); // Treat as update to fix windowId in cache
-    } catch (error) {
-        if (!tabManager.isTabNotFoundError(error)) {
-           console.warn(`LunaTools: Error getting attached tab ${tabId} info:`, error);
-        }
+  // console.log(`${LOG_PREFIX} Tab ${tabId} attached to window ${attachInfo.newWindowId}`);
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab) await tabManager.handleTabUpdate(tab); // Treat as an update to correct windowId in cache
+  } catch (error) {
+    if (!tabManager._isTabNotFoundError(error)) {
+      console.warn(`${LOG_PREFIX} Error getting attached tab ${tabId} info:`, error);
     }
+  }
 });
 
-chrome.tabs.onDetached.addListener(async (tabId, detachInfo) => {
-     // console.log(`LunaTools: Tab ${tabId} detached from window ${detachInfo.oldWindowId}`);
-     // No immediate action needed, onAttached or onRemoved will handle the final state.
+chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
+  // console.log(`${LOG_PREFIX} Tab ${tabId} detached from window ${detachInfo.oldWindowId}`);
+  // No immediate action needed, onAttached to a new window or onRemoved will handle the final state and cache.
 });
 
-
-console.log("LunaTools: Background script loaded and listeners attached.");
+console.log(`${LOG_PREFIX} Background script loaded and listeners attached.`);
