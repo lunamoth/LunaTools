@@ -28,7 +28,7 @@
  4. LunaTools 폴더를 구글 크롬 확장 프로그램 설정으로 드래그앤드롭 합니다.
  5. 끝
 
-(크롬 웹 스토어 배포도 생각해봤는데 개인용으로 쓰려고 만들어서 과한것 같아서 깃허브 방식으로 배포합니다.)<br/>
+(크롬 웹 스토어 배포도 생각해 봤는데 개인용으로 쓰려고 만들어서 과한것 같아서 깃허브 방식으로 배포합니다.)<br/>
 <br><br/>
 
 ## 업데이트 내역
@@ -36,7 +36,7 @@
 * 2025-05-13 오후 3:38 // 1.2 릴리스, PiP 기능 추가
 * 2025-05-14 오전 12:58 // 1.3 릴리스, 코드 정리
 * 2025-05-14 오전 1:23 // 1.4 릴리스, 콘솔 로그 삭제
-* 2025-05-14 오후 9:31 // 1.5 릴리스, 코드 정리, PiP 기능 개선 ([PIP screen for html5 video](https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg?hl=ko) 확장 프로그램 코드 참고했습니다. 개발자 분에게 소스 코드 참고 허락 받았습니다. 허락 감사드립니다.)
+* 2025-05-14 오후 9:31 // 1.5 릴리스, 코드 정리, PiP 기능 개선 ([PIP screen for html5 video](https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg?hl=ko) 확장 프로그램 코드 참고했습니다. 개발자분에게 소스 코드 참고 허락 받았습니다. 허락 감사드립니다.)
 <br/><br>
 
 ## 알려진 문제
