@@ -10,6 +10,7 @@
     static MIN_DRAG_DISTANCE_SQ = 100; // 10px * 10px
     static MIN_FINAL_DISTANCE_SQ = 625; // 25px * 25px
     static MESSAGE_ACTION = 'perform-gesture';
+    static RIGHT_MOUSE_BUTTON = 2;
 
     constructor() {
       this.isMouseDown = false;
@@ -30,14 +31,16 @@
     }
 
     _initializeEventListeners() {
-      const passiveOptions = { capture: true, passive: true };
-      const captureOptions = { capture: true };
+      // Options must be identical for addEventListener and removeEventListener
+      this.mouseMoveOptions = { capture: true, passive: true };
+      this.blurOptions = { capture: true, passive: true };
+      this.captureOptions = { capture: true };
 
-      window.addEventListener('mousedown', this.handleMouseDown, captureOptions);
-      window.addEventListener('mousemove', this.handleMouseMove, passiveOptions);
-      window.addEventListener('mouseup', this.handleMouseUp, captureOptions);
-      window.addEventListener('contextmenu', this.handleContextMenu, captureOptions);
-      window.addEventListener('blur', this.handleBlur, passiveOptions);
+      window.addEventListener('mousedown', this.handleMouseDown, this.captureOptions);
+      window.addEventListener('mousemove', this.handleMouseMove, this.mouseMoveOptions);
+      window.addEventListener('mouseup', this.handleMouseUp, this.captureOptions);
+      window.addEventListener('contextmenu', this.handleContextMenu, this.captureOptions);
+      window.addEventListener('blur', this.handleBlur, this.blurOptions);
     }
 
     _resetState() {
@@ -46,7 +49,7 @@
     }
 
     handleMouseDown(event) {
-      if (event.button !== 2) return;
+      if (event.button !== MouseGestureHandler.RIGHT_MOUSE_BUTTON) return;
 
       this.isMouseDown = true;
       this.startX = event.clientX;
@@ -66,7 +69,9 @@
 
     handleMouseUp(event) {
       if (!this.isMouseDown) return;
-      if (event.button !== 2) {
+      // If mouseup is not the right button (e.g., another button was pressed while right was held),
+      // reset state but don't process as a gesture.
+      if (event.button !== MouseGestureHandler.RIGHT_MOUSE_BUTTON) {
         this._resetState();
         return;
       }
@@ -76,6 +81,9 @@
       if (gestureDirection) {
         this._sendGestureMessage(gestureDirection);
       }
+      // Note: ContextMenu event will handle final _resetState if didMove is true
+      // If didMove is false, context menu appears, and state resets there too.
+      // If gestureDirection is null (not enough movement), context menu also resets.
     }
 
     _determineGestureDirection(endX, endY) {
@@ -98,7 +106,7 @@
         chrome.runtime.sendMessage({ action: MouseGestureHandler.MESSAGE_ACTION, gesture });
       } catch (error) {
         if (error.message?.includes("Extension context invalidated")) {
-          // Context invalidated, usually means extension was updated/reloaded.
+          // Context invalidated, usually means extension was updated/reloaded. Silently ignore.
         } else {
           console.error(`${SCRIPT_NAME}: Gesture: Failed to send message to background.`, error);
         }
@@ -109,13 +117,21 @@
       if (this.didMove) {
         event.preventDefault();
       }
-      this._resetState();
+      this._resetState(); // Always reset state on contextmenu event, which follows right mouse up.
     }
 
     handleBlur() {
       if (this.isMouseDown) {
         this._resetState();
       }
+    }
+
+    destroy() {
+      window.removeEventListener('mousedown', this.handleMouseDown, this.captureOptions);
+      window.removeEventListener('mousemove', this.handleMouseMove, this.mouseMoveOptions);
+      window.removeEventListener('mouseup', this.handleMouseUp, this.captureOptions);
+      window.removeEventListener('contextmenu', this.handleContextMenu, this.captureOptions);
+      window.removeEventListener('blur', this.handleBlur, this.blurOptions);
     }
   }
 
@@ -150,7 +166,7 @@
       }
     });
 
-    const KB_NAV_Logger = { // Minimal logger for release
+    const KB_NAV_Logger = {
       error: (...args) => console.error(`${SCRIPT_NAME}: KB Nav:`, ...args),
     };
 
@@ -204,6 +220,7 @@
           this.cache.delete(key);
           return undefined;
         }
+        // Move to end to mark as recently used
         this.cache.delete(key);
         this.cache.set(key, item);
         return item.value;
@@ -213,6 +230,7 @@
         if (this.cache.has(key)) {
           this.cache.delete(key);
         } else if (this.cache.size >= this.maxSize) {
+          // Evict least recently used (first item in map iteration)
           const leastUsedKey = this.cache.keys().next().value;
           this.cache.delete(leastUsedKey);
         }
@@ -249,12 +267,12 @@
           if (isNaN(pageNumber) || pageNumber < KB_NAV_CONFIG.navigation.MIN_PAGE || pageNumber > KB_NAV_CONFIG.navigation.MAX_PAGE) {
             continue;
           }
-          
+
           const patternInfo = { regex: pattern, currentPage: pageNumber, originalMatch: match[0] };
           this.urlPatternCache.set(url, patternInfo);
           return patternInfo;
         }
-        this.urlPatternCache.set(url, null);
+        this.urlPatternCache.set(url, null); // Cache negative result
         return null;
       }
 
@@ -265,7 +283,7 @@
         newPage = Math.min(KB_NAV_CONFIG.navigation.MAX_PAGE, newPage);
 
         if (newPage === currentPage) return currentUrl;
-        
+
         const newPageStringInMatch = originalMatch.replace(String(currentPage), String(newPage));
         return currentUrl.replace(originalMatch, newPageStringInMatch);
       }
@@ -275,7 +293,7 @@
       }
 
       clearCache() { this.urlPatternCache.clear(); }
-      
+
       destroy() {
         clearInterval(this.cleanupInterval);
         this.clearCache();
@@ -286,29 +304,26 @@
       constructor() {
         this.cachedLinks = null;
         this.observer = null;
-        this.observerTarget = null;
+        this.observerTarget = null; // Set in _initializeObserver
         this.isObserving = false;
         this.stopLifecycleTimer = null;
         this.reactivationInterval = null;
         this.throttledReactivateObserver = null;
-        this.eventListeners = [];
+        this.eventListeners = []; // To keep track of listeners for reactivation
 
         this._debouncedInvalidateCache = KB_NAV_Utils.debounce(() => {
             this.cachedLinks = null;
         }, KB_NAV_CONFIG.observer.DEBOUNCE_DELAY_MS);
-        
+
         this._initializeObserver();
       }
 
       _initializeObserver() {
-        this._findObserverTarget();
-        if (!this.observerTarget) {
-            this.observerTarget = document.body;
-        }
+        this._findObserverTarget(); // This will set this.observerTarget
         this.observer = new MutationObserver(() => {
           if (this.isObserving) this._debouncedInvalidateCache();
         });
-        this.startObserving();
+        this.startObserving(); // Start observing immediately
       }
 
       _findObserverTarget() {
@@ -320,7 +335,7 @@
             return;
           }
         }
-        this.observerTarget = document.body;
+        this.observerTarget = document.body; // Fallback if no specific selectors match
       }
 
       startObserving() {
@@ -332,7 +347,7 @@
             this._setupObserverDeactivationTimer();
           } catch (error) {
             KB_NAV_Logger.error("Error starting MutationObserver:", error);
-            this.isObserving = false;
+            this.isObserving = false; // Ensure state is correct on error
           }
         }
       }
@@ -355,19 +370,20 @@
       }
 
       _setupReactivationTriggers() {
-        this._clearReactivationTriggers();
+        this._clearReactivationTriggers(); // Ensure no old triggers remain
         const reactivate = () => {
             if (!this.isObserving) {
                 this.startObserving();
             }
         };
         this.throttledReactivateObserver = KB_NAV_Utils.throttle(reactivate, KB_NAV_CONFIG.observer.REACTIVATION_THROTTLE_MS);
-        
+
         const eventsToMonitor = ['scroll', 'click', 'keydown'];
         eventsToMonitor.forEach(eventType => {
           const listener = this.throttledReactivateObserver;
-          window.addEventListener(eventType, listener, { passive: true, capture: true });
-          this.eventListeners.push({ type: eventType, listener, options: { passive: true, capture: true } });
+          const options = { passive: true, capture: true };
+          window.addEventListener(eventType, listener, options);
+          this.eventListeners.push({ type: eventType, listener, options });
         });
         this.reactivationInterval = setInterval(reactivate, KB_NAV_CONFIG.observer.REACTIVATION_INTERVAL_MS);
       }
@@ -375,7 +391,7 @@
       _clearReactivationTriggers() {
         if (this.reactivationInterval) clearInterval(this.reactivationInterval);
         this.reactivationInterval = null;
-        
+
         if (this.throttledReactivateObserver) this.throttledReactivateObserver.cancel();
         this.throttledReactivateObserver = null;
 
@@ -388,10 +404,11 @@
         if (element.isContentEditable) return true;
 
         const tagName = element.tagName.toUpperCase();
-        const type = element.type?.toLowerCase();
+        const type = element.type?.toLowerCase(); // Optional chaining for type
 
         switch (tagName) {
           case 'INPUT':
+            // Exclude non-textual or non-editable input types
             return !['button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'range', 'color', 'file'].includes(type) &&
                    !(element.disabled || element.readOnly);
           case 'TEXTAREA':
@@ -410,26 +427,31 @@
         let prevLink = null;
 
         for (const link of links) {
+          // Ensure link is valid, visible, and not pointing to the current page
           if (!link.href || link.href === window.location.href || !link.offsetParent) continue;
-          
+
           if (link.rel === 'next' && !nextLink) nextLink = link;
           if (link.rel === 'prev' && !prevLink) prevLink = link;
-          if (nextLink && prevLink) break;
+          if (nextLink && prevLink) break; // Found both, no need to continue
         }
         this.cachedLinks = { nextLink, prevLink };
         return this.cachedLinks;
       }
-      
+
       destroy() {
-        this.stopObserving();
-        this._debouncedInvalidateCache.cancel();
+        this.stopObserving(); // Also cancels debouncedInvalidateCache
         this._clearReactivationTriggers();
         this.cachedLinks = null;
+        // No need to explicitly nullify this.observer or this.observerTarget,
+        // they will be garbage collected if this instance is no longer referenced.
       }
     }
 
     class KeyboardPageNavigator {
       static instance = null;
+
+      static NAV_KEYS_SET = new Set(['ArrowLeft', 'ArrowRight']);
+      static KEY_ARROW_RIGHT = 'ArrowRight';
 
       constructor() {
         if (KeyboardPageNavigator.instance) {
@@ -439,13 +461,13 @@
 
         this.urlPageFinder = new KB_NAV_UrlPageFinder();
         this.domLinkFinder = new KB_NAV_DomLinkFinder();
-        this.isNavigating = false;
+        this.isNavigating = false; // Prevents multiple navigations from rapid key presses
 
         this._debouncedProcessKey = KB_NAV_Utils.debounce(
           this._processNavigationKey.bind(this),
           KB_NAV_CONFIG.navigation.DEBOUNCE_DELAY_MS
         );
-        
+
         this._bindEventHandlers();
         this._initializeEventListeners();
       }
@@ -463,30 +485,35 @@
       }
 
       _handlePageShow(event) {
+        // Reset state if page is shown from back/forward cache (bfcache)
         if (event.persisted) {
           this.isNavigating = false;
-          this.urlPageFinder.clearCache();
+          this.urlPageFinder.clearCache(); // URL might have changed parameters not visible to script
+          // Re-initialize DOM dependent parts as DOM might be stale
           this.domLinkFinder.destroy();
           this.domLinkFinder = new KB_NAV_DomLinkFinder();
         }
       }
 
       _handlePageHide(event) {
+          // If page is not being persisted in bfcache, it's likely being unloaded.
           if (!event.persisted) {
               this.destroy();
           }
       }
 
       _handleKeyDown(event) {
-        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        if (!KeyboardPageNavigator.NAV_KEYS_SET.has(event.key)) return;
         if (this._shouldIgnoreKeyEvent(event)) return;
 
         event.preventDefault();
         event.stopPropagation();
-        this._debouncedProcessKey(event.key === 'ArrowRight' ? 1 : -1);
+        const direction = event.key === KeyboardPageNavigator.KEY_ARROW_RIGHT ? 1 : -1;
+        this._debouncedProcessKey(direction);
       }
 
       _shouldIgnoreKeyEvent(event) {
+        // Ignore if modifier keys are pressed, or if focus is on an input field
         if (event.altKey || event.ctrlKey || event.metaKey) return true;
         return document.activeElement && this.domLinkFinder.isElementFocusableInput(document.activeElement);
       }
@@ -498,28 +525,33 @@
         if (this.urlPageFinder.shouldIgnoreUrl(currentUrl)) {
           return;
         }
-        
+
         const targetUrl = this._determineTargetUrl(currentUrl, direction);
 
         if (targetUrl && targetUrl !== currentUrl) {
           this.isNavigating = true;
           window.location.href = targetUrl;
+          // isNavigating will be reset by pageshow if navigation is successful,
+          // or by _resetNavigationFlagAfterDelay if it fails or is very fast.
         } else {
-          this._resetNavigationFlagAfterDelay(); 
+          // If no target URL, or target is same as current, reset flag after a short delay
+          this._resetNavigationFlagAfterDelay();
         }
       }
 
       _determineTargetUrl(currentUrl, direction) {
+        // Prioritize URL-based navigation
         const urlPatternInfo = this.urlPageFinder.findPagePattern(currentUrl);
         if (urlPatternInfo) {
           return this.urlPageFinder.generateNewUrl(currentUrl, urlPatternInfo, direction);
         }
 
+        // Fallback to DOM-based link finding
         const domLinks = this.domLinkFinder.findNavigationLinks();
         if (direction > 0 && domLinks.nextLink) return domLinks.nextLink.href;
         if (direction < 0 && domLinks.prevLink) return domLinks.prevLink.href;
-        
-        return null;
+
+        return null; // No navigation target found
       }
 
       _resetNavigationFlagAfterDelay() {
@@ -527,23 +559,27 @@
             this.isNavigating = false;
          }, KB_NAV_CONFIG.navigation.RESET_DELAY_MS);
       }
-      
+
       destroy() {
         document.removeEventListener('keydown', this._handleKeyDown);
         window.removeEventListener('pageshow', this._handlePageShow);
         window.removeEventListener('pagehide', this._handlePageHide);
-        
+
         this._debouncedProcessKey.cancel();
-        this.urlPageFinder.destroy();
-        this.domLinkFinder.destroy();
+        if (this.urlPageFinder) this.urlPageFinder.destroy();
+        if (this.domLinkFinder) this.domLinkFinder.destroy();
+
         KeyboardPageNavigator.instance = null;
       }
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => new KeyboardPageNavigator());
-    } else {
-        new KeyboardPageNavigator();
+    // Initialize only if not already initialized (e.g., script re-injection scenario)
+    if (!KeyboardPageNavigator.instance) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => new KeyboardPageNavigator());
+        } else {
+            new KeyboardPageNavigator();
+        }
     }
   }
 
@@ -552,8 +588,8 @@
   // === PICTURE-IN-PICTURE (PiP) HANDLER                              ===
   // =======================================================================
   class PictureInPictureHandler {
-    // Attributes that might restrict PiP mode
     static PIP_RESTRICTED_ATTRIBUTES = ['disablePictureInPicture', 'disableRemotePlayback', 'playsinline'];
+    static PIP_KEY = 'P';
 
     constructor() {
       this._boundHandleKeyDown = this._handleKeyDown.bind(this);
@@ -561,7 +597,7 @@
     }
 
     _initializeEventListeners() {
-      document.addEventListener('keydown', this._boundHandleKeyDown, true);
+      document.addEventListener('keydown', this._boundHandleKeyDown, true); // Use capture phase
     }
 
     _findBestVideoCandidate() {
@@ -569,21 +605,22 @@
       if (videos.length === 0) return null;
 
       const isPlayableAndVisible = (v) =>
-        v.readyState > 2 && 
-        v.hasAttribute('src') && v.currentSrc &&
-        v.offsetHeight > 0 && v.offsetWidth > 0;
+        v.readyState > 2 && // HAVE_CURRENT_DATA or more
+        v.hasAttribute('src') && v.currentSrc && // Has a source
+        v.offsetHeight > 0 && v.offsetWidth > 0; // Is visible
 
       const scoreVideo = (v) => {
         let score = 0;
         if (isPlayableAndVisible(v)) score += 100;
-        if (!v.paused) score += 50;
-        if (!v.muted) score += 20;
+        if (!v.paused) score += 50; // Prefer playing videos
+        if (!v.muted) score += 20;  // Prefer unmuted videos
+        // Prefer larger videos, cap score contribution
         score += Math.min(v.offsetWidth * v.offsetHeight, 1000000) / 10000;
         return score;
       };
-      
-      videos.sort((a, b) => scoreVideo(b) - scoreVideo(a));
-      
+
+      videos.sort((a, b) => scoreVideo(b) - scoreVideo(a)); // Sort descending by score
+
       return (videos.length > 0 && isPlayableAndVisible(videos[0])) ? videos[0] : null;
     }
 
@@ -593,17 +630,38 @@
                 try {
                     videoElement.removeAttribute(attr);
                 } catch (e) {
-                    // Silently ignore if an attribute can't be removed,
-                    // as it might be non-configurable by the website.
+                    // Silently ignore if an attribute can't be removed (e.g., non-configurable by website)
                 }
             }
-            // As a fallback or alternative, also try setting to false if removal isn't enough or fails.
-            // This part is a bit redundant if removeAttribute works, but can be a safety net.
-            // However, for simplicity and focusing on removeAttribute first:
-            // if (attr === 'disablePictureInPicture' && videoElement.disablePictureInPicture) {
-            //     try { videoElement.disablePictureInPicture = false; } catch (e) {}
-            // }
         });
+    }
+
+    async _attemptEnterPiPWithOverrides(targetVideo) {
+        // This method is called if the initial PiP request failed,
+        // likely due to 'disablePictureInPicture' still being effective.
+        if (targetVideo.disablePictureInPicture) { // Check if attribute is still effectively true
+            try {
+                // Attempt to make disablePictureInPicture configurable and writable, then set to false.
+                Object.defineProperty(targetVideo, 'disablePictureInPicture', {
+                    configurable: true, writable: true, value: false
+                });
+                // If defineProperty didn't throw but the value is still true (e.g., non-configurable getter),
+                // try direct assignment as a fallback.
+                if (targetVideo.disablePictureInPicture) {
+                    targetVideo.disablePictureInPicture = false;
+                }
+            } catch (eDefineProp) {
+                // If defineProperty fails (e.g., property is not configurable), try direct assignment.
+                try {
+                    targetVideo.disablePictureInPicture = false;
+                } catch (eDirectAssign) {
+                    // Both defineProperty and direct assignment failed.
+                    // The final PiP request attempt below will likely fail and be logged.
+                }
+            }
+        }
+        // Attempt PiP one last time after explicit modifications
+        await targetVideo.requestPictureInPicture();
     }
 
     async toggle() {
@@ -615,69 +673,52 @@
         }
         return;
       }
-      
+
       const targetVideo = this._findBestVideoCandidate();
       if (!targetVideo) {
+        // No suitable video found, do nothing.
         return;
       }
 
-      // Attempt to remove restrictions before any PiP request
       this._removePiPRestrictions(targetVideo);
 
       try {
-        // Attempt 1: Direct request after trying to remove restrictions
+        // First attempt to enter PiP after basic restriction removal
         await targetVideo.requestPictureInPicture();
         this._addLeavePiPListener(targetVideo);
-        return;
       } catch (initialError) {
-        // If direct request fails even after trying to remove attributes,
-        // it's likely a strong restriction or an issue with video state.
-        // Further attempts to modify `disablePictureInPicture` via `Object.defineProperty`
-        // or direct assignment might be redundant if `removeAttribute` was the primary strategy
-        // and it didn't suffice.
-        // However, for maximum compatibility, we can still try the old way as a last resort
-        // if the error specifically mentions "disablePictureInPicture" attribute.
-
-        if (initialError.name === 'InvalidStateError' && initialError.message.includes('disablePictureInPicture')) {
-            // The error indicates 'disablePictureInPicture' is still an issue.
-            // Try the older method of setting it to false explicitly as a fallback.
-            if (targetVideo.disablePictureInPicture) { // Check if it's still true
-                try {
-                    Object.defineProperty(targetVideo, 'disablePictureInPicture', {
-                        configurable: true, writable: true, value: false
-                    });
-                    if (targetVideo.disablePictureInPicture) {
-                        targetVideo.disablePictureInPicture = false;
-                    }
-                } catch (eDefProp) {
-                    try {
-                        targetVideo.disablePictureInPicture = false;
-                    } catch (eDirectAssign) { /* Both failed */ }
-                }
-            }
-            // Attempt PiP one last time after this explicit modification
+        // If the initial attempt failed, check if it's related to PiP being disabled.
+        // Error messages can vary, check for common indicators.
+        const isPipDisabledError = initialError.name === 'InvalidStateError' &&
+                                   (initialError.message.includes('disablePictureInPicture') ||
+                                    initialError.message.toLowerCase().includes('picture-in-picture is disabled'));
+        
+        if (isPipDisabledError) {
             try {
-                await targetVideo.requestPictureInPicture();
+                // Try more aggressive overrides if the specific error was caught
+                await this._attemptEnterPiPWithOverrides(targetVideo);
                 this._addLeavePiPListener(targetVideo);
-                return; // Success on final attempt
             } catch (finalAttemptError) {
+                // Log only if all attempts, including overrides, fail.
                 console.error(`${SCRIPT_NAME}: PiP: All attempts to enter PiP mode failed. Final Error:`, finalAttemptError.name, finalAttemptError.message);
             }
         } else {
-            // For other errors, or if 'disablePictureInPicture' wasn't the specific cause mentioned in initialError
-            console.error(`${SCRIPT_NAME}: PiP: Error entering PiP mode after restriction removal. Initial Error:`, initialError.name, initialError.message);
+            // Log other types of errors from the initial attempt.
+            console.error(`${SCRIPT_NAME}: PiP: Error entering PiP mode. Initial Error:`, initialError.name, initialError.message);
         }
       }
     }
-    
+
     _addLeavePiPListener(videoElement) {
+        // Listener for when PiP mode is exited (e.g., by user closing PiP window)
         videoElement.addEventListener('leavepictureinpicture', () => {
-            // No log needed for this event in release
+            // No specific action needed here for now, but listener is good practice.
+            // console.log(`${SCRIPT_NAME}: PiP: Video left PiP mode.`); // Example log, removed for release
         }, { once: true });
     }
 
     _handleKeyDown(event) {
-      if (!(event.ctrlKey && event.shiftKey && (event.key === 'P' || event.key === 'p'))) {
+      if (!(event.ctrlKey && event.shiftKey && event.key.toUpperCase() === PictureInPictureHandler.PIP_KEY)) {
         return;
       }
 
@@ -688,6 +729,7 @@
       );
 
       if (isEditableContext) {
+        // Don't interfere with typing in input fields
         return;
       }
 
