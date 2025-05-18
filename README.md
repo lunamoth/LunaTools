@@ -39,6 +39,7 @@
 * 2025-05-14 오전 12:58 // 1.3 릴리스, 코드 정리
 * 2025-05-14 오전 1:23 // 1.4 릴리스, 콘솔 로그 삭제
 * 2025-05-14 오후 9:31 // 1.5 릴리스, 코드 정리, PiP 기능 개선 ([PIP screen for html5 video](https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg?hl=ko) 확장 프로그램 코드 참고했습니다. 개발자분에게 소스 코드 참고 허락 받았습니다. 허락 감사드립니다.)
+* 2025-05-18 오후 7:35 // 1.6 릴리스, 코드 정리
 <br/><br>
 
 ## 알려진 문제
