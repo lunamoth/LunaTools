@@ -135,18 +135,24 @@
     }
   }
 
-  // Initialize MouseGestureHandler only if not in Microsoft Edge
+  // Initialize MouseGestureHandler based on browser type
   const userAgent = navigator.userAgent;
-  // Modern Chromium-based Edge uses "Edg/" in its user agent string.
-  // Older EdgeHTML-based Edge used "Edge/", but this extension targets manifest v3,
-  // so users are likely on Chromium-based browsers.
-  const isMicrosoftEdge = userAgent.includes("Edg/");
+  const browsersToDisableGesturesFor = [
+    "Edg/",    // Microsoft Edge (Chromium-based)
+    "OPR/",    // Opera
+    "Whale/",  // Naver Whale
+    "Vivaldi/" // Vivaldi
+  ];
 
-  if (!isMicrosoftEdge) {
+  const shouldDisableGestures = browsersToDisableGesturesFor.some(browserIdentifier =>
+    userAgent.includes(browserIdentifier)
+  );
+
+  if (!shouldDisableGestures) {
     new MouseGestureHandler();
   } else {
-    // Optional: Log to console if gestures are disabled. Useful for debugging.
-    // console.log(`${SCRIPT_NAME}: Mouse gestures are disabled in Microsoft Edge.`);
+    // Optional: Log to console if gestures are disabled for the current browser.
+    // console.log(`${SCRIPT_NAME}: Mouse gestures are disabled in this browser (${userAgent}).`);
   }
 
   // =======================================================================
