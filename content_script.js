@@ -69,8 +69,6 @@
 
     handleMouseUp(event) {
       if (!this.isMouseDown) return;
-      // If mouseup is not the right button (e.g., another button was pressed while right was held),
-      // reset state but don't process as a gesture.
       if (event.button !== MouseGestureHandler.RIGHT_MOUSE_BUTTON) {
         this._resetState();
         return;
@@ -81,9 +79,6 @@
       if (gestureDirection) {
         this._sendGestureMessage(gestureDirection);
       }
-      // Note: ContextMenu event will handle final _resetState if didMove is true
-      // If didMove is false, context menu appears, and state resets there too.
-      // If gestureDirection is null (not enough movement), context menu also resets.
     }
 
     _determineGestureDirection(endX, endY) {
@@ -117,7 +112,7 @@
       if (this.didMove) {
         event.preventDefault();
       }
-      this._resetState(); // Always reset state on contextmenu event, which follows right mouse up.
+      this._resetState();
     }
 
     handleBlur() {
@@ -135,24 +130,15 @@
     }
   }
 
-  // Initialize MouseGestureHandler based on browser type
   const userAgent = navigator.userAgent;
   const browsersToDisableGesturesFor = [
-    "Edg/",    // Microsoft Edge (Chromium-based)
-    "OPR/",    // Opera
-    "Whale/",  // Naver Whale
-    "Vivaldi/" // Vivaldi
+    "Edg/", "OPR/", "Whale/", "Vivaldi/"
   ];
-
   const shouldDisableGestures = browsersToDisableGesturesFor.some(browserIdentifier =>
     userAgent.includes(browserIdentifier)
   );
-
   if (!shouldDisableGestures) {
     new MouseGestureHandler();
-  } else {
-    // Optional: Log to console if gestures are disabled for the current browser.
-    // console.log(`${SCRIPT_NAME}: Mouse gestures are disabled in this browser (${userAgent}).`);
   }
 
   // =======================================================================
@@ -229,34 +215,27 @@
         this.maxAgeMs = maxAgeMs;
         this.cache = new Map();
       }
-
       get(key) {
         if (!this.cache.has(key)) return undefined;
-
         const item = this.cache.get(key);
         if (Date.now() - item.timestamp > this.maxAgeMs) {
           this.cache.delete(key);
           return undefined;
         }
-        // Move to end to mark as recently used
         this.cache.delete(key);
         this.cache.set(key, item);
         return item.value;
       }
-
       set(key, value) {
         if (this.cache.has(key)) {
           this.cache.delete(key);
         } else if (this.cache.size >= this.maxSize) {
-          // Evict least recently used (first item in map iteration)
           const leastUsedKey = this.cache.keys().next().value;
           this.cache.delete(leastUsedKey);
         }
         this.cache.set(key, { value, timestamp: Date.now() });
       }
-
       clear() { this.cache.clear(); }
-
       removeExpired() {
         const now = Date.now();
         for (const [key, item] of this.cache.entries()) {
@@ -272,46 +251,36 @@
         this.urlPatternCache = new KB_NAV_LRUCache(KB_NAV_CONFIG.cache.MAX_SIZE, KB_NAV_CONFIG.cache.MAX_AGE_MS);
         this.cleanupInterval = setInterval(() => this.urlPatternCache.removeExpired(), KB_NAV_CONFIG.cache.MAX_AGE_MS / 2);
       }
-
       findPagePattern(url) {
         const cachedResult = this.urlPatternCache.get(url);
         if (cachedResult !== undefined) return cachedResult;
-
         for (const pattern of KB_NAV_CONFIG.patterns.url) {
           const match = pattern.exec(url);
           if (!match || !match[1]) continue;
-
           const pageNumber = parseInt(match[1], 10);
           if (isNaN(pageNumber) || pageNumber < KB_NAV_CONFIG.navigation.MIN_PAGE || pageNumber > KB_NAV_CONFIG.navigation.MAX_PAGE) {
             continue;
           }
-
           const patternInfo = { regex: pattern, currentPage: pageNumber, originalMatch: match[0] };
           this.urlPatternCache.set(url, patternInfo);
           return patternInfo;
         }
-        this.urlPatternCache.set(url, null); // Cache negative result
+        this.urlPatternCache.set(url, null);
         return null;
       }
-
       generateNewUrl(currentUrl, patternInfo, direction) {
         const { currentPage, originalMatch } = patternInfo;
         let newPage = currentPage + direction;
         newPage = Math.max(KB_NAV_CONFIG.navigation.MIN_PAGE, newPage);
         newPage = Math.min(KB_NAV_CONFIG.navigation.MAX_PAGE, newPage);
-
         if (newPage === currentPage) return currentUrl;
-
         const newPageStringInMatch = originalMatch.replace(String(currentPage), String(newPage));
         return currentUrl.replace(originalMatch, newPageStringInMatch);
       }
-
       shouldIgnoreUrl(url) {
         return KB_NAV_CONFIG.patterns.ignore.some(pattern => pattern.test(url));
       }
-
       clearCache() { this.urlPatternCache.clear(); }
-
       destroy() {
         clearInterval(this.cleanupInterval);
         this.clearCache();
@@ -322,28 +291,24 @@
       constructor() {
         this.cachedLinks = null;
         this.observer = null;
-        this.observerTarget = null; // Set in _initializeObserver
+        this.observerTarget = null;
         this.isObserving = false;
         this.stopLifecycleTimer = null;
         this.reactivationInterval = null;
         this.throttledReactivateObserver = null;
-        this.eventListeners = []; // To keep track of listeners for reactivation
-
+        this.eventListeners = [];
         this._debouncedInvalidateCache = KB_NAV_Utils.debounce(() => {
             this.cachedLinks = null;
         }, KB_NAV_CONFIG.observer.DEBOUNCE_DELAY_MS);
-
         this._initializeObserver();
       }
-
       _initializeObserver() {
-        this._findObserverTarget(); // This will set this.observerTarget
+        this._findObserverTarget();
         this.observer = new MutationObserver(() => {
           if (this.isObserving) this._debouncedInvalidateCache();
         });
-        this.startObserving(); // Start observing immediately
+        this.startObserving();
       }
-
       _findObserverTarget() {
         const selectors = [...KB_NAV_CONFIG.observer.TARGET_SELECTORS, ...KB_NAV_CONFIG.observer.FALLBACK_TARGET_SELECTORS];
         for (const selector of selectors) {
@@ -353,9 +318,8 @@
             return;
           }
         }
-        this.observerTarget = document.body; // Fallback if no specific selectors match
+        this.observerTarget = document.body;
       }
-
       startObserving() {
         if (this.observer && this.observerTarget && !this.isObserving) {
           try {
@@ -365,11 +329,10 @@
             this._setupObserverDeactivationTimer();
           } catch (error) {
             KB_NAV_Logger.error("Error starting MutationObserver:", error);
-            this.isObserving = false; // Ensure state is correct on error
+            this.isObserving = false;
           }
         }
       }
-
       stopObserving() {
         if (this.observer && this.isObserving) {
           this._debouncedInvalidateCache.cancel();
@@ -379,23 +342,20 @@
           this.stopLifecycleTimer = null;
         }
       }
-
       _setupObserverDeactivationTimer() {
         this.stopLifecycleTimer = setTimeout(() => {
           this.stopObserving();
           this._setupReactivationTriggers();
         }, KB_NAV_CONFIG.observer.MAX_OBSERVE_TIME_MS);
       }
-
       _setupReactivationTriggers() {
-        this._clearReactivationTriggers(); // Ensure no old triggers remain
+        this._clearReactivationTriggers();
         const reactivate = () => {
             if (!this.isObserving) {
                 this.startObserving();
             }
         };
         this.throttledReactivateObserver = KB_NAV_Utils.throttle(reactivate, KB_NAV_CONFIG.observer.REACTIVATION_THROTTLE_MS);
-
         const eventsToMonitor = ['scroll', 'click', 'keydown'];
         eventsToMonitor.forEach(eventType => {
           const listener = this.throttledReactivateObserver;
@@ -405,28 +365,21 @@
         });
         this.reactivationInterval = setInterval(reactivate, KB_NAV_CONFIG.observer.REACTIVATION_INTERVAL_MS);
       }
-
       _clearReactivationTriggers() {
         if (this.reactivationInterval) clearInterval(this.reactivationInterval);
         this.reactivationInterval = null;
-
         if (this.throttledReactivateObserver) this.throttledReactivateObserver.cancel();
         this.throttledReactivateObserver = null;
-
         this.eventListeners.forEach(({ type, listener, options }) => window.removeEventListener(type, listener, options));
         this.eventListeners = [];
       }
-
       isElementFocusableInput(element) {
         if (!element) return false;
         if (element.isContentEditable) return true;
-
         const tagName = element.tagName.toUpperCase();
-        const type = element.type?.toLowerCase(); // Optional chaining for type
-
+        const type = element.type?.toLowerCase();
         switch (tagName) {
           case 'INPUT':
-            // Exclude non-textual or non-editable input types
             return !['button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'range', 'color', 'file'].includes(type) &&
                    !(element.disabled || element.readOnly);
           case 'TEXTAREA':
@@ -436,162 +389,121 @@
             return false;
         }
       }
-
       findNavigationLinks() {
         if (this.cachedLinks) return this.cachedLinks;
-
         const links = Array.from(document.querySelectorAll('a[rel="next"], a[rel="prev"]'));
         let nextLink = null;
         let prevLink = null;
-
         for (const link of links) {
-          // Ensure link is valid, visible, and not pointing to the current page
           if (!link.href || link.href === window.location.href || !link.offsetParent) continue;
-
           if (link.rel === 'next' && !nextLink) nextLink = link;
           if (link.rel === 'prev' && !prevLink) prevLink = link;
-          if (nextLink && prevLink) break; // Found both, no need to continue
+          if (nextLink && prevLink) break;
         }
         this.cachedLinks = { nextLink, prevLink };
         return this.cachedLinks;
       }
-
       destroy() {
-        this.stopObserving(); // Also cancels debouncedInvalidateCache
+        this.stopObserving();
         this._clearReactivationTriggers();
         this.cachedLinks = null;
-        // No need to explicitly nullify this.observer or this.observerTarget,
-        // they will be garbage collected if this instance is no longer referenced.
       }
     }
 
     class KeyboardPageNavigator {
       static instance = null;
-
       static NAV_KEYS_SET = new Set(['ArrowLeft', 'ArrowRight']);
       static KEY_ARROW_RIGHT = 'ArrowRight';
-
       constructor() {
         if (KeyboardPageNavigator.instance) {
           return KeyboardPageNavigator.instance;
         }
         KeyboardPageNavigator.instance = this;
-
         this.urlPageFinder = new KB_NAV_UrlPageFinder();
         this.domLinkFinder = new KB_NAV_DomLinkFinder();
-        this.isNavigating = false; // Prevents multiple navigations from rapid key presses
-
+        this.isNavigating = false;
         this._debouncedProcessKey = KB_NAV_Utils.debounce(
           this._processNavigationKey.bind(this),
           KB_NAV_CONFIG.navigation.DEBOUNCE_DELAY_MS
         );
-
         this._bindEventHandlers();
         this._initializeEventListeners();
       }
-
       _bindEventHandlers() {
           this._handleKeyDown = this._handleKeyDown.bind(this);
           this._handlePageShow = this._handlePageShow.bind(this);
           this._handlePageHide = this._handlePageHide.bind(this);
       }
-
       _initializeEventListeners() {
         document.addEventListener('keydown', this._handleKeyDown);
         window.addEventListener('pageshow', this._handlePageShow);
         window.addEventListener('pagehide', this._handlePageHide);
       }
-
       _handlePageShow(event) {
-        // Reset state if page is shown from back/forward cache (bfcache)
         if (event.persisted) {
           this.isNavigating = false;
-          this.urlPageFinder.clearCache(); // URL might have changed parameters not visible to script
-          // Re-initialize DOM dependent parts as DOM might be stale
+          this.urlPageFinder.clearCache();
           this.domLinkFinder.destroy();
           this.domLinkFinder = new KB_NAV_DomLinkFinder();
         }
       }
-
       _handlePageHide(event) {
-          // If page is not being persisted in bfcache, it's likely being unloaded.
           if (!event.persisted) {
               this.destroy();
           }
       }
-
       _handleKeyDown(event) {
         if (!KeyboardPageNavigator.NAV_KEYS_SET.has(event.key)) return;
         if (this._shouldIgnoreKeyEvent(event)) return;
-
         event.preventDefault();
         event.stopPropagation();
         const direction = event.key === KeyboardPageNavigator.KEY_ARROW_RIGHT ? 1 : -1;
         this._debouncedProcessKey(direction);
       }
-
       _shouldIgnoreKeyEvent(event) {
-        // Ignore if modifier keys are pressed, or if focus is on an input field
         if (event.altKey || event.ctrlKey || event.metaKey) return true;
         return document.activeElement && this.domLinkFinder.isElementFocusableInput(document.activeElement);
       }
-
       _processNavigationKey(direction) {
         if (this.isNavigating) return;
-
         const currentUrl = window.location.href;
         if (this.urlPageFinder.shouldIgnoreUrl(currentUrl)) {
           return;
         }
-
         const targetUrl = this._determineTargetUrl(currentUrl, direction);
-
         if (targetUrl && targetUrl !== currentUrl) {
           this.isNavigating = true;
           window.location.href = targetUrl;
-          // isNavigating will be reset by pageshow if navigation is successful,
-          // or by _resetNavigationFlagAfterDelay if it fails or is very fast.
         } else {
-          // If no target URL, or target is same as current, reset flag after a short delay
           this._resetNavigationFlagAfterDelay();
         }
       }
-
       _determineTargetUrl(currentUrl, direction) {
-        // Prioritize URL-based navigation
         const urlPatternInfo = this.urlPageFinder.findPagePattern(currentUrl);
         if (urlPatternInfo) {
           return this.urlPageFinder.generateNewUrl(currentUrl, urlPatternInfo, direction);
         }
-
-        // Fallback to DOM-based link finding
         const domLinks = this.domLinkFinder.findNavigationLinks();
         if (direction > 0 && domLinks.nextLink) return domLinks.nextLink.href;
         if (direction < 0 && domLinks.prevLink) return domLinks.prevLink.href;
-
-        return null; // No navigation target found
+        return null;
       }
-
       _resetNavigationFlagAfterDelay() {
          setTimeout(() => {
             this.isNavigating = false;
          }, KB_NAV_CONFIG.navigation.RESET_DELAY_MS);
       }
-
       destroy() {
         document.removeEventListener('keydown', this._handleKeyDown);
         window.removeEventListener('pageshow', this._handlePageShow);
         window.removeEventListener('pagehide', this._handlePageHide);
-
         this._debouncedProcessKey.cancel();
         if (this.urlPageFinder) this.urlPageFinder.destroy();
         if (this.domLinkFinder) this.domLinkFinder.destroy();
-
         KeyboardPageNavigator.instance = null;
       }
     }
 
-    // Initialize only if not already initialized (e.g., script re-injection scenario)
     if (!KeyboardPageNavigator.instance) {
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => new KeyboardPageNavigator());
@@ -600,7 +512,6 @@
         }
     }
   }
-
 
   // =======================================================================
   // === PICTURE-IN-PICTURE (PiP) HANDLER                              ===
@@ -615,31 +526,83 @@
     }
 
     _initializeEventListeners() {
-      document.addEventListener('keydown', this._boundHandleKeyDown, true); // Use capture phase
+      document.addEventListener('keydown', this._boundHandleKeyDown, true);
     }
 
     _findBestVideoCandidate() {
       const videos = Array.from(document.querySelectorAll('video'));
+      console.log(`${SCRIPT_NAME}: PiP: Found ${videos.length} video elements on the page.`);
       if (videos.length === 0) return null;
 
-      const isPlayableAndVisible = (v) =>
-        v.readyState > 2 && // HAVE_CURRENT_DATA or more
-        v.hasAttribute('src') && v.currentSrc && // Has a source
-        v.offsetHeight > 0 && v.offsetWidth > 0; // Is visible
+      videos.forEach((v, index) => {
+        console.log(`${SCRIPT_NAME}: PiP: Video #${index} details - src: ${v.src}, currentSrc: ${v.currentSrc}, readyState: ${v.readyState}, offsetWidth: ${v.offsetWidth}, offsetHeight: ${v.offsetHeight}, paused: ${v.paused}, muted: ${v.muted}, duration: ${v.duration}, hidden: ${v.hidden}, visibility: ${getComputedStyle(v).visibility}, display: ${getComputedStyle(v).display}`);
+      });
+
+      const isPlayableAndVisible = (v) => {
+        const hasSrc = v.hasAttribute('src') || v.querySelector('source'); // Check for source tag too
+        const hasCurrentSrc = !!v.currentSrc;
+        const isReady = v.readyState > 0; // HAVE_METADATA or more
+        const isVisible = v.offsetHeight > 0 && v.offsetWidth > 0 && getComputedStyle(v).visibility !== 'hidden' && getComputedStyle(v).display !== 'none';
+        
+        if (!isReady) console.log(`${SCRIPT_NAME}: PiP: Video candidate (${v.currentSrc || v.src}) failed readyState check: ${v.readyState}`);
+        if (!hasSrc && !hasCurrentSrc) console.log(`${SCRIPT_NAME}: PiP: Video candidate (${v.currentSrc || v.src}) failed src/currentSrc check`);
+        if (!isVisible) console.log(`${SCRIPT_NAME}: PiP: Video candidate (${v.currentSrc || v.src}) failed visibility check: H=${v.offsetHeight}, W=${v.offsetWidth}, visibility=${getComputedStyle(v).visibility}, display=${getComputedStyle(v).display}`);
+
+        return isReady && (hasSrc || hasCurrentSrc) && isVisible;
+      }
 
       const scoreVideo = (v) => {
         let score = 0;
-        if (isPlayableAndVisible(v)) score += 100;
-        if (!v.paused) score += 50; // Prefer playing videos
-        if (!v.muted) score += 20;  // Prefer unmuted videos
-        // Prefer larger videos, cap score contribution
-        score += Math.min(v.offsetWidth * v.offsetHeight, 1000000) / 10000;
+        if (isPlayableAndVisible(v)) {
+            score += 100;
+        } else {
+            // Detailed log already in isPlayableAndVisible
+        }
+        if (!v.paused) score += 50;
+        if (!v.muted) score += 20;
+        // Consider video area for score, give more weight to larger videos
+        const area = v.offsetWidth * v.offsetHeight;
+        if (area > 0) { // Avoid NaN or negative scores if dimensions are somehow invalid
+            score += Math.min(area, 1000000) / 10000; // Max 100 points from area
+        }
+        // Bonus for videos that are currently in the viewport
+        const rect = v.getBoundingClientRect();
+        const isInViewport = rect.top < window.innerHeight && rect.bottom >= 0 &&
+                             rect.left < window.innerWidth && rect.right >= 0;
+        if (isInViewport) {
+            score += 30; // Bonus for being in viewport
+        }
+
+        console.log(`${SCRIPT_NAME}: PiP: Scoring video - src: ${v.currentSrc || v.src}, readyState: ${v.readyState}, area: ${area}, inViewport: ${isInViewport}, score: ${score}`);
         return score;
       };
 
-      videos.sort((a, b) => scoreVideo(b) - scoreVideo(a)); // Sort descending by score
+      // Filter out videos that are definitely not candidates first to reduce sorting overhead
+      const candidateVideos = videos.filter(v => isPlayableAndVisible(v)); // Pre-filter
+      
+      if (candidateVideos.length === 0) {
+          console.log(`${SCRIPT_NAME}: PiP: No videos passed the initial isPlayableAndVisible filter.`);
+          // Fallback: Try to find at least one video with src and some dimension, even if readyState is 0
+          const lessStrictVideos = videos.filter(v => (v.hasAttribute('src') || v.querySelector('source')) && (v.offsetWidth > 0 || v.offsetHeight > 0 || v.videoWidth > 0 || v.videoHeight > 0));
+          if(lessStrictVideos.length > 0) {
+            console.log(`${SCRIPT_NAME}: PiP: Found ${lessStrictVideos.length} videos with less strict filter. Will attempt to use the first one and rely on _ensureVideoReady.`);
+            lessStrictVideos.sort((a,b) => scoreVideo(b) - scoreVideo(a)); // Score even these
+            console.log(`${SCRIPT_NAME}: PiP: Top scored less-strict video - src: ${lessStrictVideos[0].currentSrc || lessStrictVideos[0].src}`);
+            return lessStrictVideos[0];
+          }
+          return null;
+      }
+      
+      candidateVideos.sort((a, b) => scoreVideo(b) - scoreVideo(a));
 
-      return (videos.length > 0 && isPlayableAndVisible(videos[0])) ? videos[0] : null;
+      if (candidateVideos.length > 0) {
+        console.log(`${SCRIPT_NAME}: PiP: Top scored candidate video - src: ${candidateVideos[0].currentSrc || candidateVideos[0].src}, score: ${scoreVideo(candidateVideos[0])}`);
+        return candidateVideos[0];
+      }
+      
+      // Should not be reached if candidateVideos had items, but as a final fallback.
+      console.log(`${SCRIPT_NAME}: PiP: No suitable video candidate found after scoring.`);
+      return null;
     }
 
     _removePiPRestrictions(videoElement) {
@@ -648,37 +611,81 @@
                 try {
                     videoElement.removeAttribute(attr);
                 } catch (e) {
-                    // Silently ignore if an attribute can't be removed (e.g., non-configurable by website)
+                    // Silently ignore
                 }
             }
         });
     }
 
+    async _ensureVideoReady(videoElement) {
+      if (!videoElement) {
+        console.warn(`${SCRIPT_NAME}: PiP: _ensureVideoReady called with null videoElement.`);
+        return;
+      }
+      // readyState 3: HAVE_CURRENT_DATA - Data for the current playback position is available, but not enough data to advance.
+      // readyState 4: HAVE_ENOUGH_DATA - Enough data available to start playing.
+      if (videoElement.readyState < 3) { // Target at least HAVE_CURRENT_DATA
+        console.log(`${SCRIPT_NAME}: PiP: Video readyState is ${videoElement.readyState} for ${videoElement.src || videoElement.currentSrc}. Attempting to load metadata.`);
+        try {
+          await new Promise((resolve, reject) => {
+            let timeoutId = null;
+            const onLoadedMetadata = () => {
+              clearTimeout(timeoutId);
+              videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+              videoElement.removeEventListener('error', onError);
+              console.log(`${SCRIPT_NAME}: PiP: Video metadata loaded. New readyState: ${videoElement.readyState}`);
+              resolve();
+            };
+            const onError = (event) => {
+              clearTimeout(timeoutId);
+              videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+              videoElement.removeEventListener('error', onError);
+              console.warn(`${SCRIPT_NAME}: PiP: Error loading video metadata.`, event);
+              resolve(); // Resolve anyway to attempt PiP
+            };
+
+            videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
+            videoElement.addEventListener('error', onError);
+
+            if (videoElement.readyState === 0 && videoElement.networkState === HTMLMediaElement.NETWORK_EMPTY && (videoElement.src || videoElement.querySelector('source[src]')?.src) ) {
+                console.log(`${SCRIPT_NAME}: PiP: Calling load() on video element.`);
+                videoElement.load();
+            }
+
+            timeoutId = setTimeout(() => {
+              if (videoElement.readyState < 3) { // Check again
+                 console.warn(`${SCRIPT_NAME}: PiP: Video metadata load timeout. Current readyState: ${videoElement.readyState}. Proceeding with PiP attempt.`);
+              }
+              videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+              videoElement.removeEventListener('error', onError);
+              resolve();
+            }, 3000); // 3-second timeout
+          });
+        } catch (loadError) {
+          console.warn(`${SCRIPT_NAME}: PiP: Error during _ensureVideoReady.`, loadError);
+        }
+      } else {
+        console.log(`${SCRIPT_NAME}: PiP: Video ${videoElement.src || videoElement.currentSrc} already has sufficient readyState: ${videoElement.readyState}`);
+      }
+    }
+
     async _attemptEnterPiPWithOverrides(targetVideo) {
-        // This method is called if the initial PiP request failed,
-        // likely due to 'disablePictureInPicture' still being effective.
-        if (targetVideo.disablePictureInPicture) { // Check if attribute is still effectively true
+        if (targetVideo.disablePictureInPicture) {
             try {
-                // Attempt to make disablePictureInPicture configurable and writable, then set to false.
                 Object.defineProperty(targetVideo, 'disablePictureInPicture', {
                     configurable: true, writable: true, value: false
                 });
-                // If defineProperty didn't throw but the value is still true (e.g., non-configurable getter),
-                // try direct assignment as a fallback.
                 if (targetVideo.disablePictureInPicture) {
                     targetVideo.disablePictureInPicture = false;
                 }
             } catch (eDefineProp) {
-                // If defineProperty fails (e.g., property is not configurable), try direct assignment.
                 try {
                     targetVideo.disablePictureInPicture = false;
                 } catch (eDirectAssign) {
-                    // Both defineProperty and direct assignment failed.
-                    // The final PiP request attempt below will likely fail and be logged.
+                    // Both failed
                 }
             }
         }
-        // Attempt PiP one last time after explicit modifications
         await targetVideo.requestPictureInPicture();
     }
 
@@ -694,44 +701,65 @@
 
       const targetVideo = this._findBestVideoCandidate();
       if (!targetVideo) {
-        // No suitable video found, do nothing.
+        // The message "No suitable video candidate found." is now logged within _findBestVideoCandidate
         return;
       }
+      console.log(`${SCRIPT_NAME}: PiP: Selected video candidate. Initial readyState: ${targetVideo.readyState}`, targetVideo);
 
+      await this._ensureVideoReady(targetVideo);
       this._removePiPRestrictions(targetVideo);
 
       try {
-        // First attempt to enter PiP after basic restriction removal
+        // Ensure video has focus or is interactable (sometimes helps)
+        // targetVideo.focus({ preventScroll: true }); // Might be too intrusive
+
+        // If video is paused and small, it might need a nudge to play for PiP
+        if (targetVideo.paused && (targetVideo.videoWidth < 100 || targetVideo.videoHeight < 100)) {
+            console.log(`${SCRIPT_NAME}: PiP: Video is paused and small. Attempting to play briefly.`);
+            const originallyMuted = targetVideo.muted;
+            try {
+                targetVideo.muted = true; // Mute to avoid sound
+                await targetVideo.play();
+                // No need to pause here, PiP request should handle it or user controls PiP window
+            } catch(playError) {
+                console.warn(`${SCRIPT_NAME}: PiP: Brief play attempt failed.`, playError);
+            } finally {
+                // PiP mode might have its own mute state, so restoring might not be needed
+                // or could interfere. For now, let's not restore mute state here if play was just for activation.
+                // If not entering PiP, then perhaps restore:
+                // if (!document.pictureInPictureElement) targetVideo.muted = originallyMuted;
+            }
+        }
+
+
         await targetVideo.requestPictureInPicture();
         this._addLeavePiPListener(targetVideo);
       } catch (initialError) {
-        // If the initial attempt failed, check if it's related to PiP being disabled.
-        // Error messages can vary, check for common indicators.
         const isPipDisabledError = initialError.name === 'InvalidStateError' &&
                                    (initialError.message.includes('disablePictureInPicture') ||
                                     initialError.message.toLowerCase().includes('picture-in-picture is disabled'));
         
         if (isPipDisabledError) {
             try {
-                // Try more aggressive overrides if the specific error was caught
+                console.warn(`${SCRIPT_NAME}: PiP: Initial PiP attempt failed due to restrictions. Attempting overrides.`);
                 await this._attemptEnterPiPWithOverrides(targetVideo);
                 this._addLeavePiPListener(targetVideo);
             } catch (finalAttemptError) {
-                // Log only if all attempts, including overrides, fail.
                 console.error(`${SCRIPT_NAME}: PiP: All attempts to enter PiP mode failed. Final Error:`, finalAttemptError.name, finalAttemptError.message);
             }
         } else {
-            // Log other types of errors from the initial attempt.
-            console.error(`${SCRIPT_NAME}: PiP: Error entering PiP mode. Initial Error:`, initialError.name, initialError.message);
+            // Log other errors, especially if it's about user gesture or visibility
+            console.error(`${SCRIPT_NAME}: PiP: Error entering PiP mode. Initial Error - Name: ${initialError.name}, Message: ${initialError.message}`, initialError);
+            if (initialError.name === 'NotAllowedError') {
+                console.error(`${SCRIPT_NAME}: PiP: 'NotAllowedError' often means the request wasn't triggered by a user gesture, or the document isn't fully active/visible.`);
+            }
         }
       }
     }
 
     _addLeavePiPListener(videoElement) {
-        // Listener for when PiP mode is exited (e.g., by user closing PiP window)
         videoElement.addEventListener('leavepictureinpicture', () => {
-            // No specific action needed here for now, but listener is good practice.
-            // console.log(`${SCRIPT_NAME}: PiP: Video left PiP mode.`); // Example log, removed for release
+            // console.log(`${SCRIPT_NAME}: PiP: Video left PiP mode.`);
         }, { once: true });
     }
 
@@ -739,18 +767,14 @@
       if (!(event.ctrlKey && event.shiftKey && event.key.toUpperCase() === PictureInPictureHandler.PIP_KEY)) {
         return;
       }
-
       const targetElement = event.target;
       const isEditableContext = targetElement && (
         targetElement.isContentEditable ||
         ['INPUT', 'TEXTAREA', 'SELECT'].includes(targetElement.tagName?.toUpperCase())
       );
-
       if (isEditableContext) {
-        // Don't interfere with typing in input fields
         return;
       }
-
       event.preventDefault();
       event.stopPropagation();
       this.toggle();
