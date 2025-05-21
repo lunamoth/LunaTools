@@ -6,7 +6,6 @@
 // --- Constants ---
 const NEW_TAB_URL = "chrome://newtab/";
 const PERFORM_GESTURE_ACTION = 'perform-gesture';
-// const SCRIPT_NAME_BG = "LunaTools BG"; // Removed as console logs are removed
 
 // --- Utility Functions ---
 function isTabAccessError(error) {
@@ -46,17 +45,15 @@ async function handleGestureAction(gesture, tabId) {
         break;
     }
   } catch (error) {
-    // if (!isTabAccessError(error)) {
-      // console.error(`${SCRIPT_NAME_BG}: Gesture '${gesture}' on tab ${tabId} failed:`, error.message);
-    // }
+    // Errors are silently ignored in production without logging
   }
 }
 
 // --- TabManager Class ---
 class TabManager {
   constructor() {
-    this.urlCache = new Map(); // Map<tabId, {url: URL, windowId: number}>
-    this.reverseUrlLookup = new Map(); // Map<urlString, Array<{tabId: number, windowId: number}>>
+    this.urlCache = new Map();
+    this.reverseUrlLookup = new Map();
 
     this.handleTabRemoved = this.handleTabRemoved.bind(this);
     this.handleTabUpdate = this.handleTabUpdate.bind(this);
@@ -94,7 +91,6 @@ class TabManager {
     }
   }
 
-  // --- Cache Management ---
   _addUrlToCache(tabId, parsedUrl, windowId) {
     if (!(parsedUrl instanceof URL) || typeof tabId !== 'number' || typeof windowId !== 'number') return;
 
@@ -162,11 +158,10 @@ class TabManager {
         }
       });
     } catch (error) {
-      // console.error(`${SCRIPT_NAME_BG}: Cache init failed:`, error.message);
+      // Silently ignore
     }
   }
 
-  // --- Tab Sorting ---
   async sortTabsInCurrentWindow() {
     try {
       const currentWindow = await chrome.windows.getCurrent({ populate: false, windowTypes: ['normal'] });
@@ -174,9 +169,7 @@ class TabManager {
       
       await this._sortAndMoveTabsInWindow(currentWindow.id);
     } catch (error) {
-      // if (!isWindowAccessError(error)) {
-        // console.error(`${SCRIPT_NAME_BG}: Sort tabs failed:`, error.message);
-      // }
+      // Silently ignore
     }
   }
 
@@ -208,9 +201,7 @@ class TabManager {
         if (typeof currentIndex === 'number' && currentIndex !== desiredIndex && tab.id !== undefined) {
           promises.push(
             chrome.tabs.move(tab.id, { index: desiredIndex }).catch(error => {
-              // if (!this._isTabNotFoundError(error) && !isWindowAccessError(error)) {
-                // console.error(`${SCRIPT_NAME_BG}: Move tab ${tab.id} failed during sort:`, error.message);
-              // }
+              // Silently ignore
             })
           );
         }
@@ -220,9 +211,7 @@ class TabManager {
       if (movePromises.length > 0) await Promise.all(movePromises);
 
     } catch (error) {
-      // if (!isWindowAccessError(error)) {
-        // console.error(`${SCRIPT_NAME_BG}: Sort in window ${windowId} failed:`, error.message);
-      // }
+      // Silently ignore
     }
   }
 
@@ -243,7 +232,6 @@ class TabManager {
     return urlA.hash.localeCompare(urlB.hash);
   }
 
-  // --- Duplicate Tab Handling ---
   async checkForDuplicateAndFocusExisting(tab) {
     if (!this._isValidTabForProcessing(tab)) return;
 
@@ -274,8 +262,6 @@ class TabManager {
           } catch (error) {
               if (this._isTabNotFoundError(error)) {
                   this._removeUrlFromCache(tabId, parsedUrl);
-              } else {
-                  // console.error(`${SCRIPT_NAME_BG}: Verify duplicate tab ${tabId} failed:`, error.message);
               }
           }
       }
@@ -284,10 +270,7 @@ class TabManager {
         await this._handleVerifiedDuplicate(currentTab, existingDuplicateTabIds[0], parsedUrl);
       }
     } catch (error) {
-      // const currentTabId = currentTab?.id;
-      // if (!this._isTabNotFoundError(error) || (currentTabId && error.message && !error.message.includes(String(currentTabId)))) {
-         // console.error(`${SCRIPT_NAME_BG}: Duplicate check for tab ${currentTabId || 'N/A'} failed:`, error.message);
-      // }
+      // Silently ignore
     }
   }
 
@@ -299,7 +282,6 @@ class TabManager {
         this._removeUrlFromCache(newlyOpenedTab.id, parsedUrl);
         return; 
       }
-      // console.error(`${SCRIPT_NAME_BG}: Check tab to close ${newlyOpenedTab.id} failed:`, e.message);
       return; 
     }
 
@@ -310,7 +292,6 @@ class TabManager {
         this._removeUrlFromCache(existingDuplicateId, parsedUrl);
         return;
       }
-      // console.error(`${SCRIPT_NAME_BG}: Check existing duplicate ${existingDuplicateId} failed:`, e.message);
       return;
     }
     
@@ -323,9 +304,7 @@ class TabManager {
     try {
       if (newlyOpenedTab.active) {
         await chrome.tabs.update(existingDuplicateId, { active: true }).catch(err => {
-          // if (!this._isTabNotFoundError(err) && !isWindowAccessError(err)) {
-             // console.error(`${SCRIPT_NAME_BG}: Focus existing tab ${existingDuplicateId} failed:`, err.message);
-          // }
+          // Silently ignore
         });
       }
 
@@ -336,13 +315,9 @@ class TabManager {
       if (this._isTabNotFoundError(error)) {
         this._removeUrlFromCache(newlyOpenedTab.id, parsedUrl);
       } 
-      // else if (!isWindowAccessError(error)) {
-        // console.error(`${SCRIPT_NAME_BG}: Handle verified duplicate (new: ${newlyOpenedTab.id}, exist: ${existingDuplicateId}) failed:`, error.message);
-      // }
     }
   }
 
-  // --- Window Merging ---
   async mergeAllWindows() {
     try {
       const allWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
@@ -376,9 +351,6 @@ class TabManager {
                   }
               })
               .catch(err => {
-                // if (!this._isTabNotFoundError(err) && !isWindowAccessError(err)) {
-                  // console.error(`${SCRIPT_NAME_BG}: Move tab ${tabDetail.id} to window ${targetWindowId} failed:`, err.message);
-                // }
                 const cachedInfo = this.urlCache.get(tabDetail.id);
                 if(cachedInfo) this._removeUrlFromCache(tabDetail.id, cachedInfo.url);
               })
@@ -395,9 +367,7 @@ class TabManager {
       if (windowsToClose.length > 0) {
           const closePromises = windowsToClose.map(win =>
             chrome.windows.remove(win.id).catch(err => {
-              // if (!isWindowAccessError(err)) {
-                // console.error(`${SCRIPT_NAME_BG}: Close window ${win.id} failed:`, err.message);
-              // }
+              // Silently ignore
             })
           );
           await Promise.all(closePromises);
@@ -407,9 +377,7 @@ class TabManager {
       await this._sortAndMoveTabsInWindow(targetWindowId);
 
     } catch (error) {
-      // if (!isWindowAccessError(error)){
-        // console.error(`${SCRIPT_NAME_BG}: Merge windows failed:`, error.message);
-      // }
+      // Silently ignore
     }
   }
   
@@ -417,13 +385,10 @@ class TabManager {
     try {
       await chrome.windows.update(windowId, { focused: true });
     } catch (error) {
-      // if (!isWindowAccessError(error)) {
-        // console.error(`${SCRIPT_NAME_BG}: Focus window ${windowId} failed:`, error.message);
-      // }
+      // Silently ignore
     }
   }
 
-  // --- Event Handlers for TabManager ---
   async handleTabUpdate(tab) {
     if (!this._isValidTabForProcessing(tab)) return;
 
@@ -467,7 +432,6 @@ class TabManager {
   }
 }
 
-// --- Initialization and Global Event Listeners ---
 const tabManager = new TabManager();
 
 (async () => {
@@ -513,9 +477,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             const cachedInfo = tabManager.urlCache.get(tabId);
             if(cachedInfo) tabManager._removeUrlFromCache(tabId, cachedInfo.url);
         } 
-        // else {
-            // console.error(`${SCRIPT_NAME_BG}: Get tab ${tabId} in onUpdated failed:`, error.message);
-        // }
         return;
     }
   }
@@ -542,9 +503,6 @@ chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
         const cachedInfo = tabManager.urlCache.get(tabId);
         if(cachedInfo) tabManager._removeUrlFromCache(tabId, cachedInfo.url);
     } 
-    // else {
-      // console.error(`${SCRIPT_NAME_BG}: Process attached tab ${tabId} failed:`, error.message);
-    // }
   }
 });
 
