@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const SCRIPT_NAME = "LunaTools CS"; // For console messages (primarily for errors)
+  // const SCRIPT_NAME = "LunaTools CS"; // Removed as console logs are removed
 
   // =======================================================================
   // === MOUSE GESTURE HANDLER                                           ===
@@ -31,7 +31,6 @@
     }
 
     _initializeEventListeners() {
-      // Options must be identical for addEventListener and removeEventListener
       this.mouseMoveOptions = { capture: true, passive: true };
       this.blurOptions = { capture: true, passive: true };
       this.captureOptions = { capture: true };
@@ -100,11 +99,10 @@
       try {
         chrome.runtime.sendMessage({ action: MouseGestureHandler.MESSAGE_ACTION, gesture });
       } catch (error) {
-        if (error.message?.includes("Extension context invalidated")) {
-          // Context invalidated, usually means extension was updated/reloaded. Silently ignore.
-        } else {
-          console.error(`${SCRIPT_NAME}: Gesture: Failed to send message to background.`, error);
-        }
+        // if (error.message?.includes("Extension context invalidated")) {
+        // } else {
+          // console.error(`${SCRIPT_NAME}: Gesture: Failed to send message to background.`, error);
+        // }
       }
     }
 
@@ -170,9 +168,9 @@
       }
     });
 
-    const KB_NAV_Logger = {
-      error: (...args) => console.error(`${SCRIPT_NAME}: KB Nav:`, ...args),
-    };
+    // const KB_NAV_Logger = { // Removed as console logs are removed
+      // error: (...args) => console.error(`${SCRIPT_NAME}: KB Nav:`, ...args),
+    // };
 
     const KB_NAV_Utils = {
       debounce(func, waitMs) {
@@ -328,7 +326,7 @@
             if (this.stopLifecycleTimer) clearTimeout(this.stopLifecycleTimer);
             this._setupObserverDeactivationTimer();
           } catch (error) {
-            KB_NAV_Logger.error("Error starting MutationObserver:", error);
+            // KB_NAV_Logger.error("Error starting MutationObserver:", error); // Log removed
             this.isObserving = false;
           }
         }
@@ -472,6 +470,11 @@
         }
         const targetUrl = this._determineTargetUrl(currentUrl, direction);
         if (targetUrl && targetUrl !== currentUrl) {
+            if (targetUrl.toLowerCase().startsWith('javascript:')) {
+                // KB_NAV_Logger.error("Blocked navigation to javascript: URL:", targetUrl); // Log removed
+                this._resetNavigationFlagAfterDelay();
+                return;
+            }
           this.isNavigating = true;
           window.location.href = targetUrl;
         } else {
@@ -531,23 +534,13 @@
 
     _findBestVideoCandidate() {
       const videos = Array.from(document.querySelectorAll('video'));
-      console.log(`${SCRIPT_NAME}: PiP: Found ${videos.length} video elements on the page.`);
       if (videos.length === 0) return null;
 
-      videos.forEach((v, index) => {
-        console.log(`${SCRIPT_NAME}: PiP: Video #${index} details - src: ${v.src}, currentSrc: ${v.currentSrc}, readyState: ${v.readyState}, offsetWidth: ${v.offsetWidth}, offsetHeight: ${v.offsetHeight}, paused: ${v.paused}, muted: ${v.muted}, duration: ${v.duration}, hidden: ${v.hidden}, visibility: ${getComputedStyle(v).visibility}, display: ${getComputedStyle(v).display}`);
-      });
-
       const isPlayableAndVisible = (v) => {
-        const hasSrc = v.hasAttribute('src') || v.querySelector('source'); // Check for source tag too
+        const hasSrc = v.hasAttribute('src') || v.querySelector('source');
         const hasCurrentSrc = !!v.currentSrc;
-        const isReady = v.readyState > 0; // HAVE_METADATA or more
+        const isReady = v.readyState > 0;
         const isVisible = v.offsetHeight > 0 && v.offsetWidth > 0 && getComputedStyle(v).visibility !== 'hidden' && getComputedStyle(v).display !== 'none';
-        
-        if (!isReady) console.log(`${SCRIPT_NAME}: PiP: Video candidate (${v.currentSrc || v.src}) failed readyState check: ${v.readyState}`);
-        if (!hasSrc && !hasCurrentSrc) console.log(`${SCRIPT_NAME}: PiP: Video candidate (${v.currentSrc || v.src}) failed src/currentSrc check`);
-        if (!isVisible) console.log(`${SCRIPT_NAME}: PiP: Video candidate (${v.currentSrc || v.src}) failed visibility check: H=${v.offsetHeight}, W=${v.offsetWidth}, visibility=${getComputedStyle(v).visibility}, display=${getComputedStyle(v).display}`);
-
         return isReady && (hasSrc || hasCurrentSrc) && isVisible;
       }
 
@@ -555,39 +548,28 @@
         let score = 0;
         if (isPlayableAndVisible(v)) {
             score += 100;
-        } else {
-            // Detailed log already in isPlayableAndVisible
         }
         if (!v.paused) score += 50;
         if (!v.muted) score += 20;
-        // Consider video area for score, give more weight to larger videos
         const area = v.offsetWidth * v.offsetHeight;
-        if (area > 0) { // Avoid NaN or negative scores if dimensions are somehow invalid
-            score += Math.min(area, 1000000) / 10000; // Max 100 points from area
+        if (area > 0) {
+            score += Math.min(area, 1000000) / 10000;
         }
-        // Bonus for videos that are currently in the viewport
         const rect = v.getBoundingClientRect();
         const isInViewport = rect.top < window.innerHeight && rect.bottom >= 0 &&
                              rect.left < window.innerWidth && rect.right >= 0;
         if (isInViewport) {
-            score += 30; // Bonus for being in viewport
+            score += 30;
         }
-
-        console.log(`${SCRIPT_NAME}: PiP: Scoring video - src: ${v.currentSrc || v.src}, readyState: ${v.readyState}, area: ${area}, inViewport: ${isInViewport}, score: ${score}`);
         return score;
       };
 
-      // Filter out videos that are definitely not candidates first to reduce sorting overhead
-      const candidateVideos = videos.filter(v => isPlayableAndVisible(v)); // Pre-filter
+      const candidateVideos = videos.filter(v => isPlayableAndVisible(v));
       
       if (candidateVideos.length === 0) {
-          console.log(`${SCRIPT_NAME}: PiP: No videos passed the initial isPlayableAndVisible filter.`);
-          // Fallback: Try to find at least one video with src and some dimension, even if readyState is 0
           const lessStrictVideos = videos.filter(v => (v.hasAttribute('src') || v.querySelector('source')) && (v.offsetWidth > 0 || v.offsetHeight > 0 || v.videoWidth > 0 || v.videoHeight > 0));
           if(lessStrictVideos.length > 0) {
-            console.log(`${SCRIPT_NAME}: PiP: Found ${lessStrictVideos.length} videos with less strict filter. Will attempt to use the first one and rely on _ensureVideoReady.`);
-            lessStrictVideos.sort((a,b) => scoreVideo(b) - scoreVideo(a)); // Score even these
-            console.log(`${SCRIPT_NAME}: PiP: Top scored less-strict video - src: ${lessStrictVideos[0].currentSrc || lessStrictVideos[0].src}`);
+            lessStrictVideos.sort((a,b) => scoreVideo(b) - scoreVideo(a));
             return lessStrictVideos[0];
           }
           return null;
@@ -596,12 +578,9 @@
       candidateVideos.sort((a, b) => scoreVideo(b) - scoreVideo(a));
 
       if (candidateVideos.length > 0) {
-        console.log(`${SCRIPT_NAME}: PiP: Top scored candidate video - src: ${candidateVideos[0].currentSrc || candidateVideos[0].src}, score: ${scoreVideo(candidateVideos[0])}`);
         return candidateVideos[0];
       }
       
-      // Should not be reached if candidateVideos had items, but as a final fallback.
-      console.log(`${SCRIPT_NAME}: PiP: No suitable video candidate found after scoring.`);
       return null;
     }
 
@@ -619,13 +598,9 @@
 
     async _ensureVideoReady(videoElement) {
       if (!videoElement) {
-        console.warn(`${SCRIPT_NAME}: PiP: _ensureVideoReady called with null videoElement.`);
         return;
       }
-      // readyState 3: HAVE_CURRENT_DATA - Data for the current playback position is available, but not enough data to advance.
-      // readyState 4: HAVE_ENOUGH_DATA - Enough data available to start playing.
-      if (videoElement.readyState < 3) { // Target at least HAVE_CURRENT_DATA
-        console.log(`${SCRIPT_NAME}: PiP: Video readyState is ${videoElement.readyState} for ${videoElement.src || videoElement.currentSrc}. Attempting to load metadata.`);
+      if (videoElement.readyState < 3) {
         try {
           await new Promise((resolve, reject) => {
             let timeoutId = null;
@@ -633,39 +608,31 @@
               clearTimeout(timeoutId);
               videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
               videoElement.removeEventListener('error', onError);
-              console.log(`${SCRIPT_NAME}: PiP: Video metadata loaded. New readyState: ${videoElement.readyState}`);
               resolve();
             };
             const onError = (event) => {
               clearTimeout(timeoutId);
               videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
               videoElement.removeEventListener('error', onError);
-              console.warn(`${SCRIPT_NAME}: PiP: Error loading video metadata.`, event);
-              resolve(); // Resolve anyway to attempt PiP
+              resolve(); 
             };
 
             videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
             videoElement.addEventListener('error', onError);
 
             if (videoElement.readyState === 0 && videoElement.networkState === HTMLMediaElement.NETWORK_EMPTY && (videoElement.src || videoElement.querySelector('source[src]')?.src) ) {
-                console.log(`${SCRIPT_NAME}: PiP: Calling load() on video element.`);
                 videoElement.load();
             }
 
             timeoutId = setTimeout(() => {
-              if (videoElement.readyState < 3) { // Check again
-                 console.warn(`${SCRIPT_NAME}: PiP: Video metadata load timeout. Current readyState: ${videoElement.readyState}. Proceeding with PiP attempt.`);
-              }
               videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
               videoElement.removeEventListener('error', onError);
               resolve();
-            }, 3000); // 3-second timeout
+            }, 3000);
           });
         } catch (loadError) {
-          console.warn(`${SCRIPT_NAME}: PiP: Error during _ensureVideoReady.`, loadError);
+          // Silently ignore
         }
-      } else {
-        console.log(`${SCRIPT_NAME}: PiP: Video ${videoElement.src || videoElement.currentSrc} already has sufficient readyState: ${videoElement.readyState}`);
       }
     }
 
@@ -694,43 +661,29 @@
         try {
           await document.exitPictureInPicture();
         } catch (error) {
-          console.error(`${SCRIPT_NAME}: PiP: Error exiting PiP mode:`, error.name, error.message);
+          // Silently ignore
         }
         return;
       }
 
       const targetVideo = this._findBestVideoCandidate();
       if (!targetVideo) {
-        // The message "No suitable video candidate found." is now logged within _findBestVideoCandidate
         return;
       }
-      console.log(`${SCRIPT_NAME}: PiP: Selected video candidate. Initial readyState: ${targetVideo.readyState}`, targetVideo);
 
       await this._ensureVideoReady(targetVideo);
       this._removePiPRestrictions(targetVideo);
 
       try {
-        // Ensure video has focus or is interactable (sometimes helps)
-        // targetVideo.focus({ preventScroll: true }); // Might be too intrusive
-
-        // If video is paused and small, it might need a nudge to play for PiP
         if (targetVideo.paused && (targetVideo.videoWidth < 100 || targetVideo.videoHeight < 100)) {
-            console.log(`${SCRIPT_NAME}: PiP: Video is paused and small. Attempting to play briefly.`);
-            const originallyMuted = targetVideo.muted;
+            // const originallyMuted = targetVideo.muted; // Not needed if not restoring
             try {
-                targetVideo.muted = true; // Mute to avoid sound
+                targetVideo.muted = true;
                 await targetVideo.play();
-                // No need to pause here, PiP request should handle it or user controls PiP window
             } catch(playError) {
-                console.warn(`${SCRIPT_NAME}: PiP: Brief play attempt failed.`, playError);
-            } finally {
-                // PiP mode might have its own mute state, so restoring might not be needed
-                // or could interfere. For now, let's not restore mute state here if play was just for activation.
-                // If not entering PiP, then perhaps restore:
-                // if (!document.pictureInPictureElement) targetVideo.muted = originallyMuted;
+                // Silently ignore
             }
         }
-
 
         await targetVideo.requestPictureInPicture();
         this._addLeavePiPListener(targetVideo);
@@ -741,25 +694,20 @@
         
         if (isPipDisabledError) {
             try {
-                console.warn(`${SCRIPT_NAME}: PiP: Initial PiP attempt failed due to restrictions. Attempting overrides.`);
                 await this._attemptEnterPiPWithOverrides(targetVideo);
                 this._addLeavePiPListener(targetVideo);
             } catch (finalAttemptError) {
-                console.error(`${SCRIPT_NAME}: PiP: All attempts to enter PiP mode failed. Final Error:`, finalAttemptError.name, finalAttemptError.message);
+                // Silently ignore
             }
         } else {
-            // Log other errors, especially if it's about user gesture or visibility
-            console.error(`${SCRIPT_NAME}: PiP: Error entering PiP mode. Initial Error - Name: ${initialError.name}, Message: ${initialError.message}`, initialError);
-            if (initialError.name === 'NotAllowedError') {
-                console.error(`${SCRIPT_NAME}: PiP: 'NotAllowedError' often means the request wasn't triggered by a user gesture, or the document isn't fully active/visible.`);
-            }
+            // Silently ignore other errors
         }
       }
     }
 
     _addLeavePiPListener(videoElement) {
         videoElement.addEventListener('leavepictureinpicture', () => {
-            // console.log(`${SCRIPT_NAME}: PiP: Video left PiP mode.`);
+            // Action on leave if needed
         }, { once: true });
     }
 
