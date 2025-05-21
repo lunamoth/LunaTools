@@ -1,8 +1,6 @@
 (() => {
   'use strict';
 
-  // const SCRIPT_NAME = "LunaTools CS"; // Removed as console logs are removed
-
   // =======================================================================
   // === MOUSE GESTURE HANDLER                                           ===
   // =======================================================================
@@ -99,10 +97,7 @@
       try {
         chrome.runtime.sendMessage({ action: MouseGestureHandler.MESSAGE_ACTION, gesture });
       } catch (error) {
-        // if (error.message?.includes("Extension context invalidated")) {
-        // } else {
-          // console.error(`${SCRIPT_NAME}: Gesture: Failed to send message to background.`, error);
-        // }
+        // Silently ignore "Extension context invalidated" or other errors
       }
     }
 
@@ -167,10 +162,6 @@
         ]
       }
     });
-
-    // const KB_NAV_Logger = { // Removed as console logs are removed
-      // error: (...args) => console.error(`${SCRIPT_NAME}: KB Nav:`, ...args),
-    // };
 
     const KB_NAV_Utils = {
       debounce(func, waitMs) {
@@ -326,7 +317,6 @@
             if (this.stopLifecycleTimer) clearTimeout(this.stopLifecycleTimer);
             this._setupObserverDeactivationTimer();
           } catch (error) {
-            // KB_NAV_Logger.error("Error starting MutationObserver:", error); // Log removed
             this.isObserving = false;
           }
         }
@@ -471,7 +461,6 @@
         const targetUrl = this._determineTargetUrl(currentUrl, direction);
         if (targetUrl && targetUrl !== currentUrl) {
             if (targetUrl.toLowerCase().startsWith('javascript:')) {
-                // KB_NAV_Logger.error("Blocked navigation to javascript: URL:", targetUrl); // Log removed
                 this._resetNavigationFlagAfterDelay();
                 return;
             }
@@ -676,7 +665,6 @@
 
       try {
         if (targetVideo.paused && (targetVideo.videoWidth < 100 || targetVideo.videoHeight < 100)) {
-            // const originallyMuted = targetVideo.muted; // Not needed if not restoring
             try {
                 targetVideo.muted = true;
                 await targetVideo.play();
