@@ -1,11 +1,14 @@
 /**
  * LunaTools Background Script
- * Handles tab organization, deduplication, window merging, and gesture actions.
+ * Handles tab organization, deduplication, window merging, gesture actions, and API requests.
  */
 
 // --- Constants ---
 const NEW_TAB_URL = "chrome://newtab/";
 const PERFORM_GESTURE_ACTION = 'perform-gesture';
+const FETCH_EXCHANGE_RATE_ACTION = "fetchLunaToolsExchangeRate";
+const API_TIMEOUT_MS_EXCHANGE_RATE = 7000;
+
 
 // --- Utility Functions ---
 function isTabAccessError(error) {
@@ -447,9 +450,43 @@ chrome.commands.onCommand.addListener(async (command) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === PERFORM_GESTURE_ACTION && message.gesture && sender?.tab?.id != null) {
     handleGestureAction(message.gesture, sender.tab.id);
-    return true; 
+    // While handleGestureAction is async, it doesn't use sendResponse.
+    // If it did, returning true would be necessary. For now, it's effectively fire-and-forget.
+    return false; // No asynchronous response expected by sender FOR THIS ACTION
   }
-  return false;
+
+  if (message?.action === FETCH_EXCHANGE_RATE_ACTION && message.from && message.to) {
+    const apiUrl = `https://api.frankfurter.app/latest?from=${encodeURIComponent(message.from)}&to=${encodeURIComponent(message.to)}`;
+    
+    fetch(apiUrl, { signal: AbortSignal.timeout(API_TIMEOUT_MS_EXCHANGE_RATE) })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Network error (status: ${response.status})`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        if (data.rates && typeof data.rates[message.to] === 'number' && data.date) {
+          sendResponse({ data: { rate: data.rates[message.to], date: data.date } });
+        } else {
+          sendResponse({ error: `API response error: Could not find rate for ${message.to}` });
+        }
+      })
+      .catch(error => {
+        let errorMessage = 'Failed to fetch exchange rate.';
+        if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+            errorMessage = 'Request timed out.';
+        } else if (error.message && error.message.startsWith('Network error')) {
+            errorMessage = error.message;
+        } else if (error.message) {
+            errorMessage = `API processing error: ${error.message}`;
+        }
+        sendResponse({ error: errorMessage });
+      });
+    return true; // Crucial: Indicates that sendResponse will be called asynchronously.
+  }
+  
+  return false; // Default for unhandled messages or synchronous messages
 });
 
 chrome.action.onClicked.addListener(async () => {
