@@ -554,7 +554,7 @@
       };
 
       const candidateVideos = videos.filter(v => isPlayableAndVisible(v));
-      
+
       if (candidateVideos.length === 0) {
           const lessStrictVideos = videos.filter(v => (v.hasAttribute('src') || v.querySelector('source')) && (v.offsetWidth > 0 || v.offsetHeight > 0 || v.videoWidth > 0 || v.videoHeight > 0));
           if(lessStrictVideos.length > 0) {
@@ -563,13 +563,13 @@
           }
           return null;
       }
-      
+
       candidateVideos.sort((a, b) => scoreVideo(b) - scoreVideo(a));
 
       if (candidateVideos.length > 0) {
         return candidateVideos[0];
       }
-      
+
       return null;
     }
 
@@ -603,7 +603,7 @@
               clearTimeout(timeoutId);
               videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
               videoElement.removeEventListener('error', onError);
-              resolve(); 
+              resolve();
             };
 
             videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
@@ -679,7 +679,7 @@
         const isPipDisabledError = initialError.name === 'InvalidStateError' &&
                                    (initialError.message.includes('disablePictureInPicture') ||
                                     initialError.message.toLowerCase().includes('picture-in-picture is disabled'));
-        
+
         if (isPipDisabledError) {
             try {
                 await this._attemptEnterPiPWithOverrides(targetVideo);
@@ -731,7 +731,7 @@
     'use strict';
 
     const Config = {
-        API_TIMEOUT_MS: 7000, // This is for the content script side, background uses its own constant
+        API_TIMEOUT_MS: 7000,
         ONE_HOUR_MS: 3600 * 1000,
         POPUP_OFFSET_X: 10,
         POPUP_OFFSET_Y: 10,
@@ -751,20 +751,36 @@
         UNIT_CATEGORY_ICONS: { length: '📏', mass: '⚖️', volume: '💧', temperature: '🌡️' },
         CATEGORY_BASE_UNITS: { length: 'm', mass: 'kg', volume: 'L' },
         CURRENCY_PATTERNS: [
-            { code: 'CAD', regex: /캐나다\s*달러|캐나다달러|C\$|CAD/gi }, { code: 'AUD', regex: /호주\s*달러|호주달러|A\$|AUD/gi }, { code: 'CHF', regex: /스위스\s*프랑|스위스프랑|CHF|SFr\./gi }, { code: 'SGD', regex: /싱가포르\s*달러|싱가포르달러|S\$|SGD/gi }, { code: 'HKD', regex: /홍콩\s*달러|홍콩달러|HK\$|HKD/gi }, { code: 'NZD', regex: /뉴질랜드\s*달러|뉴질랜드달러|NZ\$|NZD/gi }, { code: 'MXN', regex: /멕시코\s*페소|멕시코페소|Mex\$|MXN/gi }, { code: 'BRL', regex: /브라질\s*헤알|헤알|R\$|BRL/gi }, { code: 'PHP', regex: /필리핀\s*페소|필리핀페소|₱|PHP/gi }, { code: 'MYR', regex: /말레이시아\s*링깃|링깃|RM|MYR/gi }, { code: 'GBP', regex: /파운드\s*스털링|영국\s*파운드|GBP\s*£|£\s*GBP/gi }, { code: 'JPY', regex: /엔|엔화|円|￥|¥|JPY|일본\s*엔|일본\s*엔화/gi }, { code: 'EUR', regex: /유로|€|EUR/gi }, { code: 'CNY', regex: /위안|위안화|元|CNY|중국\s*위안|인민폐|런민비/gi }, { code: 'KRW', regex: /원|₩|KRW|한국\s*원|대한민국\s*원/gi }, { code: 'INR', regex: /인도\s*루피|인도루피|₹|INR/gi }, { code: 'TRY', regex: /터키\s*리라|튀르키예\s*리라|리라|₺|TRY/gi }, { code: 'IDR', regex: /인도네시아\s*루피아|루피아|Rp|IDR/gi }, { code: 'PLN', regex: /폴란드\s*즐로티|즐로티|zł|PLN/gi }, { code: 'ILS', regex: /이스라엘\s*셰켈|셰켈|₪|ILS/gi }, { code: 'THB', regex: /태국\s*바트|바트|밧|฿|THB/gi }, { code: 'SEK', regex: /스웨덴\s*크로나|스웨덴크로나|SEK(?:kr)?|(?:krSEK)/gi }, { code: 'NOK', regex: /노르웨이\s*크로나|노르웨이크로나|NOK(?:kr)?|(?:krNOK)/gi }, { code: 'DKK', regex: /덴마크\s*크로나|덴마크크로나|DKK(?:kr)?|(?:krDKK)/gi }, { code: 'ISK', regex: /아이슬란드\s*크로나|아이슬란드크로나|ISK(?:kr)?|(?:krISK)/gi }, { code: 'ZAR', regex: /남아프리카\s*공화국\s*랜드|남아공\s*랜드|랜드|R|ZAR/gi }, { code: 'RON', regex: /루마니아\s*레우|레우|lei|RON/gi }, { code: 'CZK', regex: /체코\s*코루나|코루나|Kč|CZK/gi }, { code: 'HUF', regex: /헝가리\s*포린트|포린트|Ft|HUF/gi }, { code: 'BGN', regex: /불가리아\s*레프|레프|лв|BGN/gi }, { code: 'GBP', regex: /파운드|£|GBP/gi }, { code: 'USD', regex: /달러|\$|USD|불|미국\s*달러/gi },
+            { code: 'CAD', regex: /캐나다\s*달러|캐나다달러|C\$|CAD/giu }, { code: 'AUD', regex: /호주\s*달러|호주달러|A\$|AUD/giu }, { code: 'CHF', regex: /스위스\s*프랑|스위스프랑|CHF|SFr\./giu }, { code: 'SGD', regex: /싱가포르\s*달러|싱가포르달러|S\$|SGD/giu }, { code: 'HKD', regex: /홍콩\s*달러|홍콩달러|HK\$|HKD/giu }, { code: 'NZD', regex: /뉴질랜드\s*달러|뉴질랜드달러|NZ\$|NZD/giu }, { code: 'MXN', regex: /멕시코\s*페소|멕시코페소|Mex\$|MXN/giu }, { code: 'BRL', regex: /브라질\s*헤알|헤알|R\$|BRL/giu }, { code: 'PHP', regex: /필리핀\s*페소|필리핀페소|₱|PHP/giu }, { code: 'MYR', regex: /말레이시아\s*링깃|링깃|RM|MYR/giu }, { code: 'GBP', regex: /파운드\s*스털링|영국\s*파운드|GBP\s*£|£\s*GBP/giu }, { code: 'JPY', regex: /엔|엔화|円|￥|¥|JPY|일본\s*엔|일본\s*엔화/giu }, { code: 'EUR', regex: /유로|€|EUR/giu }, { code: 'CNY', regex: /위안|위안화|元|CNY|중국\s*위안|인민폐|런민비/giu }, { code: 'KRW', regex: /원|₩|KRW|한국\s*원|대한민국\s*원/giu }, { code: 'INR', regex: /인도\s*루피|인도루피|₹|INR/giu }, { code: 'TRY', regex: /터키\s*리라|튀르키예\s*리라|리라|₺|TRY/giu }, { code: 'IDR', regex: /인도네시아\s*루피아|루피아|Rp|IDR/giu }, { code: 'PLN', regex: /폴란드\s*즐로티|즐로티|zł|PLN/giu }, { code: 'ILS', regex: /이스라엘\s*셰켈|셰켈|₪|ILS/giu }, { code: 'THB', regex: /태국\s*바트|바트|밧|฿|THB/giu }, { code: 'SEK', regex: /스웨덴\s*크로나|스웨덴크로나|SEK(?:kr)?|(?:krSEK)/giu }, { code: 'NOK', regex: /노르웨이\s*크로나|노르웨이크로나|NOK(?:kr)?|(?:krNOK)/giu }, { code: 'DKK', regex: /덴마크\s*크로나|덴마크크로나|DKK(?:kr)?|(?:krDKK)/giu }, { code: 'ISK', regex: /아이슬란드\s*크로나|아이슬란드크로나|ISK(?:kr)?|(?:krISK)/giu }, { code: 'ZAR', regex: /남아프리카\s*공화국\s*랜드|남아공\s*랜드|랜드|R|ZAR/giu }, { code: 'RON', regex: /루마니아\s*레우|레우|lei|RON/giu }, { code: 'CZK', regex: /체코\s*코루나|코루나|Kč|CZK/giu }, { code: 'HUF', regex: /헝가리\s*포린트|포린트|Ft|HUF/giu }, { code: 'BGN', regex: /불가리아\s*레프|레프|лв|BGN/giu }, { code: 'GBP', regex: /파운드|£|GBP/giu }, { code: 'USD', regex: /달러|\$|USD|불|미국\s*달러/giu },
         ],
         UNIT_CONVERSION_CONFIG: {
             length: [
-                { names: ['inch', 'inches', 'in', '"', '인치'], target_unit_code: 'cm', factor: 2.54, to_base_unit_factor: 0.0254, regex: /([\d\.,]+)\s*(inch(?:es)?|in|"|인치)\b/gi, additional_outputs: [{ unit: 'ft', from_base_unit_factor: 1/0.3048, precision: 3 }, { unit: 'm', from_base_unit_factor: 1, precision: 3 }], category: 'length' }, { names: ['foot', 'feet', 'ft', "'", '피트'], target_unit_code: 'm', factor: 0.3048, to_base_unit_factor: 0.3048, regex: /([\d\.,]+)\s*(foot|feet|ft|'|피트)\b/gi, additional_outputs: [{ unit: 'cm', from_base_unit_factor: 100, precision: 1 }, { unit: 'inch', from_base_unit_factor: 1/0.0254, precision: 2 }], category: 'length' }, { names: ['yard', 'yards', 'yd', '야드'], target_unit_code: 'm', factor: 0.9144, to_base_unit_factor: 0.9144, regex: /([\d\.,]+)\s*(yard(?:s)?|yd|야드)\b/gi, category: 'length' }, { names: ['mile', 'miles', 'mi', '마일'], target_unit_code: 'km', factor: 1.60934, to_base_unit_factor: 1609.34, regex: /([\d\.,]+)\s*(mile(?:s)?|mi|마일)\b/gi, category: 'length' }, { names: ['cm', '센티미터', '센치'], target_unit_code: 'inch', factor: 1/2.54, to_base_unit_factor: 0.01, regex: /([\d\.,]+)\s*(cm|센티미터|센치)\b/gi, is_metric: true, target_unit_name: '인치', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision: 3}], category: 'length' }, { names: ['m', '미터'], target_unit_code: 'ft', factor: 1/0.3048, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(m|미터)\b(?!i)(?!l)(?!o)(?!y)(?!a)(?!k)/gi, is_metric: true, target_unit_name: '피트', additional_outputs: [{unit: 'km', from_base_unit_factor: 0.001, precision:4}, {unit: 'inch', from_base_unit_factor: 1/0.0254, precision:1}], category: 'length' }, { names: ['km', '킬로미터'], target_unit_code: 'mile', factor: 1/1.60934, to_base_unit_factor: 1000, regex: /([\d\.,]+)\s*(km|킬로미터)\b/gi, is_metric: true, target_unit_name: '마일', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision:0}], category: 'length' },
+                { names: ['inch', 'inches', 'in', '"', '인치'], target_unit_code: 'cm', factor: 2.54, to_base_unit_factor: 0.0254, regex: /([\d\.,]+)\s*(inch(?:es)?|in|"|인치)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'ft', from_base_unit_factor: 1/0.3048, precision: 3 }, { unit: 'm', from_base_unit_factor: 1, precision: 3 }], category: 'length' },
+                { names: ['foot', 'feet', 'ft', "'", '피트'], target_unit_code: 'm', factor: 0.3048, to_base_unit_factor: 0.3048, regex: /([\d\.,]+)\s*(foot|feet|ft|'|피트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'cm', from_base_unit_factor: 100, precision: 1 }, { unit: 'inch', from_base_unit_factor: 1/0.0254, precision: 2 }], category: 'length' },
+                { names: ['yard', 'yards', 'yd', '야드'], target_unit_code: 'm', factor: 0.9144, to_base_unit_factor: 0.9144, regex: /([\d\.,]+)\s*(yard(?:s)?|yd|야드)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'length' },
+                { names: ['mile', 'miles', 'mi', '마일'], target_unit_code: 'km', factor: 1.60934, to_base_unit_factor: 1609.34, regex: /([\d\.,]+)\s*(mile(?:s)?|mi|마일)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'length' },
+                { names: ['cm', '센티미터', '센치'], target_unit_code: 'inch', factor: 1/2.54, to_base_unit_factor: 0.01, regex: /([\d\.,]+)\s*(cm|센티미터|센치)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '인치', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision: 3}], category: 'length' },
+                { names: ['m', '미터'], target_unit_code: 'ft', factor: 1/0.3048, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(m|미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!i)(?!l)(?!o)(?!y)(?!a)(?!k)/giu, is_metric: true, target_unit_name: '피트', additional_outputs: [{unit: 'km', from_base_unit_factor: 0.001, precision:4}, {unit: 'inch', from_base_unit_factor: 1/0.0254, precision:1}], category: 'length' },
+                { names: ['km', '킬로미터'], target_unit_code: 'mile', factor: 1/1.60934, to_base_unit_factor: 1000, regex: /([\d\.,]+)\s*(km|킬로미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '마일', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision:0}], category: 'length' },
             ],
             mass: [
-                { names: ['ounce', 'ounces', 'oz', '온스'], target_unit_code: 'g', factor: 28.3495, to_base_unit_factor: 0.0283495, regex: /([\d\.,]+)\s*(ounce(?:s)?|oz|온스)\b/gi, category: 'mass', target_precision: 0 }, { names: ['lb', 'lbs'], target_unit_code: 'kg', factor: 0.453592, to_base_unit_factor: 0.453592, regex: /([\d\.,]+)\s*(lb(?:s)?)\b/gi, id: 'lb', category: 'mass' }, { names: ['pound', 'pounds', '파운드'], target_unit_code: 'kg', factor: 0.453592, to_base_unit_factor: 0.453592, regex: /([\d\.,]+)\s*(파운드|pound(?:s)?)(?!\s*스털링)\b/gi, id: 'pound_mass_word', category: 'mass' }, { names: ['g', '그램'], target_unit_code: 'oz', factor: 1/28.3495, to_base_unit_factor: 0.001, regex: /([\d\.,]+)\s*(g|그램)\b(?!a)(?!p)/gi, is_metric: true, target_unit_name: '온스', category: 'mass' }, { names: ['kg', '킬로그램'], target_unit_code: 'lb', factor: 1/0.453592, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(kg|킬로그램)\b/gi, is_metric: true, target_unit_name: '파운드', category: 'mass' },
+                { names: ['ounce', 'ounces', 'oz', '온스'], target_unit_code: 'g', factor: 28.3495, to_base_unit_factor: 0.0283495, regex: /([\d\.,]+)\s*(ounce(?:s)?|oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'mass', target_precision: 0 },
+                { names: ['lb', 'lbs'], target_unit_code: 'kg', factor: 0.453592, to_base_unit_factor: 0.453592, regex: /([\d\.,]+)\s*(lb(?:s)?)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, id: 'lb', category: 'mass' },
+                { names: ['pound', 'pounds', '파운드'], target_unit_code: 'kg', factor: 0.453592, to_base_unit_factor: 0.453592, regex: /([\d\.,]+)\s*(파운드|pound(?:s)?)(?!\s*스털링)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, id: 'pound_mass_word', category: 'mass' },
+                { names: ['g', '그램'], target_unit_code: 'oz', factor: 1/28.3495, to_base_unit_factor: 0.001, regex: /([\d\.,]+)\s*(g|그램)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!a)(?!p)/giu, is_metric: true, target_unit_name: '온스', category: 'mass' },
+                { names: ['kg', '킬로그램'], target_unit_code: 'lb', factor: 1/0.453592, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(kg|킬로그램)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '파운드', category: 'mass' },
             ],
             volume: [
-                { names: ['fluid ounce', '액량온스', 'fl oz'], target_unit_code: 'mL', factor: 29.5735, to_base_unit_factor: 0.0295735, regex: /([\d\.,]+)\s*(fl(?:uid)?\s*oz\.?|액량온스|플루이드온스)\b/gi, category: 'volume', target_precision: 0 }, { names: ['pint', 'pints', 'pt', '파인트'], target_unit_code: 'L', factor: 0.473176, to_base_unit_factor: 0.473176, regex: /([\d\.,]+)\s*(pint(?:s)?|pt|파인트)\b/gi, category: 'volume' }, { names: ['quart', 'quarts', 'qt', '쿼트'], target_unit_code: 'L', factor: 0.946353, to_base_unit_factor: 0.946353, regex: /([\d\.,]+)\s*(quart(?:s)?|qt|쿼트)\b/gi, category: 'volume' }, { names: ['gallon', 'gallons', 'gal', '갤런'], target_unit_code: 'L', factor: 3.78541, to_base_unit_factor: 3.78541, regex: /([\d\.,]+)\s*(gallon(?:s)?|gal|갤런)\b/gi, category: 'volume' }, { names: ['mL', '밀리리터'], target_unit_code: 'fl oz', factor: 1/29.5735, to_base_unit_factor: 0.001, regex: /([\d\.,]+)\s*(ml|밀리리터)\b/gi, is_metric: true, target_unit_name: '액량온스', category: 'volume' }, { names: ['L', '리터'], target_unit_code: 'gallon', factor: 1/3.78541, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(L|l|리터)\b(?!b)(?!k)(?!s)/gi, is_metric: true, target_unit_name: '갤런', category: 'volume' },
+                { names: ['fluid ounce', '액량온스', 'fl oz'], target_unit_code: 'mL', factor: 29.5735, to_base_unit_factor: 0.0295735, regex: /([\d\.,]+)\s*(fl(?:uid)?\s*oz\.?|액량온스|플루이드온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume', target_precision: 0 },
+                { names: ['pint', 'pints', 'pt', '파인트'], target_unit_code: 'L', factor: 0.473176, to_base_unit_factor: 0.473176, regex: /([\d\.,]+)\s*(pint(?:s)?|pt|파인트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume' },
+                { names: ['quart', 'quarts', 'qt', '쿼트'], target_unit_code: 'L', factor: 0.946353, to_base_unit_factor: 0.946353, regex: /([\d\.,]+)\s*(quart(?:s)?|qt|쿼트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume' },
+                { names: ['gallon', 'gallons', 'gal', '갤런'], target_unit_code: 'L', factor: 3.78541, to_base_unit_factor: 3.78541, regex: /([\d\.,]+)\s*(gallon(?:s)?|gal|갤런)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume' },
+                { names: ['mL', '밀리리터'], target_unit_code: 'fl oz', factor: 1/29.5735, to_base_unit_factor: 0.001, regex: /([\d\.,]+)\s*(ml|밀리리터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '액량온스', category: 'volume' },
+                { names: ['L', '리터'], target_unit_code: 'gallon', factor: 1/3.78541, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(L|l|리터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!b)(?!k)(?!s)/giu, is_metric: true, target_unit_name: '갤런', category: 'volume' },
             ],
             temperature: [
-                { names: ['Fahrenheit', 'F', '화씨'], target_unit_code: '°C', regex: /(-?[\d\.,]+)\s*(?:°F\b|F\b(?!t|l\b|r\b|o\b)|화씨)/gi, convert_func: (val) => (val - 32) * 5 / 9, target_unit_name: '섭씨', category: 'temperature' }, { names: ['Celsius', 'C', '섭씨'], target_unit_code: '°F', regex: /(-?[\d\.,]+)\s*(?:°C\b|\bC\b(?![a-zA-Z])|섭씨)/gi, convert_func: (val) => (val * 9 / 5) + 32, target_unit_name: '화씨', category: 'temperature' }
+                { names: ['Fahrenheit', 'F', '화씨'], target_unit_code: '°C', regex: /(-?[\d\.,]+)\s*(?:°F\b|F\b(?!t|l\b|r\b|o\b)|화씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val - 32) * 5 / 9, target_unit_name: '섭씨', category: 'temperature' },
+                { names: ['Celsius', 'C', '섭씨'], target_unit_code: '°F', regex: /(-?[\d\.,]+)\s*(?:°C\b|\bC\b(?![a-zA-Z])|섭씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val * 9 / 5) + 32, target_unit_name: '화씨', category: 'temperature' }
             ],
         },
     };
@@ -805,14 +821,14 @@
         ORIGINAL_TEXT_LABEL: "원본: ",
     };
 
-    const REGEXES = {
-        KOREAN_NUMERALS_REGEX_G: new RegExp(Object.keys(Config.KOREAN_NUMERALS_MAP).join('|'), 'g'),
-        KOREAN_NUMERIC_CLEANUP_REGEX_GI: /[^0-9\.\s천백십]/gi,
-        NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9억만천백십조일이삼사오육칠팔구영BMKbmk\.,\s]/gi,
-        AMOUNT_ABBREVIATION_REGEX_I: /^([\d\.,]+)\s*([BMK])(?=\b|$)/i,
-        ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^([\\d\.,]+)\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).join('|')})(?:s)?(?=\\b|$)`, 'i'),
-        PLAIN_OZ_REGEX: /^([\d\.,]+)\s*(oz|온스)$/i,
-        PURE_NUMBER_REGEX: /^[\d\.]+$/,
+    const REGEXES = { // Added 'u' flag and lookaheads where appropriate
+        KOREAN_NUMERALS_REGEX_G: new RegExp(Object.keys(Config.KOREAN_NUMERALS_MAP).join('|'), 'gu'),
+        KOREAN_NUMERIC_CLEANUP_REGEX_GI: /[^0-9\.\s천백십]/giu,
+        NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9억만천백십조일이삼사오육칠팔구영BMKbmk\.,\s]/giu,
+        AMOUNT_ABBREVIATION_REGEX_I: /^([\d\.,]+)\s*([BMK])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/iu,
+        ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^([\\d\.,]+)\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
+        PLAIN_OZ_REGEX: /^([\d\.,]+)\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$/iu,
+        PURE_NUMBER_REGEX: /^[\d\.]+$/u,
     };
 
     const AppState = {
@@ -1059,14 +1075,15 @@
                     unit.regex.lastIndex = 0;
                     let match;
                     while ((match = unit.regex.exec(trimmedText)) !== null) {
-                        const value = Utils.parseFloatLenient(match[1]);
+                        const valueStr = match[1];
+                        const unitStr = match[2];
+                        const value = Utils.parseFloatLenient(valueStr);
                         if (value !== null) {
-                             foundMatches.push({ value, unitInfo: unit, originalText: match[0].trim(), originalUnit: match[2].trim() });
+                             foundMatches.push({ value, unitInfo: unit, originalText: match[0].trim(), originalUnit: unitStr.trim() });
                         }
                     }
                 }
             }
-            if (foundMatches.length === 0) return [];
 
             const plainOzInputMatch = REGEXES.PLAIN_OZ_REGEX.exec(trimmedText);
             if (plainOzInputMatch) {
@@ -1075,16 +1092,18 @@
                     m.value === valueFromPlainOz && m.unitInfo.category === 'mass' &&
                     (m.unitInfo.names.includes('oz') || m.unitInfo.names.includes('온스')) &&
                     (m.originalUnit.toLowerCase() === 'oz' || m.originalUnit.toLowerCase() === '온스') &&
-                    m.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase()
+                    m.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase().trim()
                 );
                 if (matchedMassOz) {
                     const alreadyHasFluidOz = foundMatches.some(m =>
-                        m.value === valueFromPlainOz && m.unitInfo.category === 'volume' && m.unitInfo.names.includes('fl oz')
+                        m.value === valueFromPlainOz && m.unitInfo.category === 'volume' &&
+                        m.unitInfo.names.includes('fl oz') &&
+                        m.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase().trim()
                     );
                     if (!alreadyHasFluidOz) {
                         const fluidOunceUnitInfo = Config.UNIT_CONVERSION_CONFIG.volume.find(u => u.names.includes('fl oz'));
-                        if (fluidOunceUnitInfo && !foundMatches.some(fm => fm.unitInfo === fluidOunceUnitInfo && fm.value === valueFromPlainOz)) {
-                            foundMatches.push({ value: valueFromPlainOz, unitInfo: fluidOunceUnitInfo, originalText: matchedMassOz.originalText, originalUnit: matchedMassOz.originalUnit });
+                        if (fluidOunceUnitInfo && !foundMatches.some(fm => fm.unitInfo === fluidOunceUnitInfo && fm.value === valueFromPlainOz && fm.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase().trim())) {
+                            foundMatches.push({ value: valueFromPlainOz, unitInfo: fluidOunceUnitInfo, originalText: plainOzInputMatch[0].trim(), originalUnit: plainOzInputMatch[2].trim() });
                         }
                     }
                 }
@@ -1241,13 +1260,12 @@
                 try {
                     chrome.runtime.sendMessage(
                         {
-                            action: "fetchLunaToolsExchangeRate",
+                            action: "fetchLunaToolsExchangeRate", // Ensure this matches the action in your background script
                             from: fromCurrency,
                             to: toCurrency
                         },
                         (response) => {
                             if (chrome.runtime.lastError) {
-                                // Handle errors like "Extension context invalidated" or port closed
                                 reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(chrome.runtime.lastError.message || 'extension_error')));
                                 return;
                             }
@@ -1272,7 +1290,6 @@
                         }
                     );
                 } catch (e) {
-                    // Catch synchronous errors during sendMessage (e.g., if extension context truly gone)
                     reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK('sendMessage_failed')));
                 }
             });
@@ -1367,11 +1384,11 @@
                 return { titleHtml, contentHtml, copyText, isError: false };
             } catch (error) {
                 const errMsgBase = `${UI_STRINGS.ERROR_ICON} 환율 변환 실패 (${Utils.escapeHTML(currencyDetails.currencyCode || "?")} → ${Config.DEFAULT_TARGET_CURRENCY}).`;
-                const errMsgDetail = (error && error.message) ? Utils.escapeHTML(error.message) : '알 수 없는 오류입니다.';
+                const errMsgDetail = (error && error.message) ? error.message : '알 수 없는 오류입니다.'; // Already escaped in UI_STRINGS for some, but error.message might not be.
                 return {
                     titleHtml: `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${Utils.escapeHTML(currencyDetails.originalText)}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}</span>`,
-                    contentHtml: `${errMsgBase}<br><small style="color:#c0392b;">${UI_STRINGS.ERROR_ICON} ${errMsgDetail}</small>`,
-                    copyText: `${currencyDetails.originalText} ${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}\n${errMsgBase}\n${UI_STRINGS.ERROR_ICON} ${errMsgDetail}`,
+                    contentHtml: `${errMsgBase}<br><small style="color:#c0392b;">${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}</small>`,
+                    copyText: `${currencyDetails.originalText} ${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}\n${errMsgBase}\n${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}`,
                     isError: true
                 };
             }
@@ -1396,48 +1413,48 @@
     };
 
     const _POPUP_STYLES = `
-		#${UI_STRINGS.POPUP_LAYER_ID} { font-family: "Lato", "나눔바른고딕", "Malgun Gothic", sans-serif; font-size: 18px; color: #1d1d1f; letter-spacing: -0.022em; border-radius: 14px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.07), 0 2px 8px rgba(0, 0, 0, 0.05); border: 1px solid rgba(0, 0, 0, 0.06); max-width: 580px; min-width: 300px; overflow: hidden; position: fixed; z-index: 2147483647 !important; cursor: default; padding: 0; transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1); transform: scale(0.95) translateY(15px); opacity: 0; max-height: 80vh; }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_VISIBLE_CLASS} { transform: scale(1) translateY(0); opacity: 1; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-window-title-bar { position: absolute; top: 0; left: 0; width: 100%; height: 40px; cursor: grab; user-select: none; display: flex; align-items: center; padding: 0 14px; box-sizing: border-box; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-window-title-bar:active { cursor: grabbing; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-close-btn { position: absolute; top: 10px; right: 12px; width: 22px; height: 22px; background-color: rgba(0, 0, 0, 0.08); border: none; color: rgba(0, 0, 0, 0.55); font-size: 17px; font-weight: 400; border-radius: 50%; cursor: pointer; padding: 0; user-select: none; transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease; display: flex; align-items: center; justify-content: center; line-height: 1; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-close-btn:hover { background-color: rgba(0, 0, 0, 0.13); color: rgba(0, 0, 0, 0.7); box-shadow: 0 1px 3px rgba(0,0,0,0.07); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-close-btn:active { background-color: rgba(0, 0, 0, 0.17); color: rgba(0, 0, 0, 0.8); transform: scale(0.93); box-shadow: inset 0 1px 1px rgba(0,0,0,0.1); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-content-container { padding: 12px 18px 18px 18px; margin-top: 40px; line-height: 1.65; text-align: left; overflow-y: auto; max-height: calc(80vh - 40px - 18px); word-break: break-word; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item { padding-bottom: 14px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-start; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item:last-child { margin-bottom: 0; padding-bottom: 0; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item:not(:last-child) { border-bottom: 1px solid rgba(0, 0, 0, 0.08); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item-text-content { flex-grow: 1; padding-right: 12px; line-height: 1.5; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item-text-content div { margin-bottom: 2px; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item-text-content div:last-child { margin-bottom: 0; }
-		#${UI_STRINGS.POPUP_LAYER_ID} b { font-weight: 600; color: #000000; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .converted-value { font-size: 1.2em; font-weight: 700; color: #0071E3; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .original-value { font-weight: 400; color: #333333; }
-		#${UI_STRINGS.POPUP_LAYER_ID} small { font-size: 0.8em; font-weight: 400; color: #585858; display: block; margin-top: 4px; letter-spacing: -0.01em; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .category-icon { display: inline-block; margin-right: 6px; font-size: 0.95em; opacity: 0.8; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .title-suffix { font-size: 0.85em; font-weight: 500; color: #6e6e73; margin-left: 4px; }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn { background-color: #007AFF; border: none; color: white; padding: 7px 15px; font-size: 0.75em; font-weight: 500; letter-spacing: -0.01em; border-radius: 9px; cursor: pointer; margin-left: 10px; margin-top: 3px; transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease; white-space: nowrap; flex-shrink: 0; box-shadow: 0 1px 2px rgba(0,122,255,0.2); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn:hover { background-color: #0071e3; box-shadow: 0 2px 4px rgba(0,122,255,0.25); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn:active { background-color: #0066cc; transform: scale(0.95); box-shadow: inset 0 1px 2px rgba(0,0,0,0.15); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn.success { background-color: #34c759; box-shadow: 0 1px 2px rgba(52,199,89,0.2); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn.success:hover { background-color: #2fab4e; box-shadow: 0 2px 4px rgba(52,199,89,0.25); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn.fail { background-color: #ff3b30; box-shadow: 0 1px 2px rgba(255,59,48,0.2); }
-		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn.fail:hover { background-color: #fa2a1e; box-shadow: 0 2px 4px rgba(255,59,48,0.25); }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_DEFAULT_CLASS} { background-color: rgba(252, 252, 254, 0.95); backdrop-filter: blur(16px) saturate(170%); -webkit-backdrop-filter: blur(16px) saturate(170%); }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_DEFAULT_CLASS} .smart-converter-window-title-bar { border-bottom: 1px solid rgba(0,0,0,0.08); }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_DEFAULT_CLASS} .smart-converter-content-container { background-color: transparent; }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} { background-color: rgba(255, 238, 238, 0.95); border-color: rgba(200, 70, 60, 0.6); backdrop-filter: blur(16px) saturate(170%); -webkit-backdrop-filter: blur(16px) saturate(170%); }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-window-title-bar { border-bottom: 1px solid rgba(200, 70, 60, 0.3); }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-content-container { background-color: transparent; }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-item-text-content, #${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-item-text-content b, #${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-item-text-content div { color: #a6160a; }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} small { color: #b32b1e !important; }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} { background-color: rgba(238, 245, 255, 0.95); border-color: rgba(110, 170, 240, 0.6); backdrop-filter: blur(16px) saturate(170%); -webkit-backdrop-filter: blur(16px) saturate(170%); }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-window-title-bar { border-bottom: 1px solid rgba(110, 170, 240, 0.3); }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-content-container { background-color: transparent; }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content, #${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content div { color: #0b3a85; position: relative; }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content div::after { content: ""; display: inline-block; width: 0.9em; height: 0.9em; margin-left: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: smart-converter-spinner 0.8s linear infinite; vertical-align: middle; position: absolute; top: 50%; transform: translateY(-50%); }
-		@keyframes smart-converter-spinner { to { transform: translateY(-50%) rotate(360deg); } }
-    `.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '').replace(/\n\s*\n/g, '\n');
+		#${UI_STRINGS.POPUP_LAYER_ID}{font-family:"Lato","나눔바른고딕","Malgun Gothic",sans-serif;font-size:18px;color:#1d1d1f;letter-spacing:-.022em;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.07),0 2px 8px rgba(0,0,0,.05);border:1px solid rgba(0,0,0,.06);max-width:580px;min-width:300px;overflow:hidden;position:fixed;z-index:2147483647!important;cursor:default;padding:0;transition:opacity .25s cubic-bezier(.4,0,.2,1),transform .25s cubic-bezier(.4,0,.2,1);transform:scale(.95) translateY(15px);opacity:0;max-height:80vh}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_VISIBLE_CLASS}{transform:scale(1) translateY(0);opacity:1}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-window-title-bar{position:absolute;top:0;left:0;width:100%;height:40px;cursor:grab;user-select:none;display:flex;align-items:center;padding:0 14px;box-sizing:border-box}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-window-title-bar:active{cursor:grabbing}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-close-btn{position:absolute;top:10px;right:12px;width:22px;height:22px;background-color:rgba(0,0,0,.08);border:none;color:rgba(0,0,0,.55);font-size:17px;font-weight:400;border-radius:50%;cursor:pointer;padding:0;user-select:none;transition:background-color .2s ease,color .2s ease,transform .15s ease,box-shadow .2s ease;display:flex;align-items:center;justify-content:center;line-height:1}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-close-btn:hover{background-color:rgba(0,0,0,.13);color:rgba(0,0,0,.7);box-shadow:0 1px 3px rgba(0,0,0,.07)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-close-btn:active{background-color:rgba(0,0,0,.17);color:rgba(0,0,0,.8);transform:scale(.93);box-shadow:inset 0 1px 1px rgba(0,0,0,.1)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-content-container{padding:12px 18px 18px;margin-top:40px;line-height:1.65;text-align:left;overflow-y:auto;max-height:calc(80vh - 40px - 18px);word-break:break-word}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item{padding-bottom:14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-start}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item:last-child{margin-bottom:0;padding-bottom:0}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item:not(:last-child){border-bottom:1px solid rgba(0,0,0,.08)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item-text-content{flex-grow:1;padding-right:12px;line-height:1.5}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item-text-content div{margin-bottom:2px}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-item-text-content div:last-child{margin-bottom:0}
+		#${UI_STRINGS.POPUP_LAYER_ID} b{font-weight:600;color:#000}
+		#${UI_STRINGS.POPUP_LAYER_ID} .converted-value{font-size:1.2em;font-weight:700;color:#0071e3}
+		#${UI_STRINGS.POPUP_LAYER_ID} .original-value{font-weight:400;color:#333}
+		#${UI_STRINGS.POPUP_LAYER_ID} small{font-size:.8em;font-weight:400;color:#585858;display:block;margin-top:4px;letter-spacing:-.01em}
+		#${UI_STRINGS.POPUP_LAYER_ID} .category-icon{display:inline-block;margin-right:6px;font-size:.95em;opacity:.8}
+		#${UI_STRINGS.POPUP_LAYER_ID} .title-suffix{font-size:.85em;font-weight:500;color:#6e6e73;margin-left:4px}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn{background-color:#007aff;border:none;color:#fff;padding:7px 15px;font-size:.75em;font-weight:500;letter-spacing:-.01em;border-radius:9px;cursor:pointer;margin-left:10px;margin-top:3px;transition:background-color .15s ease,transform .1s ease,box-shadow .15s ease;white-space:nowrap;flex-shrink:0;box-shadow:0 1px 2px rgba(0,122,255,.2)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn:hover{background-color:#0071e3;box-shadow:0 2px 4px rgba(0,122,255,.25)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn:active{background-color:#0066cc;transform:scale(.95);box-shadow:inset 0 1px 2px rgba(0,0,0,.15)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn.success{background-color:#34c759;box-shadow:0 1px 2px rgba(52,199,89,.2)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn.success:hover{background-color:#2fab4e;box-shadow:0 2px 4px rgba(52,199,89,.25)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn.fail{background-color:#ff3b30;box-shadow:0 1px 2px rgba(255,59,48,.2)}
+		#${UI_STRINGS.POPUP_LAYER_ID} .smart-converter-copy-btn.fail:hover{background-color:#fa2a1e;box-shadow:0 2px 4px rgba(255,59,48,.25)}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_DEFAULT_CLASS}{background-color:rgba(252,252,254,.95);backdrop-filter:blur(16px) saturate(170%);-webkit-backdrop-filter:blur(16px) saturate(170%)}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_DEFAULT_CLASS} .smart-converter-window-title-bar{border-bottom:1px solid rgba(0,0,0,.08)}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_DEFAULT_CLASS} .smart-converter-content-container{background-color:transparent}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS}{background-color:rgba(255,238,238,.95);border-color:rgba(200,70,60,.6);backdrop-filter:blur(16px) saturate(170%);-webkit-backdrop-filter:blur(16px) saturate(170%)}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-window-title-bar{border-bottom:1px solid rgba(200,70,60,.3)}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-content-container{background-color:transparent}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-item-text-content,#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-item-text-content b,#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-item-text-content div{color:#a6160a}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} small{color:#b32b1e!important}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS}{background-color:rgba(238,245,255,.95);border-color:rgba(110,170,240,.6);backdrop-filter:blur(16px) saturate(170%);-webkit-backdrop-filter:blur(16px) saturate(170%)}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-window-title-bar{border-bottom:1px solid rgba(110,170,240,.3)}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-content-container{background-color:transparent}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content,#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content div{color:#0b3a85;position:relative}
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content div::after{content:"";display:inline-block;width:.9em;height:.9em;margin-left:10px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:smart-converter-spinner .8s linear infinite;vertical-align:middle;position:absolute;top:50%;transform:translateY(-50%)}
+		@keyframes smart-converter-spinner{to{transform:translateY(-50%) rotate(360deg)}}
+    `.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '').replace(/\n\s*\n/g, '\n').replace(/\s{2,}/g, ' ').replace(/:\s/g, ':').replace(/;\s/g, ';').replace(/,\s/g, ',');
 
 
     const PopupUI = {
@@ -1628,9 +1645,9 @@
             else AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_DEFAULT_CLASS);
 
             AppState.currentPopupElement.style.display = 'block';
-            AppState.currentPopupElement.style.visibility = 'hidden'; // Prevent flicker during position calculation
+            AppState.currentPopupElement.style.visibility = 'hidden';
 
-            requestAnimationFrame(() => { // Calculate position after elements are rendered but before displayed
+            requestAnimationFrame(() => {
                 const { top, left } = PopupUI.calculatePosition(AppState.currentPopupElement);
                 AppState.currentPopupElement.style.top = `${top}px`;
                 AppState.currentPopupElement.style.left = `${left}px`;
@@ -1638,7 +1655,6 @@
                 AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_VISIBLE_CLASS);
             });
         },
-        // GM_addStyle replacement
         addGlobalStyle: function(css) {
             const head = document.head || document.getElementsByTagName('head')[0];
             if (head) {
@@ -1649,7 +1665,7 @@
             }
         },
         injectStyles: function() {
-            PopupUI.addGlobalStyle(_POPUP_STYLES); // Use the new method
+            PopupUI.addGlobalStyle(_POPUP_STYLES);
         }
     };
 
@@ -1673,9 +1689,9 @@
             if (resultsArray.length > 0) {
                 const hasError = resultsArray.some(res => res.isError);
                 PopupUI.display(resultsArray, hasError, false);
-            } else if (conversionAttempted) { // Attempted but no valid results (e.g., API error for currency, no unit match)
+            } else if (conversionAttempted) {
                  PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_NO_VALID_CONVERSION(previewText)}</div>` }], true, false);
-            } else { // No convertible content found at all
+            } else {
                 PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_CANNOT_FIND_CONVERTIBLE(previewText)}</div>` }], true, false);
             }
         },
@@ -1685,7 +1701,7 @@
             const selection = window.getSelection();
             if (selection && selection.toString().trim() !== "" && selection.rangeCount > 0) {
                 const rect = selection.getRangeAt(0).getBoundingClientRect();
-                if (rect.width > 0 || rect.height > 0) { // Ensure rect is valid
+                if (rect.width > 0 || rect.height > 0) {
                     AppState.lastSelectionRect = rect;
                 }
             }
@@ -1699,15 +1715,15 @@
         },
         initEventListeners: function() {
             document.addEventListener('mouseup', EventHandlers.updateMousePositionAndSelectionRect);
-            document.addEventListener('contextmenu', (e) => EventHandlers.updateMousePositionAndSelectionRect(e), true); // For context menu opening
-            document.addEventListener('selectionchange', Utils.debounce(EventHandlers.handleSelectionChange, 250)); // Debounced
+            document.addEventListener('contextmenu', (e) => EventHandlers.updateMousePositionAndSelectionRect(e), true);
+            document.addEventListener('selectionchange', Utils.debounce(EventHandlers.handleSelectionChange, 250));
             document.addEventListener('keydown', function(event) {
                 if (event.altKey && (event.key === 'z' || event.key === 'Z' || event.code === 'KeyZ')) {
                     event.preventDefault();
                     event.stopPropagation();
                     EventHandlers.handleUnifiedConvertAction();
                 }
-                if (event.key === 'Escape' || event.code === 'Escape') { // Escape key
+                if (event.key === 'Escape' || event.code === 'Escape') {
                     if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') {
                         PopupUI.close();
                     }
@@ -1715,9 +1731,9 @@
             });
             window.addEventListener('scroll', () => {
                  if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) {
-                    PopupUI.close(); // Close popup on scroll
+                    PopupUI.close();
                  }
-            }, true); // Capture phase
+            }, true);
             window.addEventListener('resize', Utils.debounce(() => {
                 if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) {
                     const { top, left } = PopupUI.calculatePosition(AppState.currentPopupElement);
@@ -1740,6 +1756,6 @@
     }
 
   })();
-  
+
 
 })();
