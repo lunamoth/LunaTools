@@ -1,12 +1,9 @@
 (() => {
   'use strict';
 
-  // =======================================================================
-  // === MOUSE GESTURE HANDLER                                           ===
-  // =======================================================================
   class MouseGestureHandler {
-    static MIN_DRAG_DISTANCE_SQ = 100; // 10px * 10px
-    static MIN_FINAL_DISTANCE_SQ = 625; // 25px * 25px
+    static MIN_DRAG_DISTANCE_SQ = 100;
+    static MIN_FINAL_DISTANCE_SQ = 625;
     static MESSAGE_ACTION = 'perform-gesture';
     static RIGHT_MOUSE_BUTTON = 2;
 
@@ -97,7 +94,6 @@
       try {
         chrome.runtime.sendMessage({ action: MouseGestureHandler.MESSAGE_ACTION, gesture });
       } catch (error) {
-        // Silently ignore "Extension context invalidated" or other errors
       }
     }
 
@@ -134,9 +130,6 @@
     new MouseGestureHandler();
   }
 
-  // =======================================================================
-  // === KEYBOARD PAGE NAVIGATION (Top-level window only)                ===
-  // =======================================================================
   if (window.self === window.top) {
     const KB_NAV_CONFIG = Object.freeze({
       cache: { MAX_SIZE: 100, MAX_AGE_MS: 30 * 60 * 1000 },
@@ -505,9 +498,6 @@
     }
   }
 
-  // =======================================================================
-  // === PICTURE-IN-PICTURE (PiP) HANDLER                              ===
-  // =======================================================================
   class PictureInPictureHandler {
     static PIP_RESTRICTED_ATTRIBUTES = ['disablePictureInPicture', 'disableRemotePlayback', 'playsinline'];
     static PIP_KEY = 'P';
@@ -579,7 +569,6 @@
                 try {
                     videoElement.removeAttribute(attr);
                 } catch (e) {
-                    // Silently ignore
                 }
             }
         });
@@ -589,7 +578,7 @@
       if (!videoElement) {
         return;
       }
-      if (videoElement.readyState < 3) { // HAVE_FUTURE_DATA or more
+      if (videoElement.readyState < 3) {
         try {
           await new Promise((resolve, reject) => {
             let timeoutId = null;
@@ -603,24 +592,23 @@
               clearTimeout(timeoutId);
               videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
               videoElement.removeEventListener('error', onError);
-              resolve(); // Resolve even on error to proceed with PiP attempt
+              resolve();
             };
 
             videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
             videoElement.addEventListener('error', onError);
 
             if (videoElement.readyState === 0 && videoElement.networkState === HTMLMediaElement.NETWORK_EMPTY && (videoElement.src || videoElement.querySelector('source[src]')?.src) ) {
-                videoElement.load(); // Attempt to load if source is present but network state is empty
+                videoElement.load();
             }
 
             timeoutId = setTimeout(() => {
               videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
               videoElement.removeEventListener('error', onError);
-              resolve(); // Timeout also resolves to attempt PiP
-            }, 3000); // 3 seconds timeout
+              resolve();
+            }, 3000);
           });
         } catch (loadError) {
-          // Silently ignore
         }
       }
     }
@@ -628,20 +616,16 @@
     async _attemptEnterPiPWithOverrides(targetVideo) {
         if (targetVideo.disablePictureInPicture) {
             try {
-                // Attempt to redefine the property to be configurable and writable
                 Object.defineProperty(targetVideo, 'disablePictureInPicture', {
                     configurable: true, writable: true, value: false
                 });
-                // After redefining, try setting it directly if the above didn't throw
-                if (targetVideo.disablePictureInPicture) { // Check if redefine was successful
+                if (targetVideo.disablePictureInPicture) {
                     targetVideo.disablePictureInPicture = false;
                 }
             } catch (eDefineProp) {
-                // If defineProperty fails (e.g., not configurable), try direct assignment
                 try {
                     targetVideo.disablePictureInPicture = false;
                 } catch (eDirectAssign) {
-                    // Both failed, likely a non-configurable, non-writable property
                 }
             }
         }
@@ -653,7 +637,6 @@
         try {
           await document.exitPictureInPicture();
         } catch (error) {
-          // Silently ignore
         }
         return;
       }
@@ -664,44 +647,37 @@
       }
 
       await this._ensureVideoReady(targetVideo);
-      this._removePiPRestrictions(targetVideo); // Remove known attributes like 'disablePictureInPicture'
+      this._removePiPRestrictions(targetVideo);
 
       try {
-        // If video is paused and very small (placeholder state for some sites), try to play it muted
         if (targetVideo.paused && (targetVideo.videoWidth < 100 || targetVideo.videoHeight < 100)) {
             try {
-                targetVideo.muted = true; // Mute to avoid unexpected sound
-                await targetVideo.play(); // Play to potentially load actual video dimensions/content
+                targetVideo.muted = true;
+                await targetVideo.play();
             } catch(playError) {
-                // Silently ignore play errors, PiP might still work
             }
         }
 
         await targetVideo.requestPictureInPicture();
         this._addLeavePiPListener(targetVideo);
       } catch (initialError) {
-        // Check if the error is specifically about disablePictureInPicture being true
         const isPipDisabledError = initialError.name === 'InvalidStateError' &&
                                    (initialError.message.includes('disablePictureInPicture') ||
                                     initialError.message.toLowerCase().includes('picture-in-picture is disabled'));
 
         if (isPipDisabledError) {
             try {
-                // Attempt to enter PiP by overriding disablePictureInPicture property
                 await this._attemptEnterPiPWithOverrides(targetVideo);
                 this._addLeavePiPListener(targetVideo);
             } catch (finalAttemptError) {
-                // Silently ignore errors from the final attempt
             }
         } else {
-            // Silently ignore other types of errors
         }
       }
     }
 
     _addLeavePiPListener(videoElement) {
         videoElement.addEventListener('leavepictureinpicture', () => {
-            // Action on leave if needed
         }, { once: true });
     }
 
@@ -730,10 +706,7 @@
   new PictureInPictureHandler();
 
 
-  // =======================================================================
-  // === SELECTED TEXT CURRENCY/UNIT CONVERTER (Alt+Z)                 ===
-  // =======================================================================
-  (() => { // IIFE for Text Converter
+  (() => {
     'use strict';
 
     const Config = {
@@ -859,31 +832,20 @@
         PLAIN_OZ_REGEX: /^([\d\.,]+)\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$/iu,
         PURE_NUMBER_REGEX: /^[\d\.]+$/u,
         TIME_EXTRACTION_PATTERN: new RegExp(
-            // Date Part: Optional, can be Month Day, Year OR YYYY-MM-DD OR MM/DD/YYYY OR DD.MM.YYYY etc.
             '(?:' +
-                // Option 1: Month name based
                 '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,\\s*(\\d{4}|\\d{2}))?)' +
                 '|' +
-                // Option 2: YYYY-MM-DD
                 '(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})' +
                 '|' +
-                // Option 3: MM/DD/YYYY or DD.MM.YYYY (captures M, D, Y parts)
                 '(\\d{1,2})[-./](\\d{1,2})[-./](\\d{4}|\\d{2})' +
-            ')?\\s*' + // End of optional Date Part, followed by optional space
-            // Optional "at" or just space (if date part was present or not)
+            ')?\\s*' +
             '(?:at\\s+)?' +
-            // Time Part (HH:MM or H, optional seconds)
             '(\\d{1,2})(?::(\\d{2}))?(?::(\\d{2}))?' +
-            // Optional AM/PM
             '\\s*(a\\.?m\\.?|p\\.?m\\.?)?' +
-            // Timezone Part
             '\\s+((?:P[SDMCE]?T|E[SDC]?T|C[SDMCE]?T|M[SD]?T|A[KDEH]?ST|WET|WEST|CET|CEST|BST|GMT|UTC)(?:[+-]\\d{1,2}(?::?\\d{2})?)?|(?:\\b(?:Pacific|Mountain|Central|Eastern|Atlantic|Alaska|Hawaii|Greenwich Mean|Coordinated Universal)(?: Standard| Daylight| European)? Time\\b)|[A-Z]{3,5})' +
-            // Optional further words after timezone like "Time"
             '(?:\\s+Time)?',
             'giu'
         ),
-        // For parsing explicit GMT/UTC offsets like GMT+0500, UTC-7, GMT+5:30
-        // Allows HH, HHMM, or HH:MM for offset
         TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i,
     };
 
@@ -1099,7 +1061,7 @@
                 const parts = formatter.formatToParts(sampleDate);
                 const offsetPart = parts.find(p => p.type === 'timeZoneName');
                 return offsetPart ? offsetPart.value : null;
-            } catch (e) { /* console.warn(...) */ }
+            } catch (e) {  }
             return null;
         },
 
@@ -1115,29 +1077,21 @@
 
             while ((match = REGEXES.TIME_EXTRACTION_PATTERN.exec(inputText)) !== null) {
                 const originalMatch = match[0];
-                // Destructure based on the new regex groups
                 let [
-                    , // full match
-                    // Option 1: Month name based
+                    , 
                     monthNameStr, dayNameStr, yearNameStr,
-                    // Option 2: YYYY-MM-DD
                     yearYMDStr, monthYMDStr, dayYMDStr,
-                    // Option 3: MM/DD/YYYY or DD.MM.YYYY
                     part1MDYStr, part2MDYStr, yearMDYStr,
-                    // Time part
                     hourStr, minuteStr, secondStr,
-                    // AM/PM
                     ampmStr,
-                    // Timezone
                     tzStr
                 ] = match;
 
                 let year, monthIndex, day;
                 let parsedDateSuccessfully = false;
 
-                // --- Date part determination ---
                 const today = new Date();
-                if (monthNameStr) { // Month name based
+                if (monthNameStr) { 
                     year = yearNameStr ? parseInt(yearNameStr, 10) : today.getFullYear();
                     if (yearNameStr && yearNameStr.length === 2) year += (year < 70 ? 2000 : 1900);
                     
@@ -1148,41 +1102,39 @@
                     day = dayNameStr ? parseInt(dayNameStr, 10) : today.getDate();
                     if (monthIndex !== -1 && day >= 1 && day <= 31) parsedDateSuccessfully = true;
 
-                } else if (yearYMDStr) { // YYYY-MM-DD
+                } else if (yearYMDStr) { 
                     year = parseInt(yearYMDStr, 10);
-                    monthIndex = parseInt(monthYMDStr, 10) - 1; // Month is 0-indexed
+                    monthIndex = parseInt(monthYMDStr, 10) - 1; 
                     day = parseInt(dayYMDStr, 10);
                     parsedDateSuccessfully = this._isValidDate(year, monthIndex, day);
 
-                } else if (part1MDYStr) { // MM/DD/YYYY or DD/MM/YYYY (prioritize MM/DD/YYYY for M/D <=12)
+                } else if (part1MDYStr) { 
                     year = yearMDYStr ? parseInt(yearMDYStr, 10) : today.getFullYear();
                     if (yearMDYStr && yearMDYStr.length === 2) year += (year < 70 ? 2000 : 1900);
 
                     const p1 = parseInt(part1MDYStr, 10);
                     const p2 = parseInt(part2MDYStr, 10);
 
-                    // Try MM/DD/YYYY first
                     if (this._isValidDate(year, p1 - 1, p2)) {
                         monthIndex = p1 - 1;
                         day = p2;
                         parsedDateSuccessfully = true;
-                    } // Else try DD/MM/YYYY if MM/DD was invalid and p2 could be a month
+                    } 
                     else if (this._isValidDate(year, p2 - 1, p1)) {
                         monthIndex = p2 - 1;
                         day = p1;
                         parsedDateSuccessfully = true;
                     }
-                } else { // No date part found, default to today
+                } else { 
                     year = today.getFullYear();
                     monthIndex = today.getMonth();
                     day = today.getDate();
-                    parsedDateSuccessfully = true; // Today is always a valid date
+                    parsedDateSuccessfully = true; 
                 }
 
                 if (!parsedDateSuccessfully) continue;
 
 
-                // --- Time part ---
                 let hour = parseInt(hourStr, 10);
                 let minute = minuteStr ? parseInt(minuteStr, 10) : 0;
                 let second = secondStr ? parseInt(secondStr, 10) : 0;
@@ -1200,7 +1152,6 @@
                 if (hour === 24 && minute === 0 && second === 0) hour = 0;
 
 
-                // --- Timezone part ---
                 let resolvedTzOffsetString = null;
                 const upperTzStr = tzStr.toUpperCase();
 
@@ -1212,32 +1163,12 @@
                     if (offsetMatch) {
                         const sign = offsetMatch[1];
                         const hOff = parseInt(offsetMatch[2], 10);
-                        // offsetMatch[3] is the colon, offsetMatch[4] is minutes
                         const mOffStr = offsetMatch[4]; 
                         let mOff = 0;
 
-                        if (mOffStr) { // Minutes are explicitly provided (e.g., +05:30 or +0530 if regex adapted)
+                        if (mOffStr) { 
                             mOff = parseInt(mOffStr, 10);
                         } else if (!offsetMatch[3] && offsetMatch[2].length > 2) { 
-                            // No colon, and hour part is longer than 2 digits (e.g. "0530" from +0530)
-                            // This part handles HHMM if hOff was a combined string.
-                            // For TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{2})(\d{2})?$/i for HHMM
-                            // Current TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i
-                            // If offsetMatch[2] captured "0530", we need to split it.
-                            // This logic needs to be robust based on the TZ_OFFSET_REGEX structure
-                            // With current TZ_OFFSET_REGEX: /([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i
-                            // if hOff is from (\d{1,2}) and mOffStr from (\d{2}), it means
-                            // GMT+530 will parse hOff=5, mOffStr=30 if TZ_OFFSET_REGEX adapted for it.
-                            // Let's assume current regex, if mOffStr is undefined but hOff implies HHMM (e.g. "0530" if regex was diff)
-                            // With: /^(?:GMT|UTC)([+-])(\d{2})(\d{2})?$/i (Example of adapting for HHMM)
-                            //  offsetMatch[1] = sign, offsetMatch[2] = HH, offsetMatch[3] = MM (optional)
-                            // So if offsetMatch[3] exists, it's MM. If not, MM is 0.
-                            // Let's revert to simpler logic for the provided TZ_OFFSET_REGEX:
-                            if (mOffStr) {
-                                mOff = parseInt(mOffStr, 10);
-                            }
-                            // If it was GMT+0530 and regex was /([+-])(\d{2})(\d{2})/
-                            // hOff would be "05", mOff would be "30" (from different capture group)
                         }
 
 
@@ -1248,7 +1179,6 @@
                         let ianaForFullName = null;
                         if (upperTzStr.includes("PACIFIC")) ianaForFullName = "America/Los_Angeles";
                         else if (upperTzStr.includes("MOUNTAIN")) ianaForFullName = "America/Denver";
-                        // ... (rest of the full name mappings)
                         if (ianaForFullName) {
                             resolvedTzOffsetString = this._getOffsetStringForIANA(ianaForFullName, year, monthIndex, day, hour, minute);
                         }
@@ -1258,13 +1188,13 @@
                 if (!resolvedTzOffsetString) continue;
 
                 try {
-                    const monthNameForParse = Config.MONTH_NAMES_EN_FULL[monthIndex]; // Use month name for robust parsing
+                    const monthNameForParse = Config.MONTH_NAMES_EN_FULL[monthIndex]; 
                     const dateStringForParsing = `${monthNameForParse} ${day}, ${year} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')} ${resolvedTzOffsetString}`;
                     const sourceDate = new Date(dateStringForParsing);
 
                     if (isNaN(sourceDate.getTime())) continue;
                     results.push({ date: sourceDate, originalText: originalMatch.trim() });
-                } catch (e) { /* console.warn(...) */ }
+                } catch (e) {  }
             }
             return results;
         }
@@ -1273,13 +1203,13 @@
     const TextExtractor = {
         extractCurrencyDetails: function(inputText) {
             if (Utils.isInvalidString(inputText)) {
-                return { amount: null, currencyCode: null, originalText: "", matchedCurrencyText: "" };
+                return { amount: null, currencyCode: null, originalText: "", matchedCurrencyText: "", magnitudeAmountText: null };
             }
             const originalText = inputText.trim();
             let amountTextToParse = originalText;
             let currencyCode = null;
             let matchedCurrencyText = "";
-
+    
             for (const pattern of Config.CURRENCY_PATTERNS) {
                 pattern.regex.lastIndex = 0;
                 const match = pattern.regex.exec(originalText);
@@ -1291,19 +1221,27 @@
                     break;
                 }
             }
-
+    
             let amount = null;
-            if (currencyCode || amountTextToParse === originalText) {
-                const textForNumericParse = (currencyCode && amountTextToParse === "") ?
-                    originalText.replace(matchedCurrencyText, '').trim() :
-                    amountTextToParse;
-                if (textForNumericParse !== "") {
-                    amount = NumberParser.parseGenericNumericText(textForNumericParse);
+            let magnitudeAmountText = null; 
+    
+            const textForNumericParse = (currencyCode && amountTextToParse === "" && matchedCurrencyText !== "") ?
+                originalText.replace(matchedCurrencyText, '').trim() : 
+                amountTextToParse;
+    
+            if (textForNumericParse !== "") {
+                const parsedWithMagnitude = NumberParser.parseAmountWithMagnitudeSuffixes(textForNumericParse);
+                if (parsedWithMagnitude !== null) {
+                    amount = parsedWithMagnitude;
+                    magnitudeAmountText = textForNumericParse;
+                } else {
+                    amount = NumberParser.parseKoreanNumericText(textForNumericParse);
                 }
             }
-            return { amount, currencyCode, originalText, matchedCurrencyText };
+            
+            return { amount, currencyCode, originalText, matchedCurrencyText, magnitudeAmountText };
         },
-        extractPhysicalUnitDetails: function(inputText) {
+        extractPhysicalUnitDetails: function(inputText, ignoredText = null) { 
             if (Utils.isInvalidString(inputText)) return [];
             const foundMatches = [];
             const trimmedText = inputText.trim();
@@ -1314,10 +1252,16 @@
                     let match;
                     while ((match = unit.regex.exec(trimmedText)) !== null) {
                         const valueStr = match[1];
-                        const unitStr = match[2];
+                        const originalMatchedSegment = match[0].trim(); 
+
+                        if (ignoredText && originalMatchedSegment.toLowerCase() === ignoredText.toLowerCase()) {
+                            continue; 
+                        }
+
+                        const unitStr = match[2]; 
                         const value = Utils.parseFloatLenient(valueStr);
                         if (value !== null) {
-                             foundMatches.push({ value, unitInfo: unit, originalText: match[0].trim(), originalUnit: unitStr.trim() });
+                             foundMatches.push({ value, unitInfo: unit, originalText: originalMatchedSegment, originalUnit: unitStr.trim() });
                         }
                     }
                 }
@@ -1325,23 +1269,25 @@
 
             const plainOzInputMatch = REGEXES.PLAIN_OZ_REGEX.exec(trimmedText);
             if (plainOzInputMatch) {
-                const valueFromPlainOz = Utils.parseFloatLenient(plainOzInputMatch[1]);
-                const matchedMassOz = foundMatches.find(m =>
-                    m.value === valueFromPlainOz && m.unitInfo.category === 'mass' &&
-                    (m.unitInfo.names.includes('oz') || m.unitInfo.names.includes('온스')) &&
-                    (m.originalUnit.toLowerCase() === 'oz' || m.originalUnit.toLowerCase() === '온스') &&
-                    m.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase().trim()
-                );
-                if (matchedMassOz) {
-                    const alreadyHasFluidOz = foundMatches.some(m =>
-                        m.value === valueFromPlainOz && m.unitInfo.category === 'volume' &&
-                        m.unitInfo.names.includes('fl oz') &&
+                 if (!(ignoredText && plainOzInputMatch[0].trim().toLowerCase() === ignoredText.toLowerCase())) {
+                    const valueFromPlainOz = Utils.parseFloatLenient(plainOzInputMatch[1]);
+                    const matchedMassOz = foundMatches.find(m =>
+                        m.value === valueFromPlainOz && m.unitInfo.category === 'mass' &&
+                        (m.unitInfo.names.includes('oz') || m.unitInfo.names.includes('온스')) &&
+                        (m.originalUnit.toLowerCase() === 'oz' || m.originalUnit.toLowerCase() === '온스') &&
                         m.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase().trim()
                     );
-                    if (!alreadyHasFluidOz) {
-                        const fluidOunceUnitInfo = Config.UNIT_CONVERSION_CONFIG.volume.find(u => u.names.includes('fl oz'));
-                        if (fluidOunceUnitInfo && !foundMatches.some(fm => fm.unitInfo === fluidOunceUnitInfo && fm.value === valueFromPlainOz && fm.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase().trim())) {
-                            foundMatches.push({ value: valueFromPlainOz, unitInfo: fluidOunceUnitInfo, originalText: plainOzInputMatch[0].trim(), originalUnit: plainOzInputMatch[2].trim() });
+                    if (matchedMassOz) {
+                        const alreadyHasFluidOz = foundMatches.some(m =>
+                            m.value === valueFromPlainOz && m.unitInfo.category === 'volume' &&
+                            m.unitInfo.names.includes('fl oz') &&
+                            m.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase().trim()
+                        );
+                        if (!alreadyHasFluidOz) {
+                            const fluidOunceUnitInfo = Config.UNIT_CONVERSION_CONFIG.volume.find(u => u.names.includes('fl oz'));
+                            if (fluidOunceUnitInfo && !foundMatches.some(fm => fm.unitInfo === fluidOunceUnitInfo && fm.value === valueFromPlainOz && fm.originalText.toLowerCase() === plainOzInputMatch[0].toLowerCase().trim())) {
+                                foundMatches.push({ value: valueFromPlainOz, unitInfo: fluidOunceUnitInfo, originalText: plainOzInputMatch[0].trim(), originalUnit: plainOzInputMatch[2].trim() });
+                            }
                         }
                     }
                 }
@@ -1569,8 +1515,8 @@
             if (typeof unitInfo.factor === 'number') return value * unitInfo.factor;
             return null;
         },
-        processUnitConversion: function(selectedText) {
-            const unitDetailItems = TextExtractor.extractPhysicalUnitDetails(selectedText);
+        processUnitConversion: function(selectedText, currencyMagnitudeTextToIgnore = null) {
+            const unitDetailItems = TextExtractor.extractPhysicalUnitDetails(selectedText, currencyMagnitudeTextToIgnore);
             if (!unitDetailItems || unitDetailItems.length === 0) return null;
             const conversionDataObjects = [];
             for (const unitDetails of unitDetailItems) {
@@ -1602,7 +1548,11 @@
         },
         processCurrencyConversion: async function(selectedText) {
             const currencyDetails = TextExtractor.extractCurrencyDetails(selectedText);
-            if (currencyDetails.amount === null || currencyDetails.amount < 0 || !currencyDetails.currencyCode) return null;
+
+            if (currencyDetails.amount === null || currencyDetails.amount < 0 || !currencyDetails.currencyCode) {
+                return null; 
+            }
+
             try {
                 const { rate, date: rateDate } = await ApiService.fetchExchangeRate(currencyDetails.currencyCode, Config.DEFAULT_TARGET_CURRENCY);
                 const convertedValue = currencyDetails.amount * rate;
@@ -1625,15 +1575,18 @@
                 const titleHtml = `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${displayOriginalTextForHTML}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_SUFFIX}</span>`;
                 const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, 기준일: ${safeRateDate})</small>`;
                 const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, 기준일: ${safeRateDate})`;
-                return { titleHtml, contentHtml, copyText, isError: false };
+                
+                return { titleHtml, contentHtml, copyText, isError: false, extractedMagnitudeText: currencyDetails.magnitudeAmountText };
             } catch (error) {
                 const errMsgBase = `${UI_STRINGS.ERROR_ICON} 환율 변환 실패 (${Utils.escapeHTML(currencyDetails.currencyCode || "?")} → ${Config.DEFAULT_TARGET_CURRENCY}).`;
                 const errMsgDetail = (error && error.message) ? error.message : '알 수 없는 오류입니다.';
+                
                 return {
                     titleHtml: `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${Utils.escapeHTML(currencyDetails.originalText)}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}</span>`,
                     contentHtml: `${errMsgBase}<br><small style="color:#c0392b;">${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}</small>`,
                     copyText: `${currencyDetails.originalText} ${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}\n${errMsgBase}\n${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}`,
-                    isError: true
+                    isError: true,
+                    extractedMagnitudeText: currencyDetails.magnitudeAmountText
                 };
             }
         },
@@ -1652,21 +1605,29 @@
         fetchAndProcessConversions: async function(selectedText) {
             let resultsArray = [];
             let conversionAttempted = false;
-            const unitConversionOutcome = Converter.processUnitConversion(selectedText);
-            if (unitConversionOutcome && unitConversionOutcome.results && unitConversionOutcome.results.length > 0) {
-                conversionAttempted = true;
-                resultsArray.push(...unitConversionOutcome.results);
-            }
+            let currencyMagnitudeTextToIgnore = null; 
+
             const currencyResultObject = await Converter.processCurrencyConversion(selectedText);
             if (currencyResultObject) {
                 conversionAttempted = true;
                 resultsArray.push(currencyResultObject);
+                if (currencyResultObject.extractedMagnitudeText) { 
+                    currencyMagnitudeTextToIgnore = currencyResultObject.extractedMagnitudeText;
+                }
             }
+            
+            const unitConversionOutcome = Converter.processUnitConversion(selectedText, currencyMagnitudeTextToIgnore);
+            if (unitConversionOutcome && unitConversionOutcome.results && unitConversionOutcome.results.length > 0) {
+                conversionAttempted = true;
+                resultsArray.push(...unitConversionOutcome.results);
+            }
+
             const timeConversionOutcome = Converter.processTimeConversion(selectedText);
             if (timeConversionOutcome && timeConversionOutcome.results && timeConversionOutcome.results.length > 0) {
                 conversionAttempted = true;
                 resultsArray.push(...timeConversionOutcome.results);
             }
+
             resultsArray = resultsArray.filter(r => r);
             return { resultsArray, conversionAttempted };
         }
