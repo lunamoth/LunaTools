@@ -589,7 +589,7 @@
       if (!videoElement) {
         return;
       }
-      if (videoElement.readyState < 3) {
+      if (videoElement.readyState < 3) { // HAVE_FUTURE_DATA or more
         try {
           await new Promise((resolve, reject) => {
             let timeoutId = null;
@@ -603,21 +603,21 @@
               clearTimeout(timeoutId);
               videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
               videoElement.removeEventListener('error', onError);
-              resolve(); // Resolve even on error to proceed
+              resolve(); // Resolve even on error to proceed with PiP attempt
             };
 
             videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
             videoElement.addEventListener('error', onError);
 
             if (videoElement.readyState === 0 && videoElement.networkState === HTMLMediaElement.NETWORK_EMPTY && (videoElement.src || videoElement.querySelector('source[src]')?.src) ) {
-                videoElement.load();
+                videoElement.load(); // Attempt to load if source is present but network state is empty
             }
 
             timeoutId = setTimeout(() => {
               videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
               videoElement.removeEventListener('error', onError);
-              resolve(); // Resolve on timeout
-            }, 3000);
+              resolve(); // Timeout also resolves to attempt PiP
+            }, 3000); // 3 seconds timeout
           });
         } catch (loadError) {
           // Silently ignore
@@ -628,17 +628,20 @@
     async _attemptEnterPiPWithOverrides(targetVideo) {
         if (targetVideo.disablePictureInPicture) {
             try {
+                // Attempt to redefine the property to be configurable and writable
                 Object.defineProperty(targetVideo, 'disablePictureInPicture', {
                     configurable: true, writable: true, value: false
                 });
-                if (targetVideo.disablePictureInPicture) { // Check if defineProperty worked
-                    targetVideo.disablePictureInPicture = false; // Fallback direct assignment
+                // After redefining, try setting it directly if the above didn't throw
+                if (targetVideo.disablePictureInPicture) { // Check if redefine was successful
+                    targetVideo.disablePictureInPicture = false;
                 }
             } catch (eDefineProp) {
+                // If defineProperty fails (e.g., not configurable), try direct assignment
                 try {
-                    targetVideo.disablePictureInPicture = false; // Direct assignment as fallback
+                    targetVideo.disablePictureInPicture = false;
                 } catch (eDirectAssign) {
-                    // Both failed
+                    // Both failed, likely a non-configurable, non-writable property
                 }
             }
         }
@@ -661,36 +664,37 @@
       }
 
       await this._ensureVideoReady(targetVideo);
-      this._removePiPRestrictions(targetVideo);
+      this._removePiPRestrictions(targetVideo); // Remove known attributes like 'disablePictureInPicture'
 
       try {
-        // Attempt to play (muted) if video is paused and small, to make it eligible for PiP
+        // If video is paused and very small (placeholder state for some sites), try to play it muted
         if (targetVideo.paused && (targetVideo.videoWidth < 100 || targetVideo.videoHeight < 100)) {
             try {
-                targetVideo.muted = true; // Mute to avoid sudden sound
-                await targetVideo.play();
+                targetVideo.muted = true; // Mute to avoid unexpected sound
+                await targetVideo.play(); // Play to potentially load actual video dimensions/content
             } catch(playError) {
-                // Silently ignore if play fails
+                // Silently ignore play errors, PiP might still work
             }
         }
 
         await targetVideo.requestPictureInPicture();
         this._addLeavePiPListener(targetVideo);
       } catch (initialError) {
-        // Check if the error is specifically due to disablePictureInPicture
+        // Check if the error is specifically about disablePictureInPicture being true
         const isPipDisabledError = initialError.name === 'InvalidStateError' &&
                                    (initialError.message.includes('disablePictureInPicture') ||
                                     initialError.message.toLowerCase().includes('picture-in-picture is disabled'));
 
         if (isPipDisabledError) {
             try {
+                // Attempt to enter PiP by overriding disablePictureInPicture property
                 await this._attemptEnterPiPWithOverrides(targetVideo);
                 this._addLeavePiPListener(targetVideo);
             } catch (finalAttemptError) {
-                // Silently ignore if the override attempt also fails
+                // Silently ignore errors from the final attempt
             }
         } else {
-            // Silently ignore other errors (e.g., video not loaded enough, user gesture required, etc.)
+            // Silently ignore other types of errors
         }
       }
     }
@@ -750,7 +754,7 @@
         CURRENCY_FLAGS: {
             'USD': '🇺🇸', 'EUR': '🇪🇺', 'JPY': '🇯🇵', 'GBP': '🇬🇧', 'AUD': '🇦🇺', 'CAD': '🇨🇦', 'CHF': '🇨🇭', 'CNY': '🇨🇳', 'HKD': '🇭🇰', 'NZD': '🇳🇿', 'SEK': '🇸🇪', 'KRW': '🇰🇷', 'SGD': '🇸🇬', 'NOK': '🇳🇴', 'MXN': '🇲🇽', 'INR': '🇮🇳', 'ZAR': '🇿🇦', 'TRY': '🇹🇷', 'BRL': '🇧🇷', 'DKK': '🇩🇰', 'PLN': '🇵🇱', 'THB': '🇹🇭', 'IDR': '🇮🇩', 'HUF': '🇭🇺', 'CZK': '🇨🇿', 'ILS': '🇮🇱', 'PHP': '🇵🇭', 'MYR': '🇲🇾', 'RON': '🇷🇴', 'BGN': '🇧🇬', 'ISK': '🇮🇸',
         },
-        UNIT_CATEGORY_ICONS: { length: '📏', mass: '⚖️', volume: '💧', temperature: '🌡️' },
+        UNIT_CATEGORY_ICONS: { length: '📏', mass: '⚖️', volume: '💧', temperature: '🌡️', time: '🕒' },
         CATEGORY_BASE_UNITS: { length: 'm', mass: 'kg', volume: 'L' },
         CURRENCY_PATTERNS: [
             { code: 'CAD', regex: /캐나다\s*달러|캐나다달러|C\$|CAD/giu }, { code: 'AUD', regex: /호주\s*달러|호주달러|A\$|AUD/giu }, { code: 'CHF', regex: /스위스\s*프랑|스위스프랑|CHF|SFr\./giu }, { code: 'SGD', regex: /싱가포르\s*달러|싱가포르달러|S\$|SGD/giu }, { code: 'HKD', regex: /홍콩\s*달러|홍콩달러|HK\$|HKD/giu }, { code: 'NZD', regex: /뉴질랜드\s*달러|뉴질랜드달러|NZ\$|NZD/giu }, { code: 'MXN', regex: /멕시코\s*페소|멕시코페소|Mex\$|MXN/giu }, { code: 'BRL', regex: /브라질\s*헤알|헤알|R\$|BRL/giu }, { code: 'PHP', regex: /필리핀\s*페소|필리핀페소|₱|PHP/giu }, { code: 'MYR', regex: /말레이시아\s*링깃|링깃|RM|MYR/giu }, { code: 'GBP', regex: /파운드\s*스털링|영국\s*파운드|GBP\s*£|£\s*GBP/giu }, { code: 'JPY', regex: /엔|엔화|円|￥|¥|JPY|일본\s*엔|일본\s*엔화/giu }, { code: 'EUR', regex: /유로|€|EUR/giu }, { code: 'CNY', regex: /위안|위안화|元|CNY|중국\s*위안|인민폐|런민비/giu }, { code: 'KRW', regex: /원|₩|KRW|한국\s*원|대한민국\s*원/giu }, { code: 'INR', regex: /인도\s*루피|인도루피|₹|INR/giu }, { code: 'TRY', regex: /터키\s*리라|튀르키예\s*리라|리라|₺|TRY/giu }, { code: 'IDR', regex: /인도네시아\s*루피아|루피아|Rp|IDR/giu }, { code: 'PLN', regex: /폴란드\s*즐로티|즐로티|zł|PLN/giu }, { code: 'ILS', regex: /이스라엘\s*셰켈|셰켈|₪|ILS/giu }, { code: 'THB', regex: /태국\s*바트|바트|밧|฿|THB/giu }, { code: 'SEK', regex: /스웨덴\s*크로나|스웨덴크로나|SEK(?:kr)?|(?:krSEK)/giu }, { code: 'NOK', regex: /노르웨이\s*크로나|노르웨이크로나|NOK(?:kr)?|(?:krNOK)/giu }, { code: 'DKK', regex: /덴마크\s*크로나|덴마크크로나|DKK(?:kr)?|(?:krDKK)/giu }, { code: 'ISK', regex: /아이슬란드\s*크로나|아이슬란드크로나|ISK(?:kr)?|(?:krISK)/giu }, { code: 'ZAR', regex: /남아프리카\s*공화국\s*랜드|남아공\s*랜드|랜드|R|ZAR/giu }, { code: 'RON', regex: /루마니아\s*레우|레우|lei|RON/giu }, { code: 'CZK', regex: /체코\s*코루나|코루나|Kč|CZK/giu }, { code: 'HUF', regex: /헝가리\s*포린트|포린트|Ft|HUF/giu }, { code: 'BGN', regex: /불가리아\s*레프|레프|лв|BGN/giu }, { code: 'GBP', regex: /파운드|£|GBP/giu }, { code: 'USD', regex: /달러|\$|USD|불|미국\s*달러/giu },
@@ -784,6 +788,19 @@
                 { names: ['Fahrenheit', 'F', '화씨'], target_unit_code: '°C', regex: /(-?[\d\.,]+)\s*(?:°F\b|F\b(?!t|l\b|r\b|o\b)|화씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val - 32) * 5 / 9, target_unit_name: '섭씨', category: 'temperature' },
                 { names: ['Celsius', 'C', '섭씨'], target_unit_code: '°F', regex: /(-?[\d\.,]+)\s*(?:°C\b|\bC\b(?![a-zA-Z])|섭씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val * 9 / 5) + 32, target_unit_name: '화씨', category: 'temperature' }
             ],
+        },
+        KST_IANA_TIMEZONE: 'Asia/Seoul',
+        MONTH_NAMES_EN_FULL: ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'],
+        MONTH_NAMES_EN_SHORT: ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'],
+        TIMEZONE_LOOKUP: {
+            'PST': 'America/Los_Angeles', 'PDT': 'America/Los_Angeles', 'PT':  'America/Los_Angeles',
+            'MST': 'America/Denver',      'MDT': 'America/Denver',      'MT':  'America/Denver',
+            'CST': 'America/Chicago',     'CDT': 'America/Chicago',     'CT':  'America/Chicago',
+            'EST': 'America/New_York',    'EDT': 'America/New_York',    'ET':  'America/New_York',
+            'CET': 'Europe/Paris',        'CEST': 'Europe/Paris',
+            'WET': 'Europe/Lisbon',       'WEST': 'Europe/Lisbon',
+            'BST': 'Europe/London',
+            'GMT': 'Etc/GMT',             'UTC': 'Etc/UTC',
         },
     };
 
@@ -821,10 +838,19 @@
         KOREAN_WON_UNIT: "원",
         KOREAN_APPROX_PREFIX: "약 ",
         ORIGINAL_TEXT_LABEL: "원본: ",
-        ECB_TEXT: "유럽중앙은행", // Added for the new requirement
+        TIME_KST_PREFIX: "한국 시각: ",
+        TIME_KST_DATE_MONTH_SUFFIX: "월 ",
+        TIME_KST_DATE_DAY_SUFFIX: "일 ",
+        TIME_KST_AM: "오전",
+        TIME_KST_PM: "오후",
+        TIME_KST_HOUR_SUFFIX: "시",
+        TIME_CATEGORY_ICON: Config.UNIT_CATEGORY_ICONS.time,
+        ERROR_TIME_PARSE: "⚠️ 시간 정보를 올바르게 분석하지 못했습니다.",
+        ERROR_TIME_CONVERSION: "⚠️ 시간 변환 중 오류가 발생했습니다.",
+        RESULT_TIME_SUFFIX: "(시간 변환)",
     };
 
-    const REGEXES = { // Added 'u' flag and lookaheads where appropriate
+    const REGEXES = {
         KOREAN_NUMERALS_REGEX_G: new RegExp(Object.keys(Config.KOREAN_NUMERALS_MAP).join('|'), 'gu'),
         KOREAN_NUMERIC_CLEANUP_REGEX_GI: /[^0-9\.\s천백십]/giu,
         NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9억만천백십조일이삼사오육칠팔구영BMKbmk\.,\s]/giu,
@@ -832,6 +858,33 @@
         ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^([\\d\.,]+)\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
         PLAIN_OZ_REGEX: /^([\d\.,]+)\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$/iu,
         PURE_NUMBER_REGEX: /^[\d\.]+$/u,
+        TIME_EXTRACTION_PATTERN: new RegExp(
+            // Date Part: Optional, can be Month Day, Year OR YYYY-MM-DD OR MM/DD/YYYY OR DD.MM.YYYY etc.
+            '(?:' +
+                // Option 1: Month name based
+                '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,\\s*(\\d{4}|\\d{2}))?)' +
+                '|' +
+                // Option 2: YYYY-MM-DD
+                '(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})' +
+                '|' +
+                // Option 3: MM/DD/YYYY or DD.MM.YYYY (captures M, D, Y parts)
+                '(\\d{1,2})[-./](\\d{1,2})[-./](\\d{4}|\\d{2})' +
+            ')?\\s*' + // End of optional Date Part, followed by optional space
+            // Optional "at" or just space (if date part was present or not)
+            '(?:at\\s+)?' +
+            // Time Part (HH:MM or H, optional seconds)
+            '(\\d{1,2})(?::(\\d{2}))?(?::(\\d{2}))?' +
+            // Optional AM/PM
+            '\\s*(a\\.?m\\.?|p\\.?m\\.?)?' +
+            // Timezone Part
+            '\\s+((?:P[SDMCE]?T|E[SDC]?T|C[SDMCE]?T|M[SD]?T|A[KDEH]?ST|WET|WEST|CET|CEST|BST|GMT|UTC)(?:[+-]\\d{1,2}(?::?\\d{2})?)?|(?:\\b(?:Pacific|Mountain|Central|Eastern|Atlantic|Alaska|Hawaii|Greenwich Mean|Coordinated Universal)(?: Standard| Daylight| European)? Time\\b)|[A-Z]{3,5})' +
+            // Optional further words after timezone like "Time"
+            '(?:\\s+Time)?',
+            'giu'
+        ),
+        // For parsing explicit GMT/UTC offsets like GMT+0500, UTC-7, GMT+5:30
+        // Allows HH, HHMM, or HH:MM for offset
+        TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i,
     };
 
     const AppState = {
@@ -1032,6 +1085,188 @@
             let amount = NumberParser.parseAmountWithMagnitudeSuffixes(text);
             if (amount !== null) return amount;
             return NumberParser.parseKoreanNumericText(text);
+        }
+    };
+
+    const TimeDateParser = {
+        _getOffsetStringForIANA(ianaTimeZone, year, monthIndex, day, hour, minute) {
+            try {
+                const sampleDate = new Date(Date.UTC(year, monthIndex, day, hour, minute));
+                const formatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: ianaTimeZone,
+                    timeZoneName: 'longOffset',
+                });
+                const parts = formatter.formatToParts(sampleDate);
+                const offsetPart = parts.find(p => p.type === 'timeZoneName');
+                return offsetPart ? offsetPart.value : null;
+            } catch (e) { /* console.warn(...) */ }
+            return null;
+        },
+
+        _isValidDate(year, monthIndex, day) {
+            const d = new Date(year, monthIndex, day);
+            return d.getFullYear() === year && d.getMonth() === monthIndex && d.getDate() === day;
+        },
+
+        parse: function(inputText) {
+            const results = [];
+            let match;
+            REGEXES.TIME_EXTRACTION_PATTERN.lastIndex = 0;
+
+            while ((match = REGEXES.TIME_EXTRACTION_PATTERN.exec(inputText)) !== null) {
+                const originalMatch = match[0];
+                // Destructure based on the new regex groups
+                let [
+                    , // full match
+                    // Option 1: Month name based
+                    monthNameStr, dayNameStr, yearNameStr,
+                    // Option 2: YYYY-MM-DD
+                    yearYMDStr, monthYMDStr, dayYMDStr,
+                    // Option 3: MM/DD/YYYY or DD.MM.YYYY
+                    part1MDYStr, part2MDYStr, yearMDYStr,
+                    // Time part
+                    hourStr, minuteStr, secondStr,
+                    // AM/PM
+                    ampmStr,
+                    // Timezone
+                    tzStr
+                ] = match;
+
+                let year, monthIndex, day;
+                let parsedDateSuccessfully = false;
+
+                // --- Date part determination ---
+                const today = new Date();
+                if (monthNameStr) { // Month name based
+                    year = yearNameStr ? parseInt(yearNameStr, 10) : today.getFullYear();
+                    if (yearNameStr && yearNameStr.length === 2) year += (year < 70 ? 2000 : 1900);
+                    
+                    monthNameStr = monthNameStr.toLowerCase();
+                    monthIndex = Config.MONTH_NAMES_EN_FULL.indexOf(monthNameStr);
+                    if (monthIndex === -1) monthIndex = Config.MONTH_NAMES_EN_SHORT.indexOf(monthNameStr);
+                    
+                    day = dayNameStr ? parseInt(dayNameStr, 10) : today.getDate();
+                    if (monthIndex !== -1 && day >= 1 && day <= 31) parsedDateSuccessfully = true;
+
+                } else if (yearYMDStr) { // YYYY-MM-DD
+                    year = parseInt(yearYMDStr, 10);
+                    monthIndex = parseInt(monthYMDStr, 10) - 1; // Month is 0-indexed
+                    day = parseInt(dayYMDStr, 10);
+                    parsedDateSuccessfully = this._isValidDate(year, monthIndex, day);
+
+                } else if (part1MDYStr) { // MM/DD/YYYY or DD/MM/YYYY (prioritize MM/DD/YYYY for M/D <=12)
+                    year = yearMDYStr ? parseInt(yearMDYStr, 10) : today.getFullYear();
+                    if (yearMDYStr && yearMDYStr.length === 2) year += (year < 70 ? 2000 : 1900);
+
+                    const p1 = parseInt(part1MDYStr, 10);
+                    const p2 = parseInt(part2MDYStr, 10);
+
+                    // Try MM/DD/YYYY first
+                    if (this._isValidDate(year, p1 - 1, p2)) {
+                        monthIndex = p1 - 1;
+                        day = p2;
+                        parsedDateSuccessfully = true;
+                    } // Else try DD/MM/YYYY if MM/DD was invalid and p2 could be a month
+                    else if (this._isValidDate(year, p2 - 1, p1)) {
+                        monthIndex = p2 - 1;
+                        day = p1;
+                        parsedDateSuccessfully = true;
+                    }
+                } else { // No date part found, default to today
+                    year = today.getFullYear();
+                    monthIndex = today.getMonth();
+                    day = today.getDate();
+                    parsedDateSuccessfully = true; // Today is always a valid date
+                }
+
+                if (!parsedDateSuccessfully) continue;
+
+
+                // --- Time part ---
+                let hour = parseInt(hourStr, 10);
+                let minute = minuteStr ? parseInt(minuteStr, 10) : 0;
+                let second = secondStr ? parseInt(secondStr, 10) : 0;
+
+                if (isNaN(hour) || hour < 0 || (hour > 23 && !(hour === 24 && minute === 0 && second === 0))) {
+                    if (!(hour === 24 && minute === 0 && second === 0 && !ampmStr)) {
+                        continue;
+                    }
+                }
+                if (ampmStr) {
+                    ampmStr = ampmStr.toLowerCase().replace(/\./g, '');
+                    if (ampmStr === 'pm' && hour < 12) hour += 12;
+                    else if (ampmStr === 'am' && hour === 12) hour = 0;
+                }
+                if (hour === 24 && minute === 0 && second === 0) hour = 0;
+
+
+                // --- Timezone part ---
+                let resolvedTzOffsetString = null;
+                const upperTzStr = tzStr.toUpperCase();
+
+                if (Config.TIMEZONE_LOOKUP[upperTzStr]) {
+                    const ianaZone = Config.TIMEZONE_LOOKUP[upperTzStr];
+                    resolvedTzOffsetString = this._getOffsetStringForIANA(ianaZone, year, monthIndex, day, hour, minute);
+                } else {
+                    const offsetMatch = REGEXES.TZ_OFFSET_REGEX.exec(upperTzStr);
+                    if (offsetMatch) {
+                        const sign = offsetMatch[1];
+                        const hOff = parseInt(offsetMatch[2], 10);
+                        // offsetMatch[3] is the colon, offsetMatch[4] is minutes
+                        const mOffStr = offsetMatch[4]; 
+                        let mOff = 0;
+
+                        if (mOffStr) { // Minutes are explicitly provided (e.g., +05:30 or +0530 if regex adapted)
+                            mOff = parseInt(mOffStr, 10);
+                        } else if (!offsetMatch[3] && offsetMatch[2].length > 2) { 
+                            // No colon, and hour part is longer than 2 digits (e.g. "0530" from +0530)
+                            // This part handles HHMM if hOff was a combined string.
+                            // For TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{2})(\d{2})?$/i for HHMM
+                            // Current TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i
+                            // If offsetMatch[2] captured "0530", we need to split it.
+                            // This logic needs to be robust based on the TZ_OFFSET_REGEX structure
+                            // With current TZ_OFFSET_REGEX: /([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i
+                            // if hOff is from (\d{1,2}) and mOffStr from (\d{2}), it means
+                            // GMT+530 will parse hOff=5, mOffStr=30 if TZ_OFFSET_REGEX adapted for it.
+                            // Let's assume current regex, if mOffStr is undefined but hOff implies HHMM (e.g. "0530" if regex was diff)
+                            // With: /^(?:GMT|UTC)([+-])(\d{2})(\d{2})?$/i (Example of adapting for HHMM)
+                            //  offsetMatch[1] = sign, offsetMatch[2] = HH, offsetMatch[3] = MM (optional)
+                            // So if offsetMatch[3] exists, it's MM. If not, MM is 0.
+                            // Let's revert to simpler logic for the provided TZ_OFFSET_REGEX:
+                            if (mOffStr) {
+                                mOff = parseInt(mOffStr, 10);
+                            }
+                            // If it was GMT+0530 and regex was /([+-])(\d{2})(\d{2})/
+                            // hOff would be "05", mOff would be "30" (from different capture group)
+                        }
+
+
+                        if (hOff <= 14 && mOff <= 59) {
+                            resolvedTzOffsetString = `GMT${sign}${String(hOff).padStart(2, '0')}:${String(mOff).padStart(2, '0')}`;
+                        }
+                    } else if (upperTzStr.match(/^(?:PACIFIC|MOUNTAIN|CENTRAL|EASTERN|ATLANTIC|ALASKA|HAWAII)(?:\s(?:STANDARD|DAYLIGHT))?(?:\sTIME)?$/)) {
+                        let ianaForFullName = null;
+                        if (upperTzStr.includes("PACIFIC")) ianaForFullName = "America/Los_Angeles";
+                        else if (upperTzStr.includes("MOUNTAIN")) ianaForFullName = "America/Denver";
+                        // ... (rest of the full name mappings)
+                        if (ianaForFullName) {
+                            resolvedTzOffsetString = this._getOffsetStringForIANA(ianaForFullName, year, monthIndex, day, hour, minute);
+                        }
+                    }
+                }
+
+                if (!resolvedTzOffsetString) continue;
+
+                try {
+                    const monthNameForParse = Config.MONTH_NAMES_EN_FULL[monthIndex]; // Use month name for robust parsing
+                    const dateStringForParsing = `${monthNameForParse} ${day}, ${year} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')} ${resolvedTzOffsetString}`;
+                    const sourceDate = new Date(dateStringForParsing);
+
+                    if (isNaN(sourceDate.getTime())) continue;
+                    results.push({ date: sourceDate, originalText: originalMatch.trim() });
+                } catch (e) { /* console.warn(...) */ }
+            }
+            return results;
         }
     };
 
@@ -1241,6 +1476,46 @@
                 html: `<span class="original-value">${valStr} ${Utils.escapeHTML(displayOriginalUnit)}</span> <span class="category-icon">${categoryIcon}</span> ≈ ${fullResultHtml}`,
                 plainText: `${valStr} ${displayOriginalUnit} ${categoryIcon} = ${fullResultPlain}`
             };
+        },
+        formatKSTResult: function(sourceDate, originalText) {
+            if (!(sourceDate instanceof Date) || isNaN(sourceDate.getTime())) {
+                return {
+                    titleHtml: `${UI_STRINGS.TIME_CATEGORY_ICON} <b>${Utils.escapeHTML(originalText)}</b> <span class="title-suffix">${UI_STRINGS.RESULT_TIME_SUFFIX}</span>`,
+                    contentHtml: UI_STRINGS.ERROR_TIME_CONVERSION,
+                    copyText: `${originalText} - ${UI_STRINGS.ERROR_TIME_CONVERSION}`,
+                    isError: true
+                };
+            }
+
+            try {
+                const kstFormatter = new Intl.DateTimeFormat('ko-KR', {
+                    timeZone: Config.KST_IANA_TIMEZONE,
+                    month: 'numeric', day: 'numeric', hour: 'numeric', hour12: true,
+                });
+                const parts = kstFormatter.formatToParts(sourceDate);
+                let kstMonth, kstDay, kstAmPm, kstHour;
+                parts.forEach(part => {
+                    switch (part.type) {
+                        case 'month': kstMonth = part.value; break;
+                        case 'day': kstDay = part.value; break;
+                        case 'dayPeriod': kstAmPm = part.value; break;
+                        case 'hour': kstHour = part.value; break;
+                    }
+                });
+                const ampmKorean = (kstAmPm === '오전' || kstAmPm?.toUpperCase() === 'AM') ? UI_STRINGS.TIME_KST_AM : UI_STRINGS.TIME_KST_PM;
+                const kstString = `${UI_STRINGS.TIME_KST_PREFIX}${kstMonth}${UI_STRINGS.TIME_KST_DATE_MONTH_SUFFIX}${kstDay}${UI_STRINGS.TIME_KST_DATE_DAY_SUFFIX}${ampmKorean} ${kstHour}${UI_STRINGS.TIME_KST_HOUR_SUFFIX}`;
+                const titleHtml = `${UI_STRINGS.TIME_CATEGORY_ICON} <b>${Utils.escapeHTML(Utils.getPreviewText(originalText, 40))}</b> <span class="title-suffix">${UI_STRINGS.RESULT_TIME_SUFFIX}</span>`;
+                const contentHtml = `<span class="original-value">${Utils.escapeHTML(originalText)}</span> ≈ <b class="converted-value">${kstString}</b>`;
+                const copyText = `${originalText} ≈ ${kstString}`;
+                return { titleHtml, contentHtml, copyText, isError: false };
+            } catch (e) {
+                return {
+                    titleHtml: `${UI_STRINGS.TIME_CATEGORY_ICON} <b>${Utils.escapeHTML(originalText)}</b> <span class="title-suffix">${UI_STRINGS.RESULT_TIME_SUFFIX}</span>`,
+                    contentHtml: UI_STRINGS.ERROR_TIME_CONVERSION,
+                    copyText: `${originalText} - ${UI_STRINGS.ERROR_TIME_CONVERSION}`,
+                    isError: true
+                };
+            }
         }
     };
 
@@ -1252,37 +1527,25 @@
             if (fromCurrency === toCurrency) {
                 return { rate: 1, date: new Date().toISOString().split('T')[0] };
             }
-
             const cacheKey = `${fromCurrency}_${toCurrency}`;
             const now = Date.now();
             if (AppState.exchangeRateCache[cacheKey] && (now - AppState.exchangeRateCache[cacheKey].timestamp < Config.ONE_HOUR_MS)) {
                 return AppState.exchangeRateCache[cacheKey];
             }
-
             return new Promise((resolve, reject) => {
                 try {
                     chrome.runtime.sendMessage(
-                        {
-                            action: "fetchLunaToolsExchangeRate", // Ensure this matches the action in your background script
-                            from: fromCurrency,
-                            to: toCurrency
-                        },
+                        { action: "fetchLunaToolsExchangeRate", from: fromCurrency, to: toCurrency },
                         (response) => {
                             if (chrome.runtime.lastError) {
                                 reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(chrome.runtime.lastError.message || 'extension_error')));
                                 return;
                             }
-
                             if (response.error) {
-                                if (response.error.includes('timed out')) {
-                                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_TIMEOUT));
-                                } else if (response.error.includes('Network error')) {
-                                     reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(response.error.match(/\(status: (\w+)\)/)?.[1] || 'unknown')));
-                                } else if (response.error.includes('API response error')) {
-                                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_RESPONSE_CURRENCY(toCurrency)));
-                                } else {
-                                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING(response.error)));
-                                }
+                                if (response.error.includes('timed out')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_TIMEOUT));
+                                else if (response.error.includes('Network error')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(response.error.match(/\(status: (\w+)\)/)?.[1] || 'unknown')));
+                                else if (response.error.includes('API response error')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_RESPONSE_CURRENCY(toCurrency)));
+                                else reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING(response.error)));
                             } else if (response.data && typeof response.data.rate === 'number' && response.data.date) {
                                 const result = { rate: response.data.rate, date: response.data.date };
                                 AppState.exchangeRateCache[cacheKey] = { ...result, timestamp: Date.now() };
@@ -1309,7 +1572,6 @@
         processUnitConversion: function(selectedText) {
             const unitDetailItems = TextExtractor.extractPhysicalUnitDetails(selectedText);
             if (!unitDetailItems || unitDetailItems.length === 0) return null;
-
             const conversionDataObjects = [];
             for (const unitDetails of unitDetailItems) {
                 if (unitDetails.value !== null && unitDetails.unitInfo) {
@@ -1317,30 +1579,21 @@
                     if (convertedUnitValue !== null) {
                         const unitResult = Formatter.formatPhysicalUnitResult(unitDetails.value, unitDetails.originalUnit, convertedUnitValue, unitDetails.unitInfo.target_unit_code, unitDetails.unitInfo);
                         const categoryIcon = Config.UNIT_CATEGORY_ICONS[unitDetails.unitInfo.category] || '';
-
                         let processedOriginalTextForTitle = Utils.escapeHTML(unitDetails.originalText);
                         const originalUnitLower = unitDetails.originalUnit.toLowerCase();
                         const isOzUnit = originalUnitLower === 'oz' || originalUnitLower === '온스';
-
                         if (isOzUnit) {
-                            if (unitDetails.unitInfo.category === 'mass') {
-                                processedOriginalTextForTitle += ' (질량)';
-                            } else if (unitDetails.unitInfo.category === 'volume') {
-                                processedOriginalTextForTitle += ' (부피)';
-                            }
+                            if (unitDetails.unitInfo.category === 'mass') processedOriginalTextForTitle += ' (질량)';
+                            else if (unitDetails.unitInfo.category === 'volume') processedOriginalTextForTitle += ' (부피)';
                         }
-
                         let titleSuffix = UI_STRINGS.RESULT_UNIT_SUFFIX_DEFAULT;
                         if (unitDetailItems.length > 1 && isOzUnit) {
                             if (unitDetails.unitInfo.category === 'mass') titleSuffix = UI_STRINGS.RESULT_UNIT_SUFFIX_MASS;
                             else if (unitDetails.unitInfo.category === 'volume') titleSuffix = UI_STRINGS.RESULT_UNIT_SUFFIX_VOLUME;
                         }
-
                         conversionDataObjects.push({
                             titleHtml: `<span class="category-icon">${categoryIcon}</span> <b>${processedOriginalTextForTitle}</b> <span class="title-suffix">${titleSuffix}</span>`,
-                            contentHtml: unitResult.html,
-                            copyText: unitResult.plainText,
-                            isError: false
+                            contentHtml: unitResult.html, copyText: unitResult.plainText, isError: false
                         });
                     }
                 }
@@ -1350,7 +1603,6 @@
         processCurrencyConversion: async function(selectedText) {
             const currencyDetails = TextExtractor.extractCurrencyDetails(selectedText);
             if (currencyDetails.amount === null || currencyDetails.amount < 0 || !currencyDetails.currencyCode) return null;
-
             try {
                 const { rate, date: rateDate } = await ApiService.fetchExchangeRate(currencyDetails.currencyCode, Config.DEFAULT_TARGET_CURRENCY);
                 const convertedValue = currencyDetails.amount * rate;
@@ -1358,32 +1610,21 @@
                 const formattedRateText = Formatter.formatNumberToKoreanUnits(rate, true);
                 const formattedOriginalAmount = currencyDetails.amount.toLocaleString(undefined, { maximumFractionDigits: (currencyDetails.amount % 1 === 0 && currencyDetails.amount < 1e15 && currencyDetails.amount > -1e15) ? 0 : 2 });
                 const currencyFlag = Config.CURRENCY_FLAGS[currencyDetails.currencyCode] || '';
-
                 let displayOriginalTextForHTML, plainOriginalTextForCopy;
                 if (currencyDetails.currencyCode === Config.DEFAULT_TARGET_CURRENCY) {
                     const krwFormatted = Formatter.formatNumberToKoreanUnits(currencyDetails.amount, true);
-                    displayOriginalTextForHTML = krwFormatted.replace(/\s+/g, "") === currencyDetails.originalText.replace(/\s+/g, "") ?
-                        `${krwFormatted} ${currencyFlag}` :
-                        `${krwFormatted} ${currencyFlag} (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${Utils.escapeHTML(currencyDetails.originalText)})`;
-                    plainOriginalTextForCopy = `${Formatter.formatNumberToKoreanUnits(currencyDetails.amount, false)} ${currencyFlag}` +
-                        (displayOriginalTextForHTML.includes(UI_STRINGS.ORIGINAL_TEXT_LABEL) ? ` (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${currencyDetails.originalText})` : '');
+                    displayOriginalTextForHTML = krwFormatted.replace(/\s+/g, "") === currencyDetails.originalText.replace(/\s+/g, "") ? `${krwFormatted} ${currencyFlag}` : `${krwFormatted} ${currencyFlag} (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${Utils.escapeHTML(currencyDetails.originalText)})`;
+                    plainOriginalTextForCopy = `${Formatter.formatNumberToKoreanUnits(currencyDetails.amount, false)} ${currencyFlag}` + (displayOriginalTextForHTML.includes(UI_STRINGS.ORIGINAL_TEXT_LABEL) ? ` (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${currencyDetails.originalText})` : '');
                 } else {
-                    const canonicalForms = [
-                        (formattedOriginalAmount + " " + currencyDetails.currencyCode).toLowerCase(), (formattedOriginalAmount + currencyDetails.currencyCode).toLowerCase(),
-                        (currencyDetails.currencyCode + " " + formattedOriginalAmount).toLowerCase(), (currencyDetails.currencyCode + formattedOriginalAmount).toLowerCase()
-                    ];
+                    const canonicalForms = [(formattedOriginalAmount + " " + currencyDetails.currencyCode).toLowerCase(), (formattedOriginalAmount + currencyDetails.currencyCode).toLowerCase(), (currencyDetails.currencyCode + " " + formattedOriginalAmount).toLowerCase(), (currencyDetails.currencyCode + formattedOriginalAmount).toLowerCase()];
                     const currencyMatchContainedNumber = currencyDetails.matchedCurrencyText.includes(formattedOriginalAmount);
-                    displayOriginalTextForHTML = (canonicalForms.includes(currencyDetails.originalText.toLowerCase().replace(/\s+/g, '')) || currencyMatchContainedNumber) ?
-                        `${formattedOriginalAmount} ${currencyDetails.currencyCode} ${currencyFlag}` :
-                        `${formattedOriginalAmount} ${currencyDetails.currencyCode} ${currencyFlag} (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${Utils.escapeHTML(currencyDetails.originalText)})`;
-                    plainOriginalTextForCopy = `${formattedOriginalAmount} ${currencyDetails.currencyCode} ${currencyFlag}` +
-                        (displayOriginalTextForHTML.includes(UI_STRINGS.ORIGINAL_TEXT_LABEL) ? ` (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${currencyDetails.originalText})` : '');
+                    displayOriginalTextForHTML = (canonicalForms.includes(currencyDetails.originalText.toLowerCase().replace(/\s+/g, '')) || currencyMatchContainedNumber) ? `${formattedOriginalAmount} ${currencyDetails.currencyCode} ${currencyFlag}` : `${formattedOriginalAmount} ${currencyDetails.currencyCode} ${currencyFlag} (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${Utils.escapeHTML(currencyDetails.originalText)})`;
+                    plainOriginalTextForCopy = `${formattedOriginalAmount} ${currencyDetails.currencyCode} ${currencyFlag}` + (displayOriginalTextForHTML.includes(UI_STRINGS.ORIGINAL_TEXT_LABEL) ? ` (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${currencyDetails.originalText})` : '');
                 }
-
                 const safeRateDate = Utils.escapeHTML(rateDate);
                 const titleHtml = `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${displayOriginalTextForHTML}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_SUFFIX}</span>`;
-                const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate})</small>`;
-                const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate})`;
+                const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, 기준일: ${safeRateDate})</small>`;
+                const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, 기준일: ${safeRateDate})`;
                 return { titleHtml, contentHtml, copyText, isError: false };
             } catch (error) {
                 const errMsgBase = `${UI_STRINGS.ERROR_ICON} 환율 변환 실패 (${Utils.escapeHTML(currencyDetails.currencyCode || "?")} → ${Config.DEFAULT_TARGET_CURRENCY}).`;
@@ -1396,37 +1637,37 @@
                 };
             }
         },
+        processTimeConversion: function(selectedText) {
+            const parsedTimes = TimeDateParser.parse(selectedText);
+            if (!parsedTimes || parsedTimes.length === 0) return null;
+            const conversionDataObjects = [];
+            for (const timeInfo of parsedTimes) {
+                if (timeInfo.date instanceof Date && !isNaN(timeInfo.date.getTime())) {
+                    const formattedResult = Formatter.formatKSTResult(timeInfo.date, timeInfo.originalText);
+                    conversionDataObjects.push(formattedResult);
+                }
+            }
+            return conversionDataObjects.length > 0 ? { results: conversionDataObjects } : null;
+        },
         fetchAndProcessConversions: async function(selectedText) {
             let resultsArray = [];
             let conversionAttempted = false;
-
-            // Check for currency details first
-            const preliminaryCurrencyDetails = TextExtractor.extractCurrencyDetails(selectedText);
-            const isPrimarilyCurrencyQuery = preliminaryCurrencyDetails && preliminaryCurrencyDetails.currencyCode;
-
-            // If it's not primarily a currency query (e.g., no '$', 'USD', etc.), try unit conversion
-            if (!isPrimarilyCurrencyQuery) {
-                const unitConversionOutcome = Converter.processUnitConversion(selectedText);
-                if (unitConversionOutcome && unitConversionOutcome.results && unitConversionOutcome.results.length > 0) {
-                    conversionAttempted = true;
-                    resultsArray.push(...unitConversionOutcome.results);
-                }
-            }
-
-            // Always attempt currency conversion.
-            // If it was primarily a currency query, this is its main path.
-            // If it wasn't, and units were found, this adds a currency result if applicable (or an error if not).
-            // If it wasn't, and no units were found, this is the last attempt to get *any* result.
-            const currencyResultObject = await Converter.processCurrencyConversion(selectedText);
-            if (currencyResultObject) { // This means a currency code was found and processed (either success or API error)
+            const unitConversionOutcome = Converter.processUnitConversion(selectedText);
+            if (unitConversionOutcome && unitConversionOutcome.results && unitConversionOutcome.results.length > 0) {
                 conversionAttempted = true;
-                // If unit conversions were already added, and this is a currency result,
-                // ensure we don't duplicate or add conflicting info if the currency detection was weak.
-                // For now, we'll just add it. The logic in processCurrencyConversion and processUnitConversion
-                // tries to be smart about parsing. If both return valid but different interpretations, both will show.
-                // The new logic above (checking isPrimarilyCurrencyQuery) helps avoid unit conversion for clear currency inputs.
+                resultsArray.push(...unitConversionOutcome.results);
+            }
+            const currencyResultObject = await Converter.processCurrencyConversion(selectedText);
+            if (currencyResultObject) {
+                conversionAttempted = true;
                 resultsArray.push(currencyResultObject);
             }
+            const timeConversionOutcome = Converter.processTimeConversion(selectedText);
+            if (timeConversionOutcome && timeConversionOutcome.results && timeConversionOutcome.results.length > 0) {
+                conversionAttempted = true;
+                resultsArray.push(...timeConversionOutcome.results);
+            }
+            resultsArray = resultsArray.filter(r => r);
             return { resultsArray, conversionAttempted };
         }
     };
@@ -1475,49 +1716,38 @@
 		@keyframes smart-converter-spinner{to{transform:translateY(-50%) rotate(360deg)}}
     `.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '').replace(/\n\s*\n/g, '\n').replace(/\s{2,}/g, ' ').replace(/:\s/g, ':').replace(/;\s/g, ';').replace(/,\s/g, ',');
 
-
     const PopupUI = {
         create: function() {
             if (document.getElementById(UI_STRINGS.POPUP_LAYER_ID)) return;
-
             const popup = document.createElement('div');
             popup.id = UI_STRINGS.POPUP_LAYER_ID;
             popup.style.display = 'none';
             popup.setAttribute('role', 'dialog');
             popup.setAttribute('aria-modal', 'true');
-
-
             const titleBarElement = document.createElement('div');
             titleBarElement.className = 'smart-converter-window-title-bar';
             popup.appendChild(titleBarElement);
-
             const closeButton = document.createElement('span');
             closeButton.textContent = UI_STRINGS.CLOSE_BUTTON_TEXT;
             closeButton.className = 'smart-converter-close-btn';
             closeButton.title = UI_STRINGS.CLOSE_BUTTON_TITLE;
             closeButton.onclick = (e) => { e.stopPropagation(); PopupUI.close(); };
             popup.appendChild(closeButton);
-
             AppState.popupContentContainer = document.createElement('div');
             AppState.popupContentContainer.className = 'smart-converter-content-container';
             popup.appendChild(AppState.popupContentContainer);
-
             document.body.appendChild(popup);
             AppState.currentPopupElement = popup;
-
             PopupUI.enableDrag(popup, titleBarElement, closeButton);
         },
         enableDrag: function(popupEl, dragHandleEl, closeButtonEl) {
-            let isDragging = false;
-            let dragOffsetX, dragOffsetY;
-
+            let isDragging = false, dragOffsetX, dragOffsetY;
             dragHandleEl.onmousedown = function(e) {
                 if (closeButtonEl && e.target === closeButtonEl) return;
                 isDragging = true;
                 const rect = popupEl.getBoundingClientRect();
                 dragOffsetX = e.clientX - rect.left;
                 dragOffsetY = e.clientY - rect.top;
-
                 popupEl.style.willChange = 'transform';
                 document.addEventListener('mousemove', onDrag);
                 document.addEventListener('mouseup', onDragEnd);
@@ -1525,15 +1755,10 @@
             };
             function onDrag(e) {
                 if (!isDragging) return;
-                let newLeft = e.clientX - dragOffsetX;
-                let newTop = e.clientY - dragOffsetY;
-
-                const vpWidth = window.innerWidth;
-                const vpHeight = window.innerHeight;
-
+                let newLeft = e.clientX - dragOffsetX, newTop = e.clientY - dragOffsetY;
+                const vpWidth = window.innerWidth, vpHeight = window.innerHeight;
                 newLeft = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(newLeft, vpWidth - popupEl.offsetWidth - Config.POPUP_SCREEN_MARGIN));
                 newTop = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(newTop, vpHeight - popupEl.offsetHeight - Config.POPUP_SCREEN_MARGIN));
-
                 popupEl.style.left = newLeft + 'px';
                 popupEl.style.top = newTop + 'px';
             }
@@ -1559,207 +1784,102 @@
             let top, left;
             const selection = window.getSelection();
             let currentSelRect = null;
-
             if (selection && selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
-                currentSelRect = (range.collapsed && AppState.lastSelectionRect && (AppState.lastSelectionRect.width > 0 || AppState.lastSelectionRect.height > 0)) ?
-                    AppState.lastSelectionRect : range.getBoundingClientRect();
-                if ((currentSelRect.width === 0 && currentSelRect.height === 0) && AppState.lastSelectionRect && (AppState.lastSelectionRect.width > 0 || AppState.lastSelectionRect.height > 0)) {
-                    currentSelRect = AppState.lastSelectionRect;
-                }
+                currentSelRect = (range.collapsed && AppState.lastSelectionRect && (AppState.lastSelectionRect.width > 0 || AppState.lastSelectionRect.height > 0)) ? AppState.lastSelectionRect : range.getBoundingClientRect();
+                if ((currentSelRect.width === 0 && currentSelRect.height === 0) && AppState.lastSelectionRect && (AppState.lastSelectionRect.width > 0 || AppState.lastSelectionRect.height > 0)) currentSelRect = AppState.lastSelectionRect;
             } else if (AppState.lastSelectionRect && (AppState.lastSelectionRect.width > 0 || AppState.lastSelectionRect.height > 0)) {
                 currentSelRect = AppState.lastSelectionRect;
             }
-
-            const popupWidth = popupEl.offsetWidth;
-            const popupHeight = popupEl.offsetHeight;
-
+            const popupWidth = popupEl.offsetWidth, popupHeight = popupEl.offsetHeight;
             if (currentSelRect && (currentSelRect.width > 0 || currentSelRect.height > 0)) {
                 top = currentSelRect.bottom + Config.POPUP_OFFSET_Y;
                 left = currentSelRect.left + Config.POPUP_OFFSET_X;
-
-                if (top + popupHeight > window.innerHeight - Config.POPUP_SCREEN_MARGIN) {
-                    top = currentSelRect.top - popupHeight - Config.POPUP_OFFSET_Y;
-                }
+                if (top + popupHeight > window.innerHeight - Config.POPUP_SCREEN_MARGIN) top = currentSelRect.top - popupHeight - Config.POPUP_OFFSET_Y;
             } else {
                 top = AppState.lastMouseY + Config.POPUP_OFFSET_Y;
                 left = AppState.lastMouseX + Config.POPUP_OFFSET_X;
             }
-
             left = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(left, window.innerWidth - popupWidth - Config.POPUP_SCREEN_MARGIN));
             top = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(top, window.innerHeight - popupHeight - Config.POPUP_SCREEN_MARGIN));
-
             return { top, left };
         },
         display: function(messagesArray, isErrorState = false, isLoadingState = false) {
             if (!AppState.currentPopupElement) PopupUI.create();
             if (!AppState.currentPopupElement || !AppState.popupContentContainer) return;
-
             clearTimeout(AppState.closePopupTimeout);
-
             const fragment = document.createDocumentFragment();
             messagesArray.forEach((msgData) => {
-                const itemDiv = document.createElement('div');
-                itemDiv.className = 'smart-converter-item';
-
-                const textContentDiv = document.createElement('div');
-                textContentDiv.className = 'smart-converter-item-text-content';
-
+                const itemDiv = document.createElement('div'); itemDiv.className = 'smart-converter-item';
+                const textContentDiv = document.createElement('div'); textContentDiv.className = 'smart-converter-item-text-content';
                 if (typeof msgData === 'object' && msgData !== null) {
-                    if (msgData.titleHtml) {
-                        const titleEl = document.createElement('div');
-                        titleEl.innerHTML = msgData.titleHtml;
-                        textContentDiv.appendChild(titleEl);
-                    }
-                    if (msgData.contentHtml) {
-                        const contentEl = document.createElement('div');
-                        contentEl.innerHTML = msgData.contentHtml;
-                        if (msgData.titleHtml && contentEl.childNodes.length > 0) contentEl.style.marginTop = '4px';
-                        textContentDiv.appendChild(contentEl);
-                    }
+                    if (msgData.titleHtml) { const titleEl = document.createElement('div'); titleEl.innerHTML = msgData.titleHtml; textContentDiv.appendChild(titleEl); }
+                    if (msgData.contentHtml) { const contentEl = document.createElement('div'); contentEl.innerHTML = msgData.contentHtml; if (msgData.titleHtml && contentEl.childNodes.length > 0) contentEl.style.marginTop = '4px'; textContentDiv.appendChild(contentEl); }
                     itemDiv.appendChild(textContentDiv);
-
                     if (!isLoadingState && !isErrorState && !Utils.isInvalidString(msgData.copyText) && !msgData.isError) {
-                        const copyBtn = document.createElement('button');
-                        copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT;
-                        copyBtn.className = 'smart-converter-copy-btn';
-                        copyBtn.title = UI_STRINGS.COPY_BUTTON_TITLE;
+                        const copyBtn = document.createElement('button'); copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.className = 'smart-converter-copy-btn'; copyBtn.title = UI_STRINGS.COPY_BUTTON_TITLE;
                         copyBtn.onclick = (e) => {
                             e.stopPropagation();
                             navigator.clipboard.writeText(msgData.copyText)
-                                .then(() => {
-                                    copyBtn.textContent = UI_STRINGS.COPY_SUCCESS_TEXT;
-                                    copyBtn.classList.add('success');
-                                    setTimeout(() => {
-                                        copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT;
-                                        copyBtn.classList.remove('success');
-                                    }, 1500);
-                                })
-                                .catch(() => {
-                                    copyBtn.textContent = UI_STRINGS.COPY_FAIL_TEXT;
-                                    copyBtn.classList.add('fail');
-                                    setTimeout(() => {
-                                        copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT;
-                                        copyBtn.classList.remove('fail');
-                                    }, 1500);
-                                });
+                                .then(() => { copyBtn.textContent = UI_STRINGS.COPY_SUCCESS_TEXT; copyBtn.classList.add('success'); setTimeout(() => { copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.classList.remove('success'); }, 1500); })
+                                .catch(() => { copyBtn.textContent = UI_STRINGS.COPY_FAIL_TEXT; copyBtn.classList.add('fail'); setTimeout(() => { copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.classList.remove('fail'); }, 1500); });
                         };
                         itemDiv.appendChild(copyBtn);
                     }
-                } else {
-                    const plainTextDiv = document.createElement('div');
-                    plainTextDiv.textContent = String(msgData);
-                    textContentDiv.appendChild(plainTextDiv);
-                    itemDiv.appendChild(textContentDiv);
-                }
+                } else { const plainTextDiv = document.createElement('div'); plainTextDiv.textContent = String(msgData); textContentDiv.appendChild(plainTextDiv); itemDiv.appendChild(textContentDiv); }
                 fragment.appendChild(itemDiv);
             });
-
             while (AppState.popupContentContainer.firstChild) AppState.popupContentContainer.removeChild(AppState.popupContentContainer.firstChild);
             AppState.popupContentContainer.appendChild(fragment);
-
             AppState.currentPopupElement.classList.remove(UI_STRINGS.POPUP_DEFAULT_CLASS, UI_STRINGS.POPUP_ERROR_CLASS, UI_STRINGS.POPUP_LOADING_CLASS);
             if (isErrorState) AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_ERROR_CLASS);
             else if (isLoadingState) AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_LOADING_CLASS);
             else AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_DEFAULT_CLASS);
-
-            AppState.currentPopupElement.style.display = 'block';
-            AppState.currentPopupElement.style.visibility = 'hidden';
-
+            AppState.currentPopupElement.style.display = 'block'; AppState.currentPopupElement.style.visibility = 'hidden';
             requestAnimationFrame(() => {
                 const { top, left } = PopupUI.calculatePosition(AppState.currentPopupElement);
-                AppState.currentPopupElement.style.top = `${top}px`;
-                AppState.currentPopupElement.style.left = `${left}px`;
-                AppState.currentPopupElement.style.visibility = 'visible';
-                AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_VISIBLE_CLASS);
+                AppState.currentPopupElement.style.top = `${top}px`; AppState.currentPopupElement.style.left = `${left}px`;
+                AppState.currentPopupElement.style.visibility = 'visible'; AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_VISIBLE_CLASS);
             });
         },
         addGlobalStyle: function(css) {
             const head = document.head || document.getElementsByTagName('head')[0];
-            if (head) {
-                const style = document.createElement('style');
-                style.type = 'text/css';
-                style.appendChild(document.createTextNode(css));
-                head.appendChild(style);
-            }
+            if (head) { const style = document.createElement('style'); style.type = 'text/css'; style.appendChild(document.createTextNode(css)); head.appendChild(style); }
         },
-        injectStyles: function() {
-            PopupUI.addGlobalStyle(_POPUP_STYLES);
-        }
+        injectStyles: function() { PopupUI.addGlobalStyle(_POPUP_STYLES); }
     };
 
     const EventHandlers = {
         handleUnifiedConvertAction: async function() {
             const selection = window.getSelection();
             const selectedText = selection ? selection.toString().trim() : "";
-
-            if (Utils.isInvalidString(selectedText)) {
-                if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') {
-                    PopupUI.close();
-                }
-                return;
-            }
-
+            if (Utils.isInvalidString(selectedText)) { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') PopupUI.close(); return; }
             const previewText = Utils.getPreviewText(selectedText);
             PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.CONVERTING_MESSAGE_PREFIX}${Utils.escapeHTML(previewText)}${UI_STRINGS.CONVERTING_MESSAGE_SUFFIX}</div>` }], false, true);
-
             const { resultsArray, conversionAttempted } = await Converter.fetchAndProcessConversions(selectedText);
-
-            if (resultsArray.length > 0) {
-                const hasError = resultsArray.some(res => res.isError);
-                PopupUI.display(resultsArray, hasError, false);
-            } else if (conversionAttempted) {
-                 PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_NO_VALID_CONVERSION(previewText)}</div>` }], true, false);
-            } else {
-                PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_CANNOT_FIND_CONVERTIBLE(previewText)}</div>` }], true, false);
-            }
+            if (resultsArray.length > 0) { const hasError = resultsArray.some(res => res.isError); PopupUI.display(resultsArray, hasError, false); }
+            else if (conversionAttempted) { PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_NO_VALID_CONVERSION(previewText)}</div>` }], true, false); }
+            else { PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_CANNOT_FIND_CONVERTIBLE(previewText)}</div>` }], true, false); }
         },
         updateMousePositionAndSelectionRect: function(event) {
-            AppState.lastMouseX = event.clientX;
-            AppState.lastMouseY = event.clientY;
+            AppState.lastMouseX = event.clientX; AppState.lastMouseY = event.clientY;
             const selection = window.getSelection();
-            if (selection && selection.toString().trim() !== "" && selection.rangeCount > 0) {
-                const rect = selection.getRangeAt(0).getBoundingClientRect();
-                if (rect.width > 0 || rect.height > 0) {
-                    AppState.lastSelectionRect = rect;
-                }
-            }
+            if (selection && selection.toString().trim() !== "" && selection.rangeCount > 0) { const rect = selection.getRangeAt(0).getBoundingClientRect(); if (rect.width > 0 || rect.height > 0) AppState.lastSelectionRect = rect; }
         },
         handleSelectionChange: function() {
             const selection = window.getSelection();
-            if (selection && selection.rangeCount > 0 && selection.toString().trim() !== "") {
-                const rect = selection.getRangeAt(0).getBoundingClientRect();
-                if (rect.width > 0 || rect.height > 0) AppState.lastSelectionRect = rect;
-            }
+            if (selection && selection.rangeCount > 0 && selection.toString().trim() !== "") { const rect = selection.getRangeAt(0).getBoundingClientRect(); if (rect.width > 0 || rect.height > 0) AppState.lastSelectionRect = rect; }
         },
         initEventListeners: function() {
             document.addEventListener('mouseup', EventHandlers.updateMousePositionAndSelectionRect);
             document.addEventListener('contextmenu', (e) => EventHandlers.updateMousePositionAndSelectionRect(e), true);
             document.addEventListener('selectionchange', Utils.debounce(EventHandlers.handleSelectionChange, 250));
             document.addEventListener('keydown', function(event) {
-                if (event.altKey && (event.key === 'z' || event.key === 'Z' || event.code === 'KeyZ')) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    EventHandlers.handleUnifiedConvertAction();
-                }
-                if (event.key === 'Escape' || event.code === 'Escape') {
-                    if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') {
-                        PopupUI.close();
-                    }
-                }
+                if (event.altKey && (event.key === 'z' || event.key === 'Z' || event.code === 'KeyZ')) { event.preventDefault(); event.stopPropagation(); EventHandlers.handleUnifiedConvertAction(); }
+                if (event.key === 'Escape' || event.code === 'Escape') { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') PopupUI.close(); }
             });
-            window.addEventListener('scroll', () => {
-                 if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) {
-                    PopupUI.close();
-                 }
-            }, true);
-            window.addEventListener('resize', Utils.debounce(() => {
-                if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) {
-                    const { top, left } = PopupUI.calculatePosition(AppState.currentPopupElement);
-                    AppState.currentPopupElement.style.top = `${top}px`;
-                    AppState.currentPopupElement.style.left = `${left}px`;
-                }
-            }, 250));
+            window.addEventListener('scroll', () => { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) PopupUI.close(); }, true);
+            window.addEventListener('resize', Utils.debounce(() => { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) { const { top, left } = PopupUI.calculatePosition(AppState.currentPopupElement); AppState.currentPopupElement.style.top = `${top}px`; AppState.currentPopupElement.style.left = `${left}px`; } }, 250));
         }
     };
 
@@ -1774,7 +1894,6 @@
         textConverterMain();
     }
 
-  })(); // End of IIFE for Text Converter
-
+  })();
 
 })();
