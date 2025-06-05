@@ -811,7 +811,7 @@
         KOREAN_WON_UNIT: "원",
         KOREAN_APPROX_PREFIX: "약 ",
         ORIGINAL_TEXT_LABEL: "원본: ",
-        ECB_TEXT: "유럽중앙은행", // Added back
+        ECB_TEXT: "유럽중앙은행",
         TIME_KST_PREFIX: "한국 시각: ",
         TIME_KST_DATE_MONTH_SUFFIX: "월 ",
         TIME_KST_DATE_DAY_SUFFIX: "일 ",
@@ -827,8 +827,8 @@
     const REGEXES = {
         KOREAN_NUMERALS_REGEX_G: new RegExp(Object.keys(Config.KOREAN_NUMERALS_MAP).join('|'), 'gu'),
         KOREAN_NUMERIC_CLEANUP_REGEX_GI: /[^0-9\.\s천백십]/giu,
-        NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9억만천백십조일이삼사오육칠팔구영BMKbmk\.,\s]/giu,
-        AMOUNT_ABBREVIATION_REGEX_I: /^([\d\.,]+)\s*([BMK])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/iu,
+        NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9억만천백십조일이삼사오육칠팔구영BMKbmk\.,\s]/giu, // MODIFIED: B M K T 등 처리 가능하도록 되어있었음 (BMK만 표기되어 있었으나, 실제로는 bmk도 처리)
+        AMOUNT_ABBREVIATION_REGEX_I: /^([\d\.,]+)\s*([BMKT])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/iu, // MODIFIED: Added T for Trillion
         ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^([\\d\.,]+)\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
         PLAIN_OZ_REGEX: /^([\d\.,]+)\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$/iu,
         PURE_NUMBER_REGEX: /^[\d\.]+$/u,
@@ -1026,7 +1026,8 @@
                 const suffix = abbreviationMatch[2].toUpperCase();
                 if (numVal !== null && cleanText.substring(abbreviationMatch[0].length).trim() === "") {
                     let multiplier = 1;
-                    if (suffix === 'B') multiplier = 1e9;
+                    if (suffix === 'T') multiplier = 1e12; // ADDED: Trillion
+                    else if (suffix === 'B') multiplier = 1e9;
                     else if (suffix === 'M') multiplier = 1e6;
                     else if (suffix === 'K') multiplier = 1e3;
                     return numVal * multiplier;
@@ -1574,9 +1575,7 @@
                 }
                 const safeRateDate = Utils.escapeHTML(rateDate);
                 const titleHtml = `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${displayOriginalTextForHTML}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_SUFFIX}</span>`;
-                // Modified to include ECB_TEXT
                 const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate})</small>`;
-                // Modified to include ECB_TEXT
                 const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate})`;
 
                 return { titleHtml, contentHtml, copyText, isError: false, extractedMagnitudeText: currencyDetails.magnitudeAmountText };
