@@ -811,6 +811,7 @@
         KOREAN_WON_UNIT: "원",
         KOREAN_APPROX_PREFIX: "약 ",
         ORIGINAL_TEXT_LABEL: "원본: ",
+        ECB_TEXT: "유럽중앙은행", // Added back
         TIME_KST_PREFIX: "한국 시각: ",
         TIME_KST_DATE_MONTH_SUFFIX: "월 ",
         TIME_KST_DATE_DAY_SUFFIX: "일 ",
@@ -1078,7 +1079,7 @@
             while ((match = REGEXES.TIME_EXTRACTION_PATTERN.exec(inputText)) !== null) {
                 const originalMatch = match[0];
                 let [
-                    , 
+                    ,
                     monthNameStr, dayNameStr, yearNameStr,
                     yearYMDStr, monthYMDStr, dayYMDStr,
                     part1MDYStr, part2MDYStr, yearMDYStr,
@@ -1091,24 +1092,24 @@
                 let parsedDateSuccessfully = false;
 
                 const today = new Date();
-                if (monthNameStr) { 
+                if (monthNameStr) {
                     year = yearNameStr ? parseInt(yearNameStr, 10) : today.getFullYear();
                     if (yearNameStr && yearNameStr.length === 2) year += (year < 70 ? 2000 : 1900);
-                    
+
                     monthNameStr = monthNameStr.toLowerCase();
                     monthIndex = Config.MONTH_NAMES_EN_FULL.indexOf(monthNameStr);
                     if (monthIndex === -1) monthIndex = Config.MONTH_NAMES_EN_SHORT.indexOf(monthNameStr);
-                    
+
                     day = dayNameStr ? parseInt(dayNameStr, 10) : today.getDate();
                     if (monthIndex !== -1 && day >= 1 && day <= 31) parsedDateSuccessfully = true;
 
-                } else if (yearYMDStr) { 
+                } else if (yearYMDStr) {
                     year = parseInt(yearYMDStr, 10);
-                    monthIndex = parseInt(monthYMDStr, 10) - 1; 
+                    monthIndex = parseInt(monthYMDStr, 10) - 1;
                     day = parseInt(dayYMDStr, 10);
                     parsedDateSuccessfully = this._isValidDate(year, monthIndex, day);
 
-                } else if (part1MDYStr) { 
+                } else if (part1MDYStr) {
                     year = yearMDYStr ? parseInt(yearMDYStr, 10) : today.getFullYear();
                     if (yearMDYStr && yearMDYStr.length === 2) year += (year < 70 ? 2000 : 1900);
 
@@ -1119,17 +1120,17 @@
                         monthIndex = p1 - 1;
                         day = p2;
                         parsedDateSuccessfully = true;
-                    } 
+                    }
                     else if (this._isValidDate(year, p2 - 1, p1)) {
                         monthIndex = p2 - 1;
                         day = p1;
                         parsedDateSuccessfully = true;
                     }
-                } else { 
+                } else {
                     year = today.getFullYear();
                     monthIndex = today.getMonth();
                     day = today.getDate();
-                    parsedDateSuccessfully = true; 
+                    parsedDateSuccessfully = true;
                 }
 
                 if (!parsedDateSuccessfully) continue;
@@ -1163,12 +1164,12 @@
                     if (offsetMatch) {
                         const sign = offsetMatch[1];
                         const hOff = parseInt(offsetMatch[2], 10);
-                        const mOffStr = offsetMatch[4]; 
+                        const mOffStr = offsetMatch[4];
                         let mOff = 0;
 
-                        if (mOffStr) { 
+                        if (mOffStr) {
                             mOff = parseInt(mOffStr, 10);
-                        } else if (!offsetMatch[3] && offsetMatch[2].length > 2) { 
+                        } else if (!offsetMatch[3] && offsetMatch[2].length > 2) {
                         }
 
 
@@ -1188,7 +1189,7 @@
                 if (!resolvedTzOffsetString) continue;
 
                 try {
-                    const monthNameForParse = Config.MONTH_NAMES_EN_FULL[monthIndex]; 
+                    const monthNameForParse = Config.MONTH_NAMES_EN_FULL[monthIndex];
                     const dateStringForParsing = `${monthNameForParse} ${day}, ${year} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')} ${resolvedTzOffsetString}`;
                     const sourceDate = new Date(dateStringForParsing);
 
@@ -1209,7 +1210,7 @@
             let amountTextToParse = originalText;
             let currencyCode = null;
             let matchedCurrencyText = "";
-    
+
             for (const pattern of Config.CURRENCY_PATTERNS) {
                 pattern.regex.lastIndex = 0;
                 const match = pattern.regex.exec(originalText);
@@ -1221,14 +1222,14 @@
                     break;
                 }
             }
-    
+
             let amount = null;
-            let magnitudeAmountText = null; 
-    
+            let magnitudeAmountText = null;
+
             const textForNumericParse = (currencyCode && amountTextToParse === "" && matchedCurrencyText !== "") ?
-                originalText.replace(matchedCurrencyText, '').trim() : 
+                originalText.replace(matchedCurrencyText, '').trim() :
                 amountTextToParse;
-    
+
             if (textForNumericParse !== "") {
                 const parsedWithMagnitude = NumberParser.parseAmountWithMagnitudeSuffixes(textForNumericParse);
                 if (parsedWithMagnitude !== null) {
@@ -1238,10 +1239,10 @@
                     amount = NumberParser.parseKoreanNumericText(textForNumericParse);
                 }
             }
-            
+
             return { amount, currencyCode, originalText, matchedCurrencyText, magnitudeAmountText };
         },
-        extractPhysicalUnitDetails: function(inputText, ignoredText = null) { 
+        extractPhysicalUnitDetails: function(inputText, ignoredText = null) {
             if (Utils.isInvalidString(inputText)) return [];
             const foundMatches = [];
             const trimmedText = inputText.trim();
@@ -1252,13 +1253,13 @@
                     let match;
                     while ((match = unit.regex.exec(trimmedText)) !== null) {
                         const valueStr = match[1];
-                        const originalMatchedSegment = match[0].trim(); 
+                        const originalMatchedSegment = match[0].trim();
 
                         if (ignoredText && originalMatchedSegment.toLowerCase() === ignoredText.toLowerCase()) {
-                            continue; 
+                            continue;
                         }
 
-                        const unitStr = match[2]; 
+                        const unitStr = match[2];
                         const value = Utils.parseFloatLenient(valueStr);
                         if (value !== null) {
                              foundMatches.push({ value, unitInfo: unit, originalText: originalMatchedSegment, originalUnit: unitStr.trim() });
@@ -1550,7 +1551,7 @@
             const currencyDetails = TextExtractor.extractCurrencyDetails(selectedText);
 
             if (currencyDetails.amount === null || currencyDetails.amount < 0 || !currencyDetails.currencyCode) {
-                return null; 
+                return null;
             }
 
             try {
@@ -1573,14 +1574,16 @@
                 }
                 const safeRateDate = Utils.escapeHTML(rateDate);
                 const titleHtml = `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${displayOriginalTextForHTML}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_SUFFIX}</span>`;
-                const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, 기준일: ${safeRateDate})</small>`;
-                const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, 기준일: ${safeRateDate})`;
-                
+                // Modified to include ECB_TEXT
+                const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate})</small>`;
+                // Modified to include ECB_TEXT
+                const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate})`;
+
                 return { titleHtml, contentHtml, copyText, isError: false, extractedMagnitudeText: currencyDetails.magnitudeAmountText };
             } catch (error) {
                 const errMsgBase = `${UI_STRINGS.ERROR_ICON} 환율 변환 실패 (${Utils.escapeHTML(currencyDetails.currencyCode || "?")} → ${Config.DEFAULT_TARGET_CURRENCY}).`;
                 const errMsgDetail = (error && error.message) ? error.message : '알 수 없는 오류입니다.';
-                
+
                 return {
                     titleHtml: `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${Utils.escapeHTML(currencyDetails.originalText)}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}</span>`,
                     contentHtml: `${errMsgBase}<br><small style="color:#c0392b;">${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}</small>`,
@@ -1605,17 +1608,17 @@
         fetchAndProcessConversions: async function(selectedText) {
             let resultsArray = [];
             let conversionAttempted = false;
-            let currencyMagnitudeTextToIgnore = null; 
+            let currencyMagnitudeTextToIgnore = null;
 
             const currencyResultObject = await Converter.processCurrencyConversion(selectedText);
             if (currencyResultObject) {
                 conversionAttempted = true;
                 resultsArray.push(currencyResultObject);
-                if (currencyResultObject.extractedMagnitudeText) { 
+                if (currencyResultObject.extractedMagnitudeText) {
                     currencyMagnitudeTextToIgnore = currencyResultObject.extractedMagnitudeText;
                 }
             }
-            
+
             const unitConversionOutcome = Converter.processUnitConversion(selectedText, currencyMagnitudeTextToIgnore);
             if (unitConversionOutcome && unitConversionOutcome.results && unitConversionOutcome.results.length > 0) {
                 conversionAttempted = true;
