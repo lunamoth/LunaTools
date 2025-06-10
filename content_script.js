@@ -818,6 +818,7 @@
         TIME_KST_AM: "오전",
         TIME_KST_PM: "오후",
         TIME_KST_HOUR_SUFFIX: "시",
+        TIME_KST_MINUTE_SUFFIX: "분",
         TIME_CATEGORY_ICON: Config.UNIT_CATEGORY_ICONS.time,
         ERROR_TIME_PARSE: "⚠️ 시간 정보를 올바르게 분석하지 못했습니다.",
         ERROR_TIME_CONVERSION: "⚠️ 시간 변환 중 오류가 발생했습니다.",
@@ -1438,20 +1439,21 @@
             try {
                 const kstFormatter = new Intl.DateTimeFormat('ko-KR', {
                     timeZone: Config.KST_IANA_TIMEZONE,
-                    month: 'numeric', day: 'numeric', hour: 'numeric', hour12: true,
+                    month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true,
                 });
                 const parts = kstFormatter.formatToParts(sourceDate);
-                let kstMonth, kstDay, kstAmPm, kstHour;
+                let kstMonth, kstDay, kstAmPm, kstHour, kstMinute;
                 parts.forEach(part => {
                     switch (part.type) {
                         case 'month': kstMonth = part.value; break;
                         case 'day': kstDay = part.value; break;
                         case 'dayPeriod': kstAmPm = part.value; break;
                         case 'hour': kstHour = part.value; break;
+                        case 'minute': kstMinute = part.value; break;
                     }
                 });
                 const ampmKorean = (kstAmPm === '오전' || kstAmPm?.toUpperCase() === 'AM') ? UI_STRINGS.TIME_KST_AM : UI_STRINGS.TIME_KST_PM;
-                const kstString = `${UI_STRINGS.TIME_KST_PREFIX}${kstMonth}${UI_STRINGS.TIME_KST_DATE_MONTH_SUFFIX}${kstDay}${UI_STRINGS.TIME_KST_DATE_DAY_SUFFIX}${ampmKorean} ${kstHour}${UI_STRINGS.TIME_KST_HOUR_SUFFIX}`;
+                const kstString = `${UI_STRINGS.TIME_KST_PREFIX}${kstMonth}${UI_STRINGS.TIME_KST_DATE_MONTH_SUFFIX}${kstDay}${UI_STRINGS.TIME_KST_DATE_DAY_SUFFIX}${ampmKorean} ${kstHour}${UI_STRINGS.TIME_KST_HOUR_SUFFIX} ${kstMinute}${UI_STRINGS.TIME_KST_MINUTE_SUFFIX}`;
                 const titleHtml = `${UI_STRINGS.TIME_CATEGORY_ICON} <b>${Utils.escapeHTML(Utils.getPreviewText(originalText, 40))}</b> <span class="title-suffix">${UI_STRINGS.RESULT_TIME_SUFFIX}</span>`;
                 const contentHtml = `<span class="original-value">${Utils.escapeHTML(originalText)}</span> ≈ <b class="converted-value">${kstString}</b>`;
                 const copyText = `${originalText} ≈ ${kstString}`;
