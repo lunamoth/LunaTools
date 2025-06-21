@@ -7,16 +7,44 @@
     <style>
         :root {
             --bg-color: #f5f5f7;
-            --card-bg-color: #ffffff;
+            --card-bg-color: rgba(255, 255, 255, 0.7);
             --text-color: #1d1d1f;
-            --secondary-text-color: #6e6e73;
-            --border-color: #d2d2d7;
+            --secondary-text-color: #6a6a6e;
+            --border-color: rgba(0, 0, 0, 0.1);
             --primary-blue: #007aff;
             --primary-blue-hover: #0071e3;
+            --icon-lock-bg: rgba(0, 122, 255, 0.1);
+            --icon-block-bg: rgba(255, 59, 48, 0.1);
+            --focus-ring-color: rgba(0, 122, 255, 0.3);
             --save-success-bg: #34c759;
             --save-error-bg: #ff3b30;
             --save-text-color: #ffffff;
-            --textarea-bg-color: rgba(120, 120, 128, 0.08);
+            --textarea-bg-color: rgba(239, 239, 241, 0.8);
+            --textarea-inset-shadow: rgba(0, 0, 0, 0.05);
+            --card-border-gradient: conic-gradient(from 180deg at 50% 50%, #d6d6d6 0deg, #ffffff 50%, #d6d6d6 100%);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #161618;
+                --card-bg-color: rgba(28, 28, 30, 0.65);
+                --text-color: #f2f2f7;
+                --secondary-text-color: #8e8e93;
+                --border-color: rgba(255, 255, 255, 0.15);
+                --primary-blue: #0a84ff;
+                --primary-blue-hover: #0b8eff;
+                --icon-lock-bg: rgba(10, 132, 255, 0.2);
+                --icon-block-bg: rgba(255, 69, 58, 0.2);
+                --focus-ring-color: rgba(10, 132, 255, 0.35);
+                --textarea-bg-color: rgba(38, 38, 40, 0.8);
+                --textarea-inset-shadow: rgba(0, 0, 0, 0.2);
+                --card-border-gradient: conic-gradient(from 180deg at 50% 50%, #555 0deg, #333 50%, #555 100%);
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         body {
@@ -24,12 +52,13 @@
             background-color: var(--bg-color);
             color: var(--text-color);
             margin: 0;
-            padding: 3rem 2rem;
+            padding: 4rem 2rem;
             display: flex;
             justify-content: center;
             align-items: flex-start;
             min-height: 100vh;
             box-sizing: border-box;
+            overflow-x: hidden;
         }
 
         main {
@@ -39,125 +68,166 @@
 
         header {
             text-align: center;
-            margin-bottom: 3rem;
+            margin-bottom: 3.5rem;
+            animation: fadeIn 0.6s ease-out 0.1s forwards;
+            opacity: 0;
         }
 
         header h1 {
-            font-size: 2.8rem;
+            font-size: 2.2rem;
             font-weight: 700;
-            margin: 0 0 0.5rem 0;
-            letter-spacing: -0.022em;
+            margin: 0;
+            letter-spacing: -0.025em;
         }
 
         .setting-card {
+            position: relative;
             background-color: var(--card-bg-color);
-            border-radius: 20px;
+            backdrop-filter: blur(28px) saturate(200%);
+            -webkit-backdrop-filter: blur(28px) saturate(200%);
+            border-radius: 24px;
             padding: 2rem;
-            margin-bottom: 2rem;
-            border: 1px solid rgba(0, 0, 0, 0.08);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+            margin-bottom: 2.5rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+            animation: fadeIn 0.7s ease-out forwards;
+            opacity: 0;
+        }
+
+        .setting-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 24px;
+            padding: 1px;
+            background: var(--card-border-gradient);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
         }
         
+        main > section:nth-of-type(1) { animation-delay: 0.2s; }
+        main > section:nth-of-type(2) { animation-delay: 0.3s; }
+        
         .setting-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.07);
+            transform: translateY(-5px);
+            box-shadow: 0 15px 50px rgba(0, 0, 0, 0.12);
+        }
+        
+        .setting-card:active {
+            transform: translateY(-2px) scale(0.99);
+            transition-duration: 0.1s;
         }
 
         .card-header {
             display: flex;
             align-items: center;
-            gap: 0.8rem;
+            gap: 1rem;
             margin-bottom: 0.75rem;
         }
         
-        .card-header .icon {
-            font-size: 1.5rem;
-            line-height: 1;
+        .icon-container {
+            width: 38px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            flex-shrink: 0;
+            transition: transform 0.2s ease-out;
         }
 
+        .setting-card:hover .icon-container {
+            transform: scale(1.1);
+        }
+
+        .icon-container.lock-icon { background-color: var(--icon-lock-bg); }
+        .icon-container.block-icon { background-color: var(--icon-block-bg); }
+        .icon-container .icon { font-size: 1.2rem; }
+
         .card-header h2 {
-            font-size: 1.5rem;
+            font-size: 1.3rem;
             font-weight: 600;
             margin: 0;
         }
         
         .setting-card p {
-            font-size: 1rem;
+            font-size: 0.95rem;
             color: var(--secondary-text-color);
             line-height: 1.6;
             margin: 0 0 1.5rem 0;
+            padding-left: 54px;
         }
         
         textarea {
             width: 100%;
             box-sizing: border-box;
             padding: 14px 18px;
-            border-radius: 14px;
-            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            border: none;
             font-family: "SF Mono", "Menlo", "Monaco", Consolas, "Courier New", monospace;
             font-size: 0.95rem;
             line-height: 1.7;
             background-color: var(--textarea-bg-color);
+            color: var(--text-color);
             resize: vertical;
             min-height: 120px;
-            transition: border-color 0.2s, box-shadow 0.2s;
+            box-shadow: inset 0 1px 2px var(--textarea-inset-shadow);
+            transition: box-shadow 0.2s;
         }
         
         textarea:focus {
             outline: none;
-            border-color: var(--primary-blue);
-            box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.25);
+            box-shadow: inset 0 1px 2px var(--textarea-inset-shadow), 0 0 0 3px var(--focus-ring-color);
         }
         
         footer {
-            margin-top: 2rem;
+            margin-top: 1rem;
             display: flex;
-            flex-direction: column;
-            align-items: center;
+            justify-content: center;
+            padding-bottom: 2rem;
+            animation: fadeIn 0.7s ease-out 0.4s forwards;
+            opacity: 0;
         }
         
         button#save {
             background-color: var(--primary-blue);
             color: white;
-            font-size: 1.05rem;
-            font-weight: 600;
+            font-size: 1rem;
+            font-weight: 500;
             border: none;
-            border-radius: 14px;
-            padding: 16px 36px;
+            border-radius: 12px;
+            padding: 14px 32px;
             cursor: pointer;
-            transition: background-color 0.2s, transform 0.1s;
+            transition: background-color 0.2s, transform 0.15s, box-shadow 0.15s;
         }
         
-        button#save:hover {
-            background-color: var(--primary-blue-hover);
-        }
-        
+        button#save:hover { background-color: var(--primary-blue-hover); }
         button#save:active {
-            transform: scale(0.97);
+            transform: scale(0.96);
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
         }
         
         #status {
-            margin-top: 1.5rem;
-            padding: 10px 20px;
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translate(-50%, 10px);
+            padding: 12px 24px;
             background-color: var(--save-success-bg);
             color: var(--save-text-color);
-            border-radius: 20px;
-            font-weight: 600;
+            border-radius: 24px;
+            font-weight: 500;
             opacity: 0;
-            transform: translateY(10px);
-            transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+            transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
             pointer-events: none;
+            z-index: 100;
+            backdrop-filter: blur(10px);
         }
         
-        #status.show {
-            opacity: 1;
-            transform: translateY(0);
-        }
-        
-        #status.error {
-            background-color: var(--save-error-bg);
-        }
+        #status.show { opacity: 1; transform: translate(-50%, 0); }
+        #status.error { background-color: var(--save-error-bg); }
     </style>
 </head>
 <body>
@@ -168,31 +238,31 @@
 
         <section class="setting-card">
             <div class="card-header">
-                <span class="icon">🔒</span>
+                <div class="icon-container lock-icon">
+                    <span class="icon">🔒</span>
+                </div>
                 <h2>사이트 잠금</h2>
             </div>
-            <p>
-                실수로 탭을 닫는 것을 방지하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)
-            </p>
+            <p>실수로 탭을 닫는 것을 방지할 사이트의 호스트 주소를 입력하세요. (예: example.com)</p>
             <textarea id="lockedSites" rows="5"></textarea>
         </section>
 
         <section class="setting-card">
             <div class="card-header">
-                <span class="icon">🚫</span>
+                <div class="icon-container block-icon">
+                    <span class="icon">🚫</span>
+                </div>
                 <h2>사이트 차단</h2>
             </div>
-            <p>
-                접속을 차단하고 싶은 사이트의 <strong>URL에 포함될 키워드</strong>를 한 줄에 하나씩 입력하세요. (예: example.com/board)
-            </p>
+            <p>접속을 차단할 사이트 URL에 포함될 키워드를 입력하세요. (예: example.com/board)</p>
             <textarea id="blockedSites" rows="5"></textarea>
         </section>
 
         <footer>
             <button id="save">설정 저장</button>
-            <div id="status"></div>
         </footer>
     </main>
+    <div id="status"></div>
     <script src="options.js"></script>
 </body>
 </html>
