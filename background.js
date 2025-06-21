@@ -1,16 +1,9 @@
-/**
- * LunaTools Background Script
- * Handles tab organization, deduplication, window merging, gesture actions, and API requests.
- */
-
-// --- Constants ---
 const NEW_TAB_URL = "chrome://newtab/";
 const PERFORM_GESTURE_ACTION = 'perform-gesture';
 const FETCH_EXCHANGE_RATE_ACTION = "fetchLunaToolsExchangeRate";
 const API_TIMEOUT_MS_EXCHANGE_RATE = 7000;
 
 
-// --- Utility Functions ---
 function isTabAccessError(error) {
   const message = error?.message?.toLowerCase() || "";
   return message.includes("no tab with id") ||
@@ -25,11 +18,10 @@ function isWindowAccessError(error) {
   return message.includes("no window with id");
 }
 
-// --- Gesture Handling ---
 async function handleGestureAction(gesture, tabId) {
   try {
     switch (gesture) {
-      case 'U': // Up - New Tab
+      case 'U':
         const currentTab = await chrome.tabs.get(tabId).catch(() => null);
         await chrome.tabs.create({
           index: currentTab ? currentTab.index + 1 : undefined,
@@ -37,22 +29,20 @@ async function handleGestureAction(gesture, tabId) {
           active: true
         });
         break;
-      case 'D': // Down - Close Tab
+      case 'D':
         await chrome.tabs.remove(tabId);
         break;
-      case 'R': // Right - Go Forward
+      case 'R':
         await chrome.tabs.goForward(tabId);
         break;
-      case 'L': // Left - Go Back
+      case 'L':
         await chrome.tabs.goBack(tabId);
         break;
     }
   } catch (error) {
-    // Errors are silently ignored in production without logging
   }
 }
 
-// --- TabManager Class ---
 class TabManager {
   constructor() {
     this.urlCache = new Map();
@@ -161,7 +151,6 @@ class TabManager {
         }
       });
     } catch (error) {
-      // Silently ignore
     }
   }
 
@@ -172,7 +161,6 @@ class TabManager {
       
       await this._sortAndMoveTabsInWindow(currentWindow.id);
     } catch (error) {
-      // Silently ignore
     }
   }
 
@@ -204,7 +192,6 @@ class TabManager {
         if (typeof currentIndex === 'number' && currentIndex !== desiredIndex && tab.id !== undefined) {
           promises.push(
             chrome.tabs.move(tab.id, { index: desiredIndex }).catch(error => {
-              // Silently ignore
             })
           );
         }
@@ -214,7 +201,6 @@ class TabManager {
       if (movePromises.length > 0) await Promise.all(movePromises);
 
     } catch (error) {
-      // Silently ignore
     }
   }
 
@@ -273,7 +259,6 @@ class TabManager {
         await this._handleVerifiedDuplicate(currentTab, existingDuplicateTabIds[0], parsedUrl);
       }
     } catch (error) {
-      // Silently ignore
     }
   }
 
@@ -307,7 +292,6 @@ class TabManager {
     try {
       if (newlyOpenedTab.active) {
         await chrome.tabs.update(existingDuplicateId, { active: true }).catch(err => {
-          // Silently ignore
         });
       }
 
@@ -370,7 +354,6 @@ class TabManager {
       if (windowsToClose.length > 0) {
           const closePromises = windowsToClose.map(win =>
             chrome.windows.remove(win.id).catch(err => {
-              // Silently ignore
             })
           );
           await Promise.all(closePromises);
@@ -380,7 +363,6 @@ class TabManager {
       await this._sortAndMoveTabsInWindow(targetWindowId);
 
     } catch (error) {
-      // Silently ignore
     }
   }
   
@@ -388,7 +370,6 @@ class TabManager {
     try {
       await chrome.windows.update(windowId, { focused: true });
     } catch (error) {
-      // Silently ignore
     }
   }
 
@@ -450,9 +431,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === PERFORM_GESTURE_ACTION && message.gesture && sender?.tab?.id != null) {
     handleGestureAction(message.gesture, sender.tab.id);
-    // While handleGestureAction is async, it doesn't use sendResponse.
-    // If it did, returning true would be necessary. For now, it's effectively fire-and-forget.
-    return false; // No asynchronous response expected by sender FOR THIS ACTION
+    return false;
   }
 
   if (message?.action === FETCH_EXCHANGE_RATE_ACTION && message.from && message.to) {
@@ -483,10 +462,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         sendResponse({ error: errorMessage });
       });
-    return true; // Crucial: Indicates that sendResponse will be called asynchronously.
+    return true;
   }
   
-  return false; // Default for unhandled messages or synchronous messages
+  return false;
 });
 
 chrome.action.onClicked.addListener(async () => {
@@ -544,5 +523,4 @@ chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
 });
 
 chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
-  // No specific action needed here for now.
 });
