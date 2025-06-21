@@ -1,5 +1,47 @@
-(() => {
+(async () => {
   'use strict';
+
+  async function applySiteSettingsAndCheckIfBlocked() {
+    if (window.self !== window.top) {
+      return false;
+    }
+
+    try {
+      const { lockedSites = [], blockedSites = [] } = await chrome.storage.sync.get(['lockedSites', 'blockedSites']);
+      
+      if (blockedSites.length > 0) {
+        const currentHref = window.location.href;
+        const isBlocked = blockedSites.some(keyword => keyword && currentHref.includes(keyword));
+        
+        if (isBlocked) {
+          window.location.replace('about:blank');
+          return true; // 페이지가 차단되었음을 알립니다.
+        }
+      }
+
+      if (lockedSites.length > 0) {
+        const currentHostname = window.location.hostname;
+        const isLocked = lockedSites.some(site => site && currentHostname.endsWith(site));
+
+        if (isLocked) {
+          const preventUnload = (event) => {
+            event.preventDefault();
+            event.returnValue = '';
+          };
+          window.addEventListener('beforeunload', preventUnload);
+        }
+      }
+    } catch (e) {
+    }
+    
+    return false;
+  }
+
+  const isBlocked = await applySiteSettingsAndCheckIfBlocked();
+  
+  if (isBlocked) {
+    return;
+  }
 
   class MouseGestureHandler {
     static MIN_DRAG_DISTANCE_SQ = 100;
@@ -1946,5 +1988,5 @@
     new VideoRotator();
 
   })();
-
+  
 })();
