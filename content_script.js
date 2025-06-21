@@ -1861,4 +1861,90 @@
 
   })();
 
+  (() => {
+    'use strict';
+
+    class VideoRotator {
+        static #CONFIG = {
+            ROTATION_STEPS: 4,
+            ROTATION_ANGLE_DEGREES: 90,
+            SHORTCUT_KEY: 'KeyR',
+            VIDEO_SELECTORS: ['video:hover', 'video:not([paused])', 'video'],
+            EDITABLE_TAGS: new Set(['INPUT', 'TEXTAREA']),
+        };
+
+        #rotationState = new WeakMap();
+
+        constructor() {
+            document.addEventListener('keydown', this.#handleKeyDown.bind(this), true);
+        }
+
+        #isShortcutPressed(e) {
+            return e.code === VideoRotator.#CONFIG.SHORTCUT_KEY && e.ctrlKey && e.shiftKey && e.altKey;
+        }
+
+        #isTargetEditable(target) {
+            return target.isContentEditable || VideoRotator.#CONFIG.EDITABLE_TAGS.has(target.tagName);
+        }
+
+        #findPrioritizedVideo() {
+            for (const selector of VideoRotator.#CONFIG.VIDEO_SELECTORS) {
+                const videoElement = document.querySelector(selector);
+                if (videoElement) return videoElement;
+            }
+            return null;
+        }
+
+        #calculateTransform(step, video) {
+            if (step === 0) return '';
+
+            const angle = step * VideoRotator.#CONFIG.ROTATION_ANGLE_DEGREES;
+            let transform = `rotate(${angle}deg)`;
+
+            const isPortrait = step % 2 !== 0;
+            if (isPortrait) {
+                const { clientWidth, clientHeight } = video;
+                if (clientWidth > 0 && clientHeight > 0) {
+                    const scale = Math.min(clientWidth / clientHeight, clientHeight / clientWidth);
+                    transform += ` scale(${scale})`;
+                }
+            }
+            return transform;
+        }
+
+        #applyRotation(video) {
+            const currentStep = this.#rotationState.get(video) ?? 0;
+            const nextStep = (currentStep + 1) % VideoRotator.#CONFIG.ROTATION_STEPS;
+
+            const transformStyle = this.#calculateTransform(nextStep, video);
+
+            video.style.transform = transformStyle;
+            video.style.willChange = transformStyle ? 'transform' : 'auto';
+
+            if (nextStep === 0) {
+                this.#rotationState.delete(video);
+            } else {
+                this.#rotationState.set(video, nextStep);
+            }
+        }
+
+        #handleKeyDown(event) {
+            if (!this.#isShortcutPressed(event) || this.#isTargetEditable(event.target)) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const targetVideo = this.#findPrioritizedVideo();
+            if (targetVideo) {
+                this.#applyRotation(targetVideo);
+            }
+        }
+    }
+
+    new VideoRotator();
+
+  })();
+
 })();
