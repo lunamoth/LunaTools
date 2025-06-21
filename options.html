@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LunaTools 설정</title>
+    <style>
+        :root {
+            --bg-color: #f5f5f7;
+            --card-bg-color: #ffffff;
+            --text-color: #1d1d1f;
+            --secondary-text-color: #6e6e73;
+            --border-color: #d2d2d7;
+            --primary-blue: #007aff;
+            --primary-blue-hover: #0071e3;
+            --save-success-bg: #34c759;
+            --save-error-bg: #ff3b30;
+            --save-text-color: #ffffff;
+            --textarea-bg-color: rgba(120, 120, 128, 0.08);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 3rem 2rem;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        main {
+            width: 100%;
+            max-width: 680px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        header h1 {
+            font-size: 2.8rem;
+            font-weight: 700;
+            margin: 0 0 0.5rem 0;
+            letter-spacing: -0.022em;
+        }
+
+        .setting-card {
+            background-color: var(--card-bg-color);
+            border-radius: 20px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        
+        .setting-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.07);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            margin-bottom: 0.75rem;
+        }
+        
+        .card-header .icon {
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+
+        .card-header h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin: 0;
+        }
+        
+        .setting-card p {
+            font-size: 1rem;
+            color: var(--secondary-text-color);
+            line-height: 1.6;
+            margin: 0 0 1.5rem 0;
+        }
+        
+        textarea {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 14px 18px;
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            font-family: "SF Mono", "Menlo", "Monaco", Consolas, "Courier New", monospace;
+            font-size: 0.95rem;
+            line-height: 1.7;
+            background-color: var(--textarea-bg-color);
+            resize: vertical;
+            min-height: 120px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.25);
+        }
+        
+        footer {
+            margin-top: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        button#save {
+            background-color: var(--primary-blue);
+            color: white;
+            font-size: 1.05rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 14px;
+            padding: 16px 36px;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        
+        button#save:hover {
+            background-color: var(--primary-blue-hover);
+        }
+        
+        button#save:active {
+            transform: scale(0.97);
+        }
+        
+        #status {
+            margin-top: 1.5rem;
+            padding: 10px 20px;
+            background-color: var(--save-success-bg);
+            color: var(--save-text-color);
+            border-radius: 20px;
+            font-weight: 600;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+            pointer-events: none;
+        }
+        
+        #status.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        #status.error {
+            background-color: var(--save-error-bg);
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <h1>LunaTools 설정</h1>
+        </header>
+
+        <section class="setting-card">
+            <div class="card-header">
+                <span class="icon">🔒</span>
+                <h2>사이트 잠금</h2>
+            </div>
+            <p>
+                실수로 탭을 닫는 것을 방지하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)
+            </p>
+            <textarea id="lockedSites" rows="5"></textarea>
+        </section>
+
+        <section class="setting-card">
+            <div class="card-header">
+                <span class="icon">🚫</span>
+                <h2>사이트 차단</h2>
+            </div>
+            <p>
+                접속을 차단하고 싶은 사이트의 <strong>URL에 포함될 키워드</strong>를 한 줄에 하나씩 입력하세요. (예: example.com/board)
+            </p>
+            <textarea id="blockedSites" rows="5"></textarea>
+        </section>
+
+        <footer>
+            <button id="save">설정 저장</button>
+            <div id="status"></div>
+        </footer>
+    </main>
+    <script src="options.js"></script>
+</body>
+</html>
