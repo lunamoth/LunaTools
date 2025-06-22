@@ -1772,7 +1772,9 @@
             closeButton.textContent = UI_STRINGS.CLOSE_BUTTON_TEXT;
             closeButton.className = 'smart-converter-close-btn';
             closeButton.title = UI_STRINGS.CLOSE_BUTTON_TITLE;
-            closeButton.onclick = (e) => { e.stopPropagation(); PopupUI.close(); };
+            
+            closeButton.addEventListener('click', (e) => { e.stopPropagation(); PopupUI.close(); });
+            
             popup.appendChild(closeButton);
             AppState.popupContentContainer = document.createElement('div');
             AppState.popupContentContainer.className = 'smart-converter-content-container';
@@ -1783,7 +1785,25 @@
         },
         enableDrag: function(popupEl, dragHandleEl, closeButtonEl) {
             let isDragging = false, dragOffsetX, dragOffsetY;
-            dragHandleEl.onmousedown = function(e) {
+
+            const onDrag = (e) => {
+                if (!isDragging) return;
+                let newLeft = e.clientX - dragOffsetX, newTop = e.clientY - dragOffsetY;
+                const vpWidth = window.innerWidth, vpHeight = window.innerHeight;
+                newLeft = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(newLeft, vpWidth - popupEl.offsetWidth - Config.POPUP_SCREEN_MARGIN));
+                newTop = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(newTop, vpHeight - popupEl.offsetHeight - Config.POPUP_SCREEN_MARGIN));
+                popupEl.style.left = newLeft + 'px';
+                popupEl.style.top = newTop + 'px';
+            };
+
+            const onDragEnd = () => {
+                isDragging = false;
+                popupEl.style.willChange = 'auto';
+                document.removeEventListener('mousemove', onDrag);
+                document.removeEventListener('mouseup', onDragEnd);
+            };
+            
+            dragHandleEl.addEventListener('mousedown', (e) => {
                 if (closeButtonEl && e.target === closeButtonEl) return;
                 isDragging = true;
                 const rect = popupEl.getBoundingClientRect();
@@ -1793,22 +1813,7 @@
                 document.addEventListener('mousemove', onDrag);
                 document.addEventListener('mouseup', onDragEnd);
                 e.preventDefault();
-            };
-            function onDrag(e) {
-                if (!isDragging) return;
-                let newLeft = e.clientX - dragOffsetX, newTop = e.clientY - dragOffsetY;
-                const vpWidth = window.innerWidth, vpHeight = window.innerHeight;
-                newLeft = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(newLeft, vpWidth - popupEl.offsetWidth - Config.POPUP_SCREEN_MARGIN));
-                newTop = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(newTop, vpHeight - popupEl.offsetHeight - Config.POPUP_SCREEN_MARGIN));
-                popupEl.style.left = newLeft + 'px';
-                popupEl.style.top = newTop + 'px';
-            }
-            function onDragEnd() {
-                isDragging = false;
-                popupEl.style.willChange = 'auto';
-                document.removeEventListener('mousemove', onDrag);
-                document.removeEventListener('mouseup', onDragEnd);
-            }
+            });
         },
         close: function() {
             if (AppState.currentPopupElement) {
@@ -1859,12 +1864,14 @@
                     itemDiv.appendChild(textContentDiv);
                     if (!isLoadingState && !isErrorState && !Utils.isInvalidString(msgData.copyText) && !msgData.isError) {
                         const copyBtn = document.createElement('button'); copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.className = 'smart-converter-copy-btn'; copyBtn.title = UI_STRINGS.COPY_BUTTON_TITLE;
-                        copyBtn.onclick = (e) => {
+                        
+                        copyBtn.addEventListener('click', (e) => {
                             e.stopPropagation();
                             navigator.clipboard.writeText(msgData.copyText)
                                 .then(() => { copyBtn.textContent = UI_STRINGS.COPY_SUCCESS_TEXT; copyBtn.classList.add('success'); setTimeout(() => { copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.classList.remove('success'); }, 1500); })
                                 .catch(() => { copyBtn.textContent = UI_STRINGS.COPY_FAIL_TEXT; copyBtn.classList.add('fail'); setTimeout(() => { copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.classList.remove('fail'); }, 1500); });
-                        };
+                        });
+
                         itemDiv.appendChild(copyBtn);
                     }
                 } else { const plainTextDiv = document.createElement('div'); plainTextDiv.textContent = String(msgData); textContentDiv.appendChild(plainTextDiv); itemDiv.appendChild(textContentDiv); }
@@ -1889,7 +1896,7 @@
         },
         injectStyles: function() { PopupUI.addGlobalStyle(_POPUP_STYLES); }
     };
-
+	
     const EventHandlers = {
         handleUnifiedConvertAction: async function() {
             const selection = window.getSelection();
