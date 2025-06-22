@@ -4,41 +4,63 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LunaTools 설정</title>
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <script src="options.js" defer></script>
     <style>
         :root {
-            --bg-color: #f5f5f7;
-            --card-bg-color: rgba(255, 255, 255, 0.7);
-            --text-color: #1d1d1f;
-            --secondary-text-color: #6a6a6e;
-            --border-color: rgba(0, 0, 0, 0.1);
-            --primary-blue: #007aff;
-            --primary-blue-hover: #0071e3;
-            --icon-lock-bg: rgba(0, 122, 255, 0.1);
-            --icon-block-bg: rgba(255, 59, 48, 0.1);
-            --focus-ring-color: rgba(0, 122, 255, 0.3);
-            --save-success-bg: #34c759;
-            --save-error-bg: #ff3b30;
-            --save-text-color: #ffffff;
-            --textarea-bg-color: rgba(239, 239, 241, 0.8);
-            --textarea-inset-shadow: rgba(0, 0, 0, 0.05);
-            --card-border-gradient: conic-gradient(from 180deg at 50% 50%, #d6d6d6 0deg, #ffffff 50%, #d6d6d6 100%);
+            --font-family-base: "Pretendard", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+            --font-size-title: 2.4rem;
+            --font-size-subtitle: 1.6rem;
+            --font-size-description: 1.125rem;
+            --font-size-button: 1.05rem;
+            --font-size-textarea: 1rem;
+            --font-weight-bold: 700;
+            --font-weight-semibold: 600;
+            --color-text: #1d1d1f;
+            --color-text-secondary: #555;
+            --color-primary: #007aff;
+            --color-white: #ffffff;
+            --spacing-sm: 1rem;
+            --spacing-md: 1.75rem;
+            --spacing-lg: 2rem;
+            --spacing-xl: 4rem;
+            --border-radius-small: 12px;
+            --border-radius-medium: 14px;
+            --border-radius-large: 28px;
+            --border-radius-pill: 999px;
+            --bg-page: #f0f0f5;
+            --bg-icon-lock: rgba(0, 122, 255, 0.1);
+            --bg-icon-block: rgba(255, 59, 48, 0.1);
+            --bg-textarea: rgba(118, 118, 128, 0.12);
+            --shadow-textarea-inset: rgba(0, 0, 0, 0.05);
+            --ring-focus: rgba(0, 122, 255, 0.3);
+            --glass-bg: rgba(255, 255, 255, 0.55);
+            --glass-border: rgba(255, 255, 255, 0.8);
+            --glass-highlight: rgba(255, 255, 255, 0.7);
+            --glass-shadow: rgba(0, 0, 0, 0.07);
+            --glass-shadow-hover: rgba(0, 0, 0, 0.1);
+            --toast-success-bg: rgba(52, 199, 89, 0.65);
+            --toast-error-bg: rgba(255, 59, 48, 0.65);
         }
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --bg-color: #161618;
-                --card-bg-color: rgba(28, 28, 30, 0.65);
-                --text-color: #f2f2f7;
-                --secondary-text-color: #8e8e93;
-                --border-color: rgba(255, 255, 255, 0.15);
-                --primary-blue: #0a84ff;
-                --primary-blue-hover: #0b8eff;
-                --icon-lock-bg: rgba(10, 132, 255, 0.2);
-                --icon-block-bg: rgba(255, 69, 58, 0.2);
-                --focus-ring-color: rgba(10, 132, 255, 0.35);
-                --textarea-bg-color: rgba(38, 38, 40, 0.8);
-                --textarea-inset-shadow: rgba(0, 0, 0, 0.2);
-                --card-border-gradient: conic-gradient(from 180deg at 50% 50%, #555 0deg, #333 50%, #555 100%);
+                --color-text: #f2f2f7;
+                --color-text-secondary: #999;
+                --color-primary: #0a84ff;
+                --bg-page: #1c1c1e;
+                --bg-icon-lock: rgba(10, 132, 255, 0.2);
+                --bg-icon-block: rgba(255, 69, 58, 0.2);
+                --bg-textarea: rgba(118, 118, 128, 0.24);
+                --shadow-textarea-inset: rgba(0, 0, 0, 0.2);
+                --ring-focus: rgba(10, 132, 255, 0.35);
+                --glass-bg: rgba(28, 28, 30, 0.5);
+                --glass-border: rgba(255, 255, 255, 0.15);
+                --glass-highlight: rgba(255, 255, 255, 0.12);
+                --glass-shadow: rgba(0, 0, 0, 0.25);
+                --glass-shadow-hover: rgba(0, 0, 0, 0.35);
+                --toast-success-bg: rgba(52, 199, 89, 0.7);
+                --toast-error-bg: rgba(255, 69, 58, 0.7);
             }
         }
 
@@ -48,86 +70,118 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
+            font-family: var(--font-family-base);
+            background-color: var(--bg-page);
+            color: var(--color-text);
             margin: 0;
-            padding: 4rem 2rem;
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
-            min-height: 100vh;
-            box-sizing: border-box;
-            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
-        main {
+        .container {
             width: 100%;
             max-width: 680px;
+            margin: 0 auto;
+            padding: var(--spacing-xl) var(--spacing-lg);
+            display: flex;
+            flex-direction: column;
         }
 
-        header {
+        .page-header {
             text-align: center;
             margin-bottom: 3.5rem;
             animation: fadeIn 0.6s ease-out 0.1s forwards;
             opacity: 0;
         }
 
-        header h1 {
-            font-size: 2.2rem;
-            font-weight: 700;
+        .page-header__title {
+            font-size: var(--font-size-title);
+            font-weight: var(--font-weight-bold);
             margin: 0;
             letter-spacing: -0.025em;
         }
 
-        .setting-card {
+        .page-footer {
+            margin-top: var(--spacing-sm);
+            display: flex;
+            justify-content: center;
+            padding-bottom: var(--spacing-lg);
+            animation: fadeIn 0.7s ease-out 0.4s forwards;
+            opacity: 0;
+        }
+
+        .liquid-glass {
             position: relative;
-            background-color: var(--card-bg-color);
-            backdrop-filter: blur(28px) saturate(200%);
-            -webkit-backdrop-filter: blur(28px) saturate(200%);
-            border-radius: 24px;
-            padding: 2rem;
+            isolation: isolate;
+            background-color: var(--glass-bg);
+            box-shadow: 0 10px 40px -10px var(--glass-shadow), inset 0 0.5px 0 0 rgba(255,255,255,0.2), inset 0 -0.5px 0 0 rgba(0,0,0,0.05);
+        }
+
+        .liquid-glass::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            z-index: -2;
+            border-radius: inherit;
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            filter: url(#glass-distortion);
+        }
+
+        .liquid-glass::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            z-index: -1;
+            border-radius: inherit;
+            border: 1.5px solid var(--glass-border);
+            background: radial-gradient(250px circle at var(--mouse-x, 50%) var(--mouse-y, 0%), var(--glass-highlight) 0%, transparent 100%);
+            opacity: 0;
+            transition: opacity 0.4s ease-out;
+            pointer-events: none;
+        }
+
+        .liquid-glass:hover::before {
+            opacity: 1;
+        }
+
+        .card {
+            border-radius: var(--border-radius-large);
+            padding: var(--spacing-lg);
             margin-bottom: 2.5rem;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-            transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+            transition: transform 0.5s cubic-bezier(0.32, 1.25, 0.5, 1.15), box-shadow 0.5s cubic-bezier(0.32, 1.25, 0.5, 1.15);
             animation: fadeIn 0.7s ease-out forwards;
             opacity: 0;
         }
 
-        .setting-card::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            border-radius: 24px;
-            padding: 1px;
-            background: var(--card-border-gradient);
-            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-            pointer-events: none;
-        }
-        
-        main > section:nth-of-type(1) { animation-delay: 0.2s; }
-        main > section:nth-of-type(2) { animation-delay: 0.3s; }
-        
-        .setting-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 50px rgba(0, 0, 0, 0.12);
-        }
-        
-        .setting-card:active {
-            transform: translateY(-2px) scale(0.99);
-            transition-duration: 0.1s;
+        .card:hover {
+            transform: translateY(-15px) scale(1.02);
+            box-shadow: 0 30px 60px -15px var(--glass-shadow-hover), inset 0 0.5px 0 0 rgba(255,255,255,0.2), inset 0 -0.5px 0 0 rgba(0,0,0,0.05);
         }
 
-        .card-header {
+        .card:active {
+            transform: translateY(-7px) scale(0.98);
+            transition-duration: 0.15s;
+        }
+
+        main > .card:nth-of-type(1) { animation-delay: 0.2s; }
+        main > .card:nth-of-type(2) { animation-delay: 0.3s; }
+
+        .card__header, .card__description, .card__textarea {
+            position: relative;
+            z-index: 1;
+        }
+
+        .card__header {
             display: flex;
             align-items: center;
-            gap: 1rem;
-            margin-bottom: 0.75rem;
+            gap: var(--spacing-sm);
+            margin-bottom: var(--spacing-sm);
         }
-        
-        .icon-container {
+
+        .card__icon-wrapper {
+            position: relative;
+            z-index: 1;
             width: 38px;
             height: 38px;
             display: flex;
@@ -135,134 +189,150 @@
             justify-content: center;
             border-radius: 50%;
             flex-shrink: 0;
-            transition: transform 0.2s ease-out;
+            transition: transform 0.3s cubic-bezier(0.3, 1, 0.4, 1);
         }
-
-        .setting-card:hover .icon-container {
-            transform: scale(1.1);
-        }
-
-        .icon-container.lock-icon { background-color: var(--icon-lock-bg); }
-        .icon-container.block-icon { background-color: var(--icon-block-bg); }
-        .icon-container .icon { font-size: 1.2rem; }
-
-        .card-header h2 {
-            font-size: 1.3rem;
-            font-weight: 600;
-            margin: 0;
-        }
-        
-        .setting-card p {
-            font-size: 0.95rem;
-            color: var(--secondary-text-color);
-            line-height: 1.6;
-            margin: 0 0 1.5rem 0;
+        .card:hover .card__icon-wrapper { transform: scale(1.15); }
+        .card__icon-wrapper--lock { background-color: var(--bg-icon-lock); }
+        .card__icon-wrapper--block { background-color: var(--bg-icon-block); }
+        .card__icon { font-size: 1.2rem; }
+        .card__title { font-size: var(--font-size-subtitle); font-weight: var(--font-weight-semibold); margin: 0; }
+        .card__description {
+            font-size: var(--font-size-description);
+            color: var(--color-text-secondary);
+            line-height: 1.65;
+            margin: 0 0 var(--spacing-md) 0;
             padding-left: 54px;
         }
-        
-        textarea {
+
+        .card__textarea {
             width: 100%;
             box-sizing: border-box;
             padding: 14px 18px;
-            border-radius: 12px;
-            border: none;
-            font-family: "SF Mono", "Menlo", "Monaco", Consolas, "Courier New", monospace;
-            font-size: 0.95rem;
+            border-radius: var(--border-radius-small);
+            border: 1px solid transparent;
+            font-family: inherit;
+            font-size: var(--font-size-textarea);
             line-height: 1.7;
-            background-color: var(--textarea-bg-color);
-            color: var(--text-color);
+            background-color: var(--bg-textarea);
+            color: var(--color-text);
             resize: vertical;
             min-height: 120px;
-            box-shadow: inset 0 1px 2px var(--textarea-inset-shadow);
-            transition: box-shadow 0.2s;
+            box-shadow: inset 0 1px 2px var(--shadow-textarea-inset);
+            transition: box-shadow 0.2s, background-color 0.2s, border-color 0.2s;
         }
-        
-        textarea:focus {
+
+        .card__textarea:focus {
             outline: none;
-            box-shadow: inset 0 1px 2px var(--textarea-inset-shadow), 0 0 0 3px var(--focus-ring-color);
+            border-color: var(--color-primary);
+            box-shadow: inset 0 1px 2px var(--shadow-textarea-inset), 0 0 0 2px var(--ring-focus);
         }
-        
-        footer {
-            margin-top: 1rem;
-            display: flex;
-            justify-content: center;
-            padding-bottom: 2rem;
-            animation: fadeIn 0.7s ease-out 0.4s forwards;
-            opacity: 0;
-        }
-        
-        button#save {
-            background-color: var(--primary-blue);
-            color: white;
-            font-size: 1rem;
-            font-weight: 500;
+
+        .btn {
+            font-size: var(--font-size-button);
+            font-weight: var(--font-weight-semibold);
             border: none;
-            border-radius: 12px;
+            border-radius: var(--border-radius-medium);
             padding: 14px 32px;
             cursor: pointer;
-            transition: background-color 0.2s, transform 0.15s, box-shadow 0.15s;
+            transition: transform 0.2s cubic-bezier(0.3, 1, 0.4, 1), box-shadow 0.2s ease-out, background-color 0.2s ease-out;
+            overflow: hidden;
         }
-        
-        button#save:hover { background-color: var(--primary-blue-hover); }
-        button#save:active {
-            transform: scale(0.96);
-            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+
+        .btn--primary {
+            background-color: var(--color-primary);
+            color: var(--color-white);
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px -3px rgba(0, 122, 255, 0.5), inset 0 -1px 0 0 rgba(0,0,0,0.2);
         }
-        
-        #status {
+        .btn--primary:hover {
+            transform: scale(1.1);
+            box-shadow: 0 8px 20px -4px rgba(0, 122, 255, 0.6), inset 0 -1px 0 0 rgba(0,0,0,0.2);
+            filter: brightness(1.1);
+        }
+        .btn--primary:active {
+            transform: scale(1.0);
+            box-shadow: 0 1px 4px -1px rgba(0, 122, 255, 0.4), inset 0 2px 4px 0 rgba(0,0,0,0.3);
+            transition-duration: 0.1s;
+        }
+
+        .status-toast {
             position: fixed;
             bottom: 30px;
             left: 50%;
             transform: translate(-50%, 10px);
             padding: 12px 24px;
-            background-color: var(--save-success-bg);
-            color: var(--save-text-color);
-            border-radius: 24px;
-            font-weight: 500;
+            color: var(--color-white);
+            border-radius: var(--border-radius-pill);
+            font-weight: var(--font-weight-semibold);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.2);
             opacity: 0;
             transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
             pointer-events: none;
             z-index: 100;
-            backdrop-filter: blur(10px);
         }
-        
-        #status.show { opacity: 1; transform: translate(-50%, 0); }
-        #status.error { background-color: var(--save-error-bg); }
+        .status-toast.liquid-glass::before {
+            opacity: 1;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.25), transparent);
+        }
+        .status-toast.show { opacity: 1; transform: translate(-50%, 0); }
+        .status-toast.success { background-color: var(--toast-success-bg); }
+        .status-toast.error { background-color: var(--toast-error-bg); }
+
+        .visually-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            padding: 0;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            border: 0;
+        }
     </style>
 </head>
 <body>
-    <main>
-        <header>
-            <h1>LunaTools 설정</h1>
+    <main class="container">
+        <header class="page-header">
+            <h1 class="page-header__title">LunaTools 설정</h1>
         </header>
 
-        <section class="setting-card">
-            <div class="card-header">
-                <div class="icon-container lock-icon">
-                    <span class="icon">🔒</span>
+        <section class="card liquid-glass">
+            <div class="card__header">
+                <div class="card__icon-wrapper card__icon-wrapper--lock">
+                    <span class="card__icon">🔒</span>
                 </div>
-                <h2>사이트 잠금</h2>
+                <h2 class="card__title">사이트 잠금</h2>
             </div>
-            <p>실수로 탭을 닫는 것을 방지할 사이트의 호스트 주소를 입력하세요. (예: example.com)</p>
-            <textarea id="lockedSites" rows="5"></textarea>
+            <p class="card__description">실수로 탭을 닫는 것을 방지할 사이트의 호스트 주소를 입력하세요. (예: example.com)</p>
+            <label for="lockedSites" class="visually-hidden">잠금할 사이트 목록</label>
+            <textarea id="lockedSites" class="card__textarea" rows="10"></textarea>
         </section>
 
-        <section class="setting-card">
-            <div class="card-header">
-                <div class="icon-container block-icon">
-                    <span class="icon">🚫</span>
+        <section class="card liquid-glass">
+            <div class="card__header">
+                <div class="card__icon-wrapper card__icon-wrapper--block">
+                    <span class="card__icon">🚫</span>
                 </div>
-                <h2>사이트 차단</h2>
+                <h2 class="card__title">사이트 차단</h2>
             </div>
-            <p>접속을 차단할 사이트 URL에 포함될 키워드를 입력하세요. (예: example.com/board)</p>
-            <textarea id="blockedSites" rows="5"></textarea>
+            <p class="card__description">접속을 차단할 사이트 URL에 포함될 키워드를 입력하세요. (예: example.com/board)</p>
+            <label for="blockedSites" class="visually-hidden">차단할 사이트 목록</label>
+            <textarea id="blockedSites" class="card__textarea" rows="10"></textarea>
         </section>
 
-        <footer>
-            <button id="save">설정 저장</button>
+        <footer class="page-footer">
+            <button id="save" class="btn btn--primary">설정 저장</button>
         </footer>
     </main>
-    <div id="status"></div>
-    <script src="options.js"></script>
+    <div id="status" class="status-toast liquid-glass"></div>
+
+    <svg width="0" height="0" style="position:absolute; overflow:hidden;" aria-hidden="true">
+        <defs>
+            <filter id="glass-distortion" x="-10%" y="-10%" width="120%" height="120%">
+                <feTurbulence type="fractalNoise" baseFrequency="0.015 0.025" numOctaves="1" seed="2" stitchTiles="stitch" result="noise" />
+                <feDisplacementMap in="SourceGraphic" in2="noise" scale="10" xChannelSelector="R" yChannelSelector="G" />
+            </filter>
+        </defs>
+    </svg>
 </body>
 </html>
