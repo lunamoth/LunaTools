@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LunaTools",
-  "version": "6.2",
+  "version": "6.3",
   "description": "마우스제스처(←→↑↓)/좌우키페이지이동/탭중복제거,정렬(Alt+A),합치기(아이콘클릭)/영상PiP(Ctrl+Shift+P)/선택환율,단위,시각 변환(Alt+Z)/영상회전(Shift+Ctrl+Alt+R)/사이트잠금,차단",
   "permissions": [
     "tabs",
