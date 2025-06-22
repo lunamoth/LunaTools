@@ -1,27 +1,42 @@
 document.addEventListener('DOMContentLoaded', () => {
     'use strict';
 
-    const STORAGE_KEYS = {
-        LOCKED: 'lockedSites',
-        BLOCKED: 'blockedSites'
-    };
-
     const lockedSitesTextarea = document.getElementById('lockedSites');
     const blockedSitesTextarea = document.getElementById('blockedSites');
     const saveButton = document.getElementById('save');
     const statusDiv = document.getElementById('status');
+    const elementsWithHighlight = document.querySelectorAll('.liquid-glass, .btn--primary');
 
-    const getValuesFromTextarea = (textarea) => {
-        return textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const STORAGE_KEYS = {
+        LOCKED: 'lockedSites',
+        BLOCKED: 'blockedSites'
     };
+    const STATUS_VISIBLE_DURATION = 3000;
 
     const showStatus = (message, isError = false) => {
+        if (!statusDiv) return;
         statusDiv.textContent = message;
-        statusDiv.classList.toggle('error', isError);
-        statusDiv.classList.add('show');
+        statusDiv.className = `status-toast liquid-glass ${isError ? 'error' : 'success'} show`;
         setTimeout(() => {
             statusDiv.classList.remove('show');
-        }, 3000);
+        }, STATUS_VISIBLE_DURATION);
+    };
+
+    const initializeDynamicHighlight = () => {
+        elementsWithHighlight.forEach(element => {
+            element.addEventListener('mousemove', (e) => {
+                const rect = element.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                element.style.setProperty('--mouse-x', `${x}px`);
+                element.style.setProperty('--mouse-y', `${y}px`);
+            });
+        });
+    };
+
+    const getValuesFromTextarea = (textarea) => {
+        if (!textarea) return [];
+        return textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
     };
 
     const saveOptions = () => {
@@ -30,31 +45,48 @@ document.addEventListener('DOMContentLoaded', () => {
             [STORAGE_KEYS.BLOCKED]: getValuesFromTextarea(blockedSitesTextarea)
         };
 
-        chrome.storage.sync.set(settingsToSave, () => {
-            if (chrome.runtime.lastError) {
-                showStatus(`❌ 저장 실패: ${chrome.runtime.lastError.message}`, true);
-            } else {
-                showStatus('✓ 설정이 저장되었습니다.');
-            }
-        });
+        if (chrome && chrome.storage && chrome.storage.sync) {
+            chrome.storage.sync.set(settingsToSave, () => {
+                if (chrome.runtime.lastError) {
+                    showStatus(`저장 실패: ${chrome.runtime.lastError.message}`, true);
+                } else {
+                    showStatus('설정이 저장되었습니다.');
+                }
+            });
+        } else {
+            console.error('Chrome Storage API is not available.');
+            showStatus('저장 기능을 사용할 수 없습니다.', true);
+        }
     };
 
     const restoreOptions = () => {
-        const defaultValues = {
-            [STORAGE_KEYS.LOCKED]: [],
-            [STORAGE_KEYS.BLOCKED]: []
-        };
+        const keysToGet = [STORAGE_KEYS.LOCKED, STORAGE_KEYS.BLOCKED];
 
-        chrome.storage.sync.get(defaultValues, (items) => {
-            if (chrome.runtime.lastError) {
-                showStatus('❌ 설정 불러오기 실패!', true);
-            } else {
-                lockedSitesTextarea.value = items[STORAGE_KEYS.LOCKED].join('\n');
-                blockedSitesTextarea.value = items[STORAGE_KEYS.BLOCKED].join('\n');
-            }
-        });
+        if (chrome && chrome.storage && chrome.storage.sync) {
+            chrome.storage.sync.get(keysToGet, (items) => {
+                if (chrome.runtime.lastError) {
+                    showStatus('설정 불러오기 실패!', true);
+                } else {
+                    if (lockedSitesTextarea) {
+                        lockedSitesTextarea.value = (items[STORAGE_KEYS.LOCKED] || []).join('\n');
+                    }
+                    if (blockedSitesTextarea) {
+                        blockedSitesTextarea.value = (items[STORAGE_KEYS.BLOCKED] || []).join('\n');
+                    }
+                }
+            });
+        } else {
+             console.error('Chrome Storage API is not available.');
+        }
     };
 
-    saveButton.addEventListener('click', saveOptions);
-    restoreOptions();
+    const init = () => {
+        if (saveButton) {
+            saveButton.addEventListener('click', saveOptions);
+        }
+        restoreOptions();
+        initializeDynamicHighlight();
+    };
+
+    init();
 });
