@@ -429,6 +429,15 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'openTabsInNewTab' && Array.isArray(message.urls)) {
+    message.urls.forEach(url => {
+        if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
+            chrome.tabs.create({ url: url, active: false });
+        }
+    });
+    return false;
+  }
+    
   if (message?.action === PERFORM_GESTURE_ACTION && message.gesture && sender?.tab?.id != null) {
     handleGestureAction(message.gesture, sender.tab.id);
     return false;
