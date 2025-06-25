@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LunaTools",
-  "version": "7.0",
+  "version": "7.1",
   "description": "마우스제스처(←→↑↓)/좌우키페이지이동/탭중복제거,정렬(Alt+A),합치기(아이콘클릭)/영상PiP(Ctrl+Shift+P)/선택환율,단위,시각변환(Alt+Z)/영상회전(Shift+Ctrl+Alt+R)/사이트잠금,차단/Shift+드래그새탭열기/Ctrl+드래그링크복사/Alt+드래그2초지연열기",
   "permissions": [
     "tabs",

@@ -3,13 +3,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const lockedSitesTextarea = document.getElementById('lockedSites');
     const blockedSitesTextarea = document.getElementById('blockedSites');
+    const disabledDragSitesTextarea = document.getElementById('disabledDragSites');
     const saveButton = document.getElementById('save');
     const statusDiv = document.getElementById('status');
     const elementsWithHighlight = document.querySelectorAll('.liquid-glass, .btn--primary');
 
     const STORAGE_KEYS = {
         LOCKED: 'lockedSites',
-        BLOCKED: 'blockedSites'
+        BLOCKED: 'blockedSites',
+        DISABLED_DRAG: 'disabledDragSites'
     };
     const STATUS_VISIBLE_DURATION = 3000;
 
@@ -42,7 +44,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveOptions = () => {
         const settingsToSave = {
             [STORAGE_KEYS.LOCKED]: getValuesFromTextarea(lockedSitesTextarea),
-            [STORAGE_KEYS.BLOCKED]: getValuesFromTextarea(blockedSitesTextarea)
+            [STORAGE_KEYS.BLOCKED]: getValuesFromTextarea(blockedSitesTextarea),
+            [STORAGE_KEYS.DISABLED_DRAG]: getValuesFromTextarea(disabledDragSitesTextarea)
         };
 
         if (chrome && chrome.storage && chrome.storage.sync) {
@@ -60,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const restoreOptions = () => {
-        const keysToGet = [STORAGE_KEYS.LOCKED, STORAGE_KEYS.BLOCKED];
+        const keysToGet = [STORAGE_KEYS.LOCKED, STORAGE_KEYS.BLOCKED, STORAGE_KEYS.DISABLED_DRAG];
 
         if (chrome && chrome.storage && chrome.storage.sync) {
             chrome.storage.sync.get(keysToGet, (items) => {
@@ -72,6 +75,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     if (blockedSitesTextarea) {
                         blockedSitesTextarea.value = (items[STORAGE_KEYS.BLOCKED] || []).join('\n');
+                    }
+                    if (disabledDragSitesTextarea) {
+                        disabledDragSitesTextarea.value = (items[STORAGE_KEYS.DISABLED_DRAG] || []).join('\n');
                     }
                 }
             });

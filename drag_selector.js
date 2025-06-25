@@ -1,7 +1,5 @@
 (() => {
-    if (typeof window.document === 'undefined' || document.readyState !== 'complete') {
-    }
-    
+    // Define the class at the top level of the IIFE
     class DragSelector {
         static CONFIG = {
             MODIFIERS: {
@@ -112,7 +110,6 @@
                     border-radius: 18px; 
                     box-shadow: 0 8px 32px -8px rgba(0,0,0,0.2); 
                     pointer-events: none; 
-                    /* 'left'와 'top' 속성을 제거하고, transform-origin을 설정하여 scale 애니메이션이 중앙에서 발생하도록 합니다. */
                     transform-origin: center center;
                     animation: DS-PopIn-Overshoot 0.5s cubic-bezier(0.34,1.56,0.64,1), DS-Shimmer 3s linear infinite; 
                 }
@@ -373,7 +370,27 @@
         }
     }
 
-    if (!window.dragSelectorInstance) {
-        window.dragSelectorInstance = new DragSelector();
+    const initializeDragSelector = () => {
+        if (!window.dragSelectorInstance) {
+            window.dragSelectorInstance = new DragSelector();
+        }
+    };
+
+    try {
+        chrome.storage.sync.get({ disabledDragSites: [] }, ({ disabledDragSites }) => {
+            if (chrome.runtime.lastError) {
+                initializeDragSelector(); // Fallback
+                return;
+            }
+
+            const currentHostname = window.location.hostname;
+            const isDragDisabled = disabledDragSites.some(site => site && currentHostname.endsWith(site));
+
+            if (!isDragDisabled) {
+                initializeDragSelector();
+            }
+        });
+    } catch (e) {
+        initializeDragSelector(); // Fallback
     }
 })();

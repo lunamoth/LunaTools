@@ -32,6 +32,7 @@
             --bg-page: #f0f0f5;
             --bg-icon-lock: rgba(0, 122, 255, 0.1);
             --bg-icon-block: rgba(255, 59, 48, 0.1);
+            --bg-icon-drag: rgba(88, 86, 214, 0.1);
             --bg-textarea: rgba(118, 118, 128, 0.12);
             --shadow-textarea-inset: rgba(0, 0, 0, 0.05);
             --ring-focus: rgba(0, 122, 255, 0.3);
@@ -52,6 +53,7 @@
                 --bg-page: #1c1c1e;
                 --bg-icon-lock: rgba(10, 132, 255, 0.2);
                 --bg-icon-block: rgba(255, 69, 58, 0.2);
+                --bg-icon-drag: rgba(94, 92, 230, 0.2);
                 --bg-textarea: rgba(118, 118, 128, 0.24);
                 --shadow-textarea-inset: rgba(0, 0, 0, 0.2);
                 --ring-focus: rgba(10, 132, 255, 0.35);
@@ -107,7 +109,7 @@
             display: flex;
             justify-content: center;
             padding-bottom: var(--spacing-lg);
-            animation: fadeIn 0.7s ease-out 0.4s forwards;
+            animation: fadeIn 0.7s ease-out 0.5s forwards;
             opacity: 0;
         }
 
@@ -167,6 +169,7 @@
 
         main > .card:nth-of-type(1) { animation-delay: 0.2s; }
         main > .card:nth-of-type(2) { animation-delay: 0.3s; }
+        main > .card:nth-of-type(3) { animation-delay: 0.4s; }
 
         .card__header, .card__description, .card__textarea {
             position: relative;
@@ -195,6 +198,7 @@
         .card:hover .card__icon-wrapper { transform: scale(1.15); }
         .card__icon-wrapper--lock { background-color: var(--bg-icon-lock); }
         .card__icon-wrapper--block { background-color: var(--bg-icon-block); }
+        .card__icon-wrapper--drag { background-color: var(--bg-icon-drag); }
         .card__icon { font-size: 1.2rem; }
         .card__title { font-size: var(--font-size-subtitle); font-weight: var(--font-weight-semibold); margin: 0; }
         .card__description {
@@ -306,7 +310,7 @@
             </div>
             <p class="card__description">실수로 탭을 닫는 것을 방지하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)</p>
             <label for="lockedSites" class="visually-hidden">잠금할 사이트 목록</label>
-            <textarea id="lockedSites" class="card__textarea" rows="10"></textarea>
+            <textarea id="lockedSites" class="card__textarea" rows="5"></textarea>
         </section>
 
         <section class="card liquid-glass">
@@ -318,7 +322,19 @@
             </div>
             <p class="card__description">접속을 차단하고 싶은 사이트의 <strong>URL에 포함될 키워드</strong>를 한 줄에 하나씩 입력하세요. (예: example.com/board)</p>
             <label for="blockedSites" class="visually-hidden">차단할 사이트 목록</label>
-            <textarea id="blockedSites" class="card__textarea" rows="10"></textarea>
+            <textarea id="blockedSites" class="card__textarea" rows="5"></textarea>
+        </section>
+
+        <section class="card liquid-glass">
+            <div class="card__header">
+                <div class="card__icon-wrapper card__icon-wrapper--drag">
+                    <span class="card__icon">🖱️</span>
+                </div>
+                <h2 class="card__title">특정 사이트 드래그 기능 비활성화</h2>
+            </div>
+            <p class="card__description">Shift/Ctrl/Alt + 드래그 기능을 비활성화 하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)</p>
+            <label for="disabledDragSites" class="visually-hidden">드래그 기능 비활성화 사이트 목록</label>
+            <textarea id="disabledDragSites" class="card__textarea" rows="5"></textarea>
         </section>
 
         <footer class="page-footer">
