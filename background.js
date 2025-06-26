@@ -2,6 +2,31 @@ const NEW_TAB_URL = "chrome://newtab/";
 const PERFORM_GESTURE_ACTION = 'perform-gesture';
 const FETCH_EXCHANGE_RATE_ACTION = "fetchLunaToolsExchangeRate";
 const API_TIMEOUT_MS_EXCHANGE_RATE = 7000;
+const CONTEXT_MENU_ID_MERGE_TABS = "lunaToolsMergeTabsContextMenu"; // 컨텍스트 메뉴 ID 정의
+
+try {
+  if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  }
+} catch (e) {
+  console.error("Error setting side panel behavior:", e);
+}
+
+// 확장 프로그램 설치 또는 업데이트 시 컨텍스트 메뉴 생성/업데이트
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: CONTEXT_MENU_ID_MERGE_TABS,
+    title: "모든 탭을 하나의 창으로 합치기",
+    contexts: ["action"] // 툴바 아이콘(action)에만 표시
+  });
+});
+
+// 컨텍스트 메뉴 클릭 이벤트 리스너
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === CONTEXT_MENU_ID_MERGE_TABS) {
+    await tabManager.mergeAllWindows();
+  }
+});
 
 
 function isTabAccessError(error) {
@@ -40,6 +65,7 @@ async function handleGestureAction(gesture, tabId) {
         break;
     }
   } catch (error) {
+    // console.error(`Error in handleGestureAction for gesture ${gesture} on tab ${tabId}:`, error);
   }
 }
 
@@ -151,6 +177,7 @@ class TabManager {
         }
       });
     } catch (error) {
+        // console.error("Error initializing TabManager cache:", error);
     }
   }
 
@@ -161,6 +188,7 @@ class TabManager {
       
       await this._sortAndMoveTabsInWindow(currentWindow.id);
     } catch (error) {
+        // console.error("Error in sortTabsInCurrentWindow:", error);
     }
   }
 
@@ -192,6 +220,7 @@ class TabManager {
         if (typeof currentIndex === 'number' && currentIndex !== desiredIndex && tab.id !== undefined) {
           promises.push(
             chrome.tabs.move(tab.id, { index: desiredIndex }).catch(error => {
+                // console.warn(`Failed to move tab ${tab.id} to index ${desiredIndex}:`, error);
             })
           );
         }
@@ -201,6 +230,7 @@ class TabManager {
       if (movePromises.length > 0) await Promise.all(movePromises);
 
     } catch (error) {
+        // console.error(`Error in _sortAndMoveTabsInWindow for window ${windowId}:`, error);
     }
   }
 
@@ -218,7 +248,7 @@ class TabManager {
     const searchCompare = urlA.search.localeCompare(urlB.search);
     if (searchCompare !== 0) return searchCompare;
 
-    return urlA.hash.localeCompare(urlB.hash);
+    return urlA.hash.localeCompare(urlA.hash);
   }
 
   async checkForDuplicateAndFocusExisting(tab) {
@@ -252,6 +282,7 @@ class TabManager {
               if (this._isTabNotFoundError(error)) {
                   this._removeUrlFromCache(tabId, parsedUrl);
               }
+              // else console.warn(`Error checking duplicate tab ${tabId}:`, error);
           }
       }
 
@@ -259,6 +290,7 @@ class TabManager {
         await this._handleVerifiedDuplicate(currentTab, existingDuplicateTabIds[0], parsedUrl);
       }
     } catch (error) {
+        // console.error(`Error in _findAndHandleDuplicates for tab ${currentTab.id} and URL ${parsedUrl.href}:`, error);
     }
   }
 
@@ -270,6 +302,7 @@ class TabManager {
         this._removeUrlFromCache(newlyOpenedTab.id, parsedUrl);
         return; 
       }
+      // console.warn(`Error getting newly opened tab ${newlyOpenedTab.id} in _handleVerifiedDuplicate:`, e);
       return; 
     }
 
@@ -280,6 +313,7 @@ class TabManager {
         this._removeUrlFromCache(existingDuplicateId, parsedUrl);
         return;
       }
+      // console.warn(`Error getting existing duplicate tab ${existingDuplicateId} in _handleVerifiedDuplicate:`, e);
       return;
     }
     
@@ -292,6 +326,7 @@ class TabManager {
     try {
       if (newlyOpenedTab.active) {
         await chrome.tabs.update(existingDuplicateId, { active: true }).catch(err => {
+            // console.warn(`Failed to activate existing duplicate tab ${existingDuplicateId}:`, err);
         });
       }
 
@@ -302,26 +337,36 @@ class TabManager {
       if (this._isTabNotFoundError(error)) {
         this._removeUrlFromCache(newlyOpenedTab.id, parsedUrl);
       } 
+      // else console.error(`Error handling verified duplicate (new: ${newlyOpenedTab.id}, existing: ${existingDuplicateId}):`, error);
     }
   }
 
   async mergeAllWindows() {
+    console.log("mergeAllWindows_Debug: Function called by context menu or other means"); // 디버깅 로그
     try {
       const allWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+      console.log("mergeAllWindows_Debug: allWindows count:", allWindows.length);
       if (allWindows.length <= 1) {
         if (allWindows.length === 1) await this._sortAndMoveTabsInWindow(allWindows[0].id);
+        console.log("mergeAllWindows_Debug: Not enough windows to merge or sort.");
         return;
       }
 
       const targetWindow = await chrome.windows.getCurrent({ windowTypes: ['normal'] });
-      if (!targetWindow?.id) return;
+      if (!targetWindow?.id) {
+          console.log("mergeAllWindows_Debug: No target window found.");
+          return;
+      }
       const targetWindowId = targetWindow.id;
+      console.log("mergeAllWindows_Debug: Target window ID:", targetWindowId);
+
 
       const tabsToMoveDetails = allWindows.flatMap(win =>
         (win.id !== targetWindowId && win.tabs)
           ? win.tabs.filter(tab => !tab.pinned).map(tab => ({ id: tab.id, windowId: win.id }))
           : []
       );
+      console.log("mergeAllWindows_Debug: Tabs to move count:", tabsToMoveDetails.length);
       
       if (tabsToMoveDetails.length > 0) {
           const movePromises = tabsToMoveDetails.map(tabDetail =>
@@ -338,11 +383,13 @@ class TabManager {
                   }
               })
               .catch(err => {
+                // console.warn(`Failed to move tab ${tabDetail.id} to window ${targetWindowId}:`, err);
                 const cachedInfo = this.urlCache.get(tabDetail.id);
                 if(cachedInfo) this._removeUrlFromCache(tabDetail.id, cachedInfo.url);
               })
           );
           await Promise.all(movePromises);
+          console.log("mergeAllWindows_Debug: Tab move promises resolved.");
       }
 
       const remainingWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
@@ -350,19 +397,25 @@ class TabManager {
         if (win.id === targetWindowId) return false;
         return !win.tabs || win.tabs.length === 0 || win.tabs.every(tab => tab.pinned);
       });
+      console.log("mergeAllWindows_Debug: Windows to close count:", windowsToClose.length);
+
 
       if (windowsToClose.length > 0) {
           const closePromises = windowsToClose.map(win =>
             chrome.windows.remove(win.id).catch(err => {
+                // console.warn(`Failed to close window ${win.id}:`, err);
             })
           );
           await Promise.all(closePromises);
+          console.log("mergeAllWindows_Debug: Window close promises resolved.");
       }
 
       await this._focusWindow(targetWindowId);
       await this._sortAndMoveTabsInWindow(targetWindowId);
+      console.log("mergeAllWindows_Debug: Target window focused and tabs sorted.");
 
     } catch (error) {
+        console.error("mergeAllWindows_Debug: CRITICAL ERROR in mergeAllWindows:", error);
     }
   }
   
@@ -370,6 +423,7 @@ class TabManager {
     try {
       await chrome.windows.update(windowId, { focused: true });
     } catch (error) {
+        // console.warn(`Failed to focus window ${windowId}:`, error);
     }
   }
 
@@ -422,10 +476,11 @@ const tabManager = new TabManager();
   await tabManager.initializeCache();
 })();
 
-chrome.commands.onCommand.addListener(async (command) => {
+chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command === "sort-tabs") {
     await tabManager.sortTabsInCurrentWindow();
   }
+  // _execute_action (Alt+L)은 chrome.sidePanel.setPanelBehavior에 의해 처리.
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -477,8 +532,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-chrome.action.onClicked.addListener(async () => {
-  await tabManager.mergeAllWindows();
+// 툴바 아이콘 좌클릭: 사이드 패널 자동 토글 (setPanelBehavior에 의해)
+// 이제 탭 합치기 기능은 컨텍스트 메뉴로 이동했으므로 여기서는 아무 작업도 하지 않거나,
+// 다른 기본 동작을 원한다면 추가할 수 있습니다.
+// 현재는 setPanelBehavior에 의해 사이드 패널만 토글됩니다.
+chrome.action.onClicked.addListener(async (tab) => {
+  // console.log("Toolbar icon clicked. Side panel should toggle via setPanelBehavior.");
+  // 탭 합치기 기능은 contextMenus.onClicked에서 처리합니다.
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
