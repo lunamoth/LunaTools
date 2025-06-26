@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
   "name": "LunaTools",
-  "version": "7.1",
-  "description": "마우스제스처(←→↑↓)/좌우키페이지이동/탭중복제거,정렬(Alt+A),합치기(아이콘클릭)/영상PiP(Ctrl+Shift+P)/선택환율,단위,시각변환(Alt+Z)/영상회전(Shift+Ctrl+Alt+R)/사이트잠금,차단/Shift+드래그새탭열기/Ctrl+드래그링크복사/Alt+드래그2초지연열기",
+  "version": "8.0",
+  "description": "마우스제스처(←→↑↓)/좌우키페이지이동/탭중복제거,정렬(Alt+A),합치기(아이콘우클릭)/영상PiP(Ctrl+Shift+P)/선택환율,단위,시각변환(Alt+Z)/영상회전(Shift+Ctrl+Alt+R)/사이트잠금,차단/Shift+드래그새탭열기/Ctrl+드래그링크복사/Alt+드래그2초지연열기/여러URL열기(Alt+L)",
   "permissions": [
     "tabs",
     "windows",
     "storage",
-    "clipboardWrite"
+    "clipboardWrite",
+    "sidePanel",
+    "contextMenus"
   ],
   "host_permissions": [
     "https://api.frankfurter.app/*"
@@ -25,19 +27,31 @@
     {
       "matches": ["<all_urls>"],
       "js": ["drag_selector.js"],
-      "run_at": "document_idle" 
+      "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "모든 탭을 하나의 창으로 합치기 (LunaTools)"
+    "default_title": "LunaTools (Alt+L: 여러 URL 열기)"
   },
   "options_page": "options.html",
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "commands": {
     "sort-tabs": {
       "suggested_key": {
         "default": "Alt+A"
       },
       "description": "탭을 URL (도메인 및 경로) 순으로 정렬 (LunaTools)"
+    },
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+L",
+        "mac": "Alt+L"
+      }
     }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
   }
 }
