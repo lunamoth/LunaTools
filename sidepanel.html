@@ -158,8 +158,8 @@
             width: 100%;
             min-height: 50px; 
             border-radius: var(--radius-xl);
-            box-shadow: var(--shadow-lg), var(--inset-shadow); /* 내부 그림자 추가 */
-            border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 0.3)); /* 테두리 색상을 약간 더 연하게 조정 */
+            box-shadow: var(--shadow-lg), var(--inset-shadow);
+            border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 0.3));
             position: relative; 
             display: flex;
             flex-direction: column;
@@ -206,7 +206,7 @@
             padding: var(--spacing-lg) var(--spacing-lg) var(--spacing-sm);
             z-index: 10; 
             border-bottom: 1px solid var(--border);
-            box-shadow: var(--inset-shadow); /* 스티키 헤더에도 내부 그림자 적용 */
+            box-shadow: var(--inset-shadow);
         }
         
         .running-wrapper-scrollable-content { padding: var(--spacing-lg); display: flex; flex-direction: column; }
@@ -268,18 +268,74 @@
             padding: var(--spacing-sm) var(--spacing-xxs); flex-wrap: wrap; row-gap: var(--spacing-xs); 
         }
         .option-item + .option-item { border-top: 1px solid var(--border); }
-        .option-item:has(input[type="checkbox"]) { 
-            cursor: pointer; border-radius: var(--radius-xs); 
+        .option-item:has(.switch) { 
+            cursor: pointer; /* <!-- 변경된 부분 --> */
+            border-radius: var(--radius-xs); 
             transition: background-color var(--transition-duration-subtle) var(--transition-timing-ease); 
         }
-        .option-item:has(input[type="checkbox"]):hover { background-color: rgba(var(--bg-control-rgb), 0.3); }
-        .option-item label { font-size: var(--font-size-callout); }
+        .option-item:has(.switch):hover { background-color: rgba(var(--bg-control-rgb), 0.3); }
+        .option-item .option-title { font-size: var(--font-size-callout); }
         .option-item input[type="number"] { 
             width: 60px; padding: var(--spacing-xs); font-size: var(--font-size-callout); 
             border-radius: var(--radius-xs); border: 1px solid var(--border); 
             color: var(--text-primary); background-color: var(--bg-control); text-align: center; 
         }
-        .option-item input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent-color); }
+
+        /* --- Apple-style Toggle Switch --- */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 51px;
+            height: 31px;
+            flex-shrink: 0;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--bg-control);
+            border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2));
+            transition: all var(--transition-duration-base) var(--transition-timing-ease);
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 27px;
+            width: 27px;
+            left: 1px;
+            bottom: 1px;
+            background-color: var(--bg-card-opaque);
+            box-shadow: 0 1px 3px rgba(var(--shadow-color-rgb), 0.2), 0 0 1px rgba(var(--shadow-color-rgb), 0.1);
+            border: 0.5px solid rgba(0,0,0,0.04);
+            transition: all var(--transition-duration-base) var(--transition-timing-spring);
+            border-radius: 50%;
+        }
+
+        .switch input:checked + .slider {
+            background-color: var(--success-color);
+            border-color: transparent;
+        }
+
+        .switch input:focus-visible + .slider {
+            box-shadow: 0 0 0 4px var(--accent-glow);
+        }
+
+        .switch input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+        /* --- END: Apple-style Toggle Switch --- */
 
         #progressStats { 
             font-size: var(--font-size-title1); font-weight: 600; text-align: center; 
@@ -431,7 +487,7 @@
             backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
             -webkit-backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
             padding: var(--spacing-lg); border-radius: var(--radius-lg); 
-            box-shadow: var(--shadow-lg), var(--inset-shadow); /* 모달에도 내부 그림자 적용 */
+            box-shadow: var(--shadow-lg), var(--inset-shadow);
             border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 0.7));
             width: calc(100% - var(--spacing-lg) * 2); max-width: 380px; 
             transform: scale(0.9) translateY(10px); opacity: 0; 
@@ -521,10 +577,31 @@
                     <div class="options-list-wrapper"> 
                         <div class="section-header"><span>⚙️ 실행 옵션</span></div>
                         <ul class="options-list">
-                            <li class="option-item"><label for="intervalInput">실행 간격 (초)</label><input type="number" id="intervalInput" value="2.5" min="0.1" step="0.1"></li>
-                            <li class="option-item"><label for="removeDuplicates">중복 제거</label><input type="checkbox" id="removeDuplicates" checked></li>
-                            <li class="option-item"><label for="focusLock">백그라운드에서 탭 열기</label><input type="checkbox" id="focusLock" checked></li>
-                            <li class="option-item"><label for="delayLoading">탭 로딩 지연 (메모리 절약)</label><input type="checkbox" id="delayLoading"></li>
+                            <li class="option-item">
+                                <label class="option-title">실행 간격 (초)</label>
+                                <input type="number" id="intervalInput" value="2.5" min="0.1" step="0.1">
+                            </li>
+                            <li class="option-item">
+                                <label class="option-title">중복 제거</label>
+                                <label class="switch">
+                                    <input type="checkbox" id="removeDuplicates" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </li>
+                            <li class="option-item">
+                                <label class="option-title">백그라운드에서 탭 열기</label>
+                                <label class="switch">
+                                    <input type="checkbox" id="focusLock" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </li>
+                            <li class="option-item">
+                                <label class="option-title">탭 로딩 지연 (메모리 절약)</label>
+                                <label class="switch">
+                                    <input type="checkbox" id="delayLoading">
+                                    <span class="slider"></span>
+                                </label>
+                            </li>
                         </ul>
                     </div>
                 </div>
