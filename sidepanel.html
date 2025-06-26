@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>여러 URL 열기</title>
+    <style>
+        :root {
+            --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif, 'Pretendard', '나눔바른고딕';
+            --accent-color-rgb: 0, 122, 255;
+            --accent-color: rgb(var(--accent-color-rgb));
+            --accent-color-transparent: rgba(var(--accent-color-rgb), 0.85);
+            --accent-glow: rgba(var(--accent-color-rgb), 0.3);
+            --success-color-rgb: 52, 199, 89;
+            --success-color: rgb(var(--success-color-rgb));
+            --success-color-transparent: rgba(var(--success-color-rgb), 0.85);
+            --success-glow: rgba(var(--success-color-rgb), 0.3);
+            --danger-color-rgb: 255, 59, 48;
+            --danger-color: rgb(var(--danger-color-rgb));
+            --danger-color-transparent: rgba(var(--danger-color-rgb), 0.85);
+            --danger-glow: rgba(var(--danger-color-rgb), 0.3);
+            
+            --font-size-display: 28px;
+            --font-size-headline: 22px;
+            --font-size-title1: 20px;
+            --font-size-title2: 18px;
+            --font-size-body: 17px;
+            --font-size-callout: 16px;
+            --font-size-subheadline: 15px;
+            --font-size-footnote: 13px;
+            --font-size-caption: 12px;
+
+            --radius-xl: 14px;
+            --radius-lg: 20px;
+            --radius-md: 16px;
+            --radius-sm: 12px;
+            --radius-xs: 8px;
+            --radius-xxs: 6px;
+
+            --spacing-xxl: 32px;
+            --spacing-xl: 24px;
+            --spacing-lg: 20px;
+            --spacing-md: 16px;
+            --spacing-sm: 12px;
+            --spacing-xs: 8px;
+            --spacing-xxs: 4px;
+
+            --transition-duration-subtle: 0.2s;
+            --transition-duration-base: 0.3s;
+            --transition-duration-emphasis: 0.4s;
+            --transition-timing-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+            --transition-timing-ease: ease-in-out;
+
+            --bg-body-rgb: 242, 242, 247;
+            --bg-body: rgb(var(--bg-body-rgb));
+            --bg-card-rgb: 255, 255, 255;
+            --bg-card: rgb(var(--bg-card-rgb)); 
+            --bg-card-opaque: rgb(var(--bg-card-rgb));
+            --bg-control-rgb: 230, 230, 235;
+            --bg-control: rgb(var(--bg-control-rgb));
+            
+            --text-primary-rgb: 29, 29, 31;
+            --text-primary: rgb(var(--text-primary-rgb));
+            --text-secondary-rgb: 110, 110, 115;
+            --text-secondary: rgb(var(--text-secondary-rgb));
+            --text-tertiary-rgb: 134, 134, 139;
+            --text-tertiary: rgb(var(--text-tertiary-rgb));
+            
+            --border-rgb: 0, 0, 0;
+            --border-alpha: 0.12;
+            --border: rgba(var(--border-rgb), var(--border-alpha));
+            
+            --shadow-color-rgb: 0, 0, 0;
+            --shadow-sm: 0 2px 4px rgba(var(--shadow-color-rgb), 0.05), 0 1px 2px rgba(var(--shadow-color-rgb), 0.03);
+            --shadow-md: 0 6px 12px -2px rgba(var(--shadow-color-rgb), 0.08), 0 3px 7px -3px rgba(var(--shadow-color-rgb), 0.05);
+            --shadow-lg: 0 12px 24px -4px rgba(var(--shadow-color-rgb), 0.1), 0 8px 16px -4px rgba(var(--shadow-color-rgb), 0.07);
+            --inset-shadow-color-rgb: 0, 0, 0; /* 내부 그림자 색상 (라이트 모드) */
+            --inset-shadow: inset 0 0 0 1px rgba(var(--inset-shadow-color-rgb), 0.05);
+
+
+            --button-disabled-bg-rgb: 233, 236, 239;
+            --button-disabled-bg: rgb(var(--button-disabled-bg-rgb));
+            --button-disabled-text-rgb: 173, 181, 189;
+            --button-disabled-text: rgb(var(--button-disabled-text-rgb));
+            
+            --modal-overlay-bg: rgba(0, 0, 0, 0.5);
+            --blur-intensity: 10px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-body-rgb: 0, 0, 0;
+                --bg-card-rgb: 28, 28, 30;
+                --bg-card: rgb(var(--bg-card-rgb)); 
+                --bg-card-opaque: rgb(var(--bg-card-rgb));
+                --bg-control-rgb: 44, 44, 46;
+
+                --text-primary-rgb: 245, 245, 247;
+                --text-secondary-rgb: 141, 141, 146;
+                --text-tertiary-rgb: 108, 108, 111;
+
+                --border-rgb: 255, 255, 255;
+                --border-alpha: 0.15;
+                
+                --shadow-color-rgb: 0, 0, 0; 
+                --shadow-sm: 0 2px 4px rgba(var(--shadow-color-rgb), 0.2), 0 1px 2px rgba(var(--shadow-color-rgb), 0.15);
+                --shadow-md: 0 6px 12px -2px rgba(var(--shadow-color-rgb), 0.3), 0 3px 7px -3px rgba(var(--shadow-color-rgb), 0.2);
+                --shadow-lg: 0 12px 24px -4px rgba(var(--shadow-color-rgb), 0.4), 0 8px 16px -4px rgba(var(--shadow-color-rgb), 0.3);
+                --inset-shadow-color-rgb: 255, 255, 255; /* 내부 그림자 색상 (다크 모드) */
+                --inset-shadow: inset 0 0 0 1px rgba(var(--inset-shadow-color-rgb), 0.08);
+
+
+                --button-disabled-bg-rgb: 44, 44, 46;
+                --button-disabled-text-rgb: 99, 99, 102;
+                
+                --modal-overlay-bg: rgba(0, 0, 0, 0.7);
+                --blur-intensity: 15px;
+            }
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-family);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            padding: var(--spacing-lg);
+            overflow: hidden; 
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .main-container { 
+            width: 100%; 
+            margin: 0 auto; 
+            display: flex; 
+            flex-direction: column; 
+            gap: var(--spacing-xl);
+            height: calc(100vh - (var(--spacing-lg) * 2)); 
+            overflow: hidden; 
+            background-color: transparent;
+        }
+        .main-container.dragover { 
+            outline: 3px dashed var(--accent-color); 
+            outline-offset: calc(var(--spacing-sm) * -1); 
+            border-radius: var(--radius-lg);
+            background-color: rgba(var(--accent-color-rgb), 0.05);
+        }
+
+        .header { text-align: center; flex-shrink: 0; }
+        .header h1 { font-size: var(--font-size-display); font-weight: 700; letter-spacing: -0.5px; }
+        .header p { font-size: var(--font-size-title1); color: var(--text-secondary); margin-top: var(--spacing-xs); font-weight: 400; }
+
+        .section-card-container { 
+            background-color: var(--bg-card);
+            backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
+            -webkit-backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
+            width: 100%;
+            min-height: 50px; 
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-lg), var(--inset-shadow); /* 내부 그림자 추가 */
+            border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 0.3)); /* 테두리 색상을 약간 더 연하게 조정 */
+            position: relative; 
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1; 
+            overflow: hidden; 
+            transition: background-color var(--transition-duration-base) var(--transition-timing-ease),
+                        box-shadow var(--transition-duration-base) var(--transition-timing-ease);
+        }
+        
+        .input-wrapper, .running-wrapper {
+            width: 100%;
+            display: flex; 
+            flex-direction: column;
+            opacity: 1;
+            transition: opacity var(--transition-duration-emphasis) var(--transition-timing-ease), transform var(--transition-duration-emphasis) var(--transition-timing-ease);
+            padding: var(--spacing-lg);
+            overflow-y: hidden; 
+        }
+        .running-wrapper { display: none; opacity: 0; padding: 0; flex-grow: 1; overflow-y: auto; }
+        
+        .input-wrapper-content {
+            display: flex;
+            flex-direction: column;
+            gap: var(--spacing-lg); 
+            min-height: 0; 
+            overflow-y: hidden; 
+        }
+
+        #input-control-buttons-wrapper {
+            display: flex;
+            gap: var(--spacing-sm);
+            padding-top: var(--spacing-lg); 
+            margin-top: auto; 
+            flex-shrink: 0; 
+        }
+
+        .running-wrapper-sticky-header { 
+            flex-shrink: 0;
+            position: sticky;
+            top: 0;
+            background: var(--bg-card);
+            backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
+            -webkit-backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
+            padding: var(--spacing-lg) var(--spacing-lg) var(--spacing-sm);
+            z-index: 10; 
+            border-bottom: 1px solid var(--border);
+            box-shadow: var(--inset-shadow); /* 스티키 헤더에도 내부 그림자 적용 */
+        }
+        
+        .running-wrapper-scrollable-content { padding: var(--spacing-lg); display: flex; flex-direction: column; }
+
+        .section-header { 
+            display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-sm); 
+            font-size: var(--font-size-title2); font-weight: 600; 
+            padding-bottom: var(--spacing-sm); border-bottom: 1px solid var(--border); 
+            margin-bottom: var(--spacing-sm); color: var(--text-secondary); flex-shrink: 0; 
+        }
+        .textarea-wrapper { display: flex; flex-direction: column; gap: var(--spacing-sm); flex-shrink: 0; }
+        .textarea-container { position: relative; }
+        #clearButton { 
+            position: absolute; top: var(--spacing-sm); right: var(--spacing-sm); 
+            background: rgba(var(--bg-control-rgb), 0.7); backdrop-filter: blur(5px);
+            color: var(--text-secondary); border: 1px solid rgba(var(--border-rgb), var(--border-alpha)); 
+            border-radius: var(--radius-xxs); font-size: var(--font-size-footnote); font-weight: 600; 
+            padding: var(--spacing-xxs) var(--spacing-xs); cursor: pointer; 
+            opacity: 0; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); z-index: 5; 
+        }
+        .textarea-container:focus-within #clearButton, .textarea-container:hover #clearButton { opacity: 1; }
+        #clearButton:hover { background: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.5)); }
+        #urlInput { 
+            width: 100%; 
+            min-height: 280px; 
+            padding: var(--spacing-md); 
+            font-size: var(--font-size-callout); 
+            font-family: var(--font-family); 
+            border-radius: var(--radius-sm); 
+            border: 1px solid var(--border); 
+            color: var(--text-primary); 
+            background-color: var(--bg-control); 
+            resize: vertical; 
+            transition: all var(--transition-duration-subtle) var(--transition-timing-ease); 
+            line-height: 1.6; 
+            overflow-y: auto; 
+        }
+        #urlInput:focus { 
+            outline: none; border-color: var(--accent-color); 
+            box-shadow: 0 0 0 3px var(--accent-glow); 
+            background-color: var(--bg-card-opaque); 
+        }
+        #urlInput:disabled { background-color: rgba(var(--bg-control-rgb), 0.5); cursor: not-allowed; opacity: 0.6; }
+        
+        .editor-actions { display: flex; gap: var(--spacing-xs); justify-content: flex-end; flex-wrap: wrap; flex-shrink: 0;}
+        .editor-actions button { 
+            background: transparent; border: 1px solid var(--border); 
+            border-radius: var(--radius-xxs); color: var(--text-secondary); 
+            font-size: var(--font-size-footnote); font-weight: 500; padding: var(--spacing-xxs) var(--spacing-xs); 
+            cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); 
+        }
+        .editor-actions button:hover:not(:disabled) { background-color: rgba(var(--bg-control-rgb), 0.5); color: var(--text-primary); }
+        .editor-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .options-list-wrapper { flex-shrink: 0; }
+        .options-list { list-style: none; } 
+        .option-item { 
+            display: flex; justify-content: space-between; align-items: center; 
+            padding: var(--spacing-sm) var(--spacing-xxs); flex-wrap: wrap; row-gap: var(--spacing-xs); 
+        }
+        .option-item + .option-item { border-top: 1px solid var(--border); }
+        .option-item:has(input[type="checkbox"]) { 
+            cursor: pointer; border-radius: var(--radius-xs); 
+            transition: background-color var(--transition-duration-subtle) var(--transition-timing-ease); 
+        }
+        .option-item:has(input[type="checkbox"]):hover { background-color: rgba(var(--bg-control-rgb), 0.3); }
+        .option-item label { font-size: var(--font-size-callout); }
+        .option-item input[type="number"] { 
+            width: 60px; padding: var(--spacing-xs); font-size: var(--font-size-callout); 
+            border-radius: var(--radius-xs); border: 1px solid var(--border); 
+            color: var(--text-primary); background-color: var(--bg-control); text-align: center; 
+        }
+        .option-item input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent-color); }
+
+        #progressStats { 
+            font-size: var(--font-size-title1); font-weight: 600; text-align: center; 
+            color: var(--text-secondary); padding-top: var(--spacing-xs); flex-shrink: 0; 
+        }
+        #progressStats.error { color: var(--danger-color); }
+        #progressStats.complete { color: var(--success-color); }
+        #progressBar { 
+            width: 100%; height: 8px; border: none; border-radius: 4px; overflow: hidden; 
+            transition: opacity var(--transition-duration-subtle) var(--transition-timing-ease); 
+            appearance: none; margin-top: var(--spacing-sm); flex-shrink: 0; 
+        }
+        #progressBar::-webkit-progress-bar { background-color: var(--border); }
+        #progressBar::-webkit-progress-value { 
+            background-color: var(--accent-color); 
+            transition: width var(--transition-duration-emphasis) var(--transition-timing-spring); 
+        }
+        
+        #running-control-buttons-wrapper { 
+            display: flex; gap: var(--spacing-sm);
+            padding-top: var(--spacing-md); flex-shrink: 0;
+        }
+
+        #urlQueue { 
+            font-size: var(--font-size-callout); color: var(--text-tertiary); 
+            line-height: 1.7; word-break: break-all; 
+            border-radius: var(--radius-md); padding: var(--spacing-sm); 
+            border: 1px solid var(--border); 
+            display: flex; flex-direction: column; gap: var(--spacing-xs); 
+            margin-top: 0; background-color: rgba(var(--bg-control-rgb), 0.2);
+        }
+        #urlQueue span { 
+            padding: var(--spacing-xs); border-radius: var(--radius-xs); 
+            transition: all var(--transition-duration-emphasis) var(--transition-timing-spring); 
+        }
+        #urlQueue span.processing { 
+            background-color: var(--accent-glow); color: var(--text-primary); 
+            font-weight: 600; box-shadow: var(--shadow-sm);
+        }
+        #urlQueue span.removing { opacity: 0; max-height: 0; margin: 0; padding-top: 0; padding-bottom: 0; transform: scale(0.9); }
+        #urlQueue span.error { color: var(--danger-color); text-decoration: line-through; opacity: 0.6; }
+
+        #startRunButton, #pauseResumeButton, #stopProcessButton {
+            padding: var(--spacing-md) var(--spacing-xl); 
+            font-size: var(--font-size-title2); 
+            font-weight: 600; 
+            color: white;
+            border: none; 
+            border-radius: var(--radius-sm); 
+            cursor: pointer;
+            transition: all var(--transition-duration-base) var(--transition-timing-spring);
+            box-shadow: 0 1px 2px rgba(var(--shadow-color-rgb), 0.1), 
+                        inset 0 1px 0px rgba(255,255,255,0.1);
+            text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+            -webkit-backdrop-filter: blur(3px); 
+            backdrop-filter: blur(3px);
+        }
+        
+        #startRunButton, #pauseResumeButton {
+            flex-grow: 1;
+            background-color: var(--accent-color-transparent);
+        }
+
+        #startRunButton:hover, #pauseResumeButton:hover { 
+            background-color: rgba(var(--accent-color-rgb), 0.95);
+            box-shadow: 0 3px 8px -1px rgba(var(--accent-color-rgb), 0.4), 
+                        inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm);
+            transform: translateY(-1px);
+        }
+
+        #startRunButton.success, #pauseResumeButton.success {
+            background-color: var(--success-color-transparent);
+        }
+        #startRunButton.success:hover, #pauseResumeButton.success:hover {
+            background-color: rgba(var(--success-color-rgb), 0.95);
+            box-shadow: 0 3px 8px -1px rgba(var(--success-color-rgb), 0.4),
+                        inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm);
+        }
+
+        #stopProcessButton {
+            background-color: var(--danger-color-transparent);
+            flex-shrink: 0;
+            font-size: var(--font-size-body);
+        }
+        #stopProcessButton:hover {
+            background-color: rgba(var(--danger-color-rgb), 0.95);
+            box-shadow: 0 3px 8px -1px rgba(var(--danger-color-rgb), 0.4),
+                        inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm);
+            transform: translateY(-1px);
+        }
+
+        #startRunButton:active, #pauseResumeButton:active, #stopProcessButton:active {
+            transform: scale(0.97) translateY(0px);
+            filter: brightness(0.95);
+        }
+        #startRunButton:disabled, #pauseResumeButton:disabled, #stopProcessButton:disabled { 
+            background: var(--button-disabled-bg); 
+            color: var(--button-disabled-text); 
+            cursor: not-allowed; transform: none; filter: none; box-shadow: none; text-shadow: none;
+            -webkit-backdrop-filter: none;
+            backdrop-filter: none;
+        }
+
+
+        .list-management { display: flex; flex-direction: column; gap: var(--spacing-md); flex-shrink: 0; }
+        .list-controls-main { display: flex; gap: var(--spacing-xs); flex-wrap: wrap; align-items: center;}
+        .list-controls-main select { 
+            flex-grow: 1; padding: var(--spacing-xs) var(--spacing-sm); font-size: var(--font-size-callout); 
+            border-radius: var(--radius-xs); border: 1px solid var(--border); 
+            color: var(--text-primary); background-color: var(--bg-control); min-width: 150px; 
+        }
+        .list-controls-main button { 
+            padding: 0 var(--spacing-md); font-size: var(--font-size-title1); font-weight: 500; height: 36px; line-height: 34px; 
+            border-radius: var(--radius-xs); border: 1px solid var(--border); 
+            background-color: var(--bg-control); color: var(--text-secondary); 
+            cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); flex-shrink: 0; 
+        }
+        #newListButton { font-size: var(--font-size-callout); padding: 0 var(--spacing-sm); }
+        .list-controls-main button:not(:disabled):hover { background-color: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2)); color: var(--text-primary); }
+        .list-controls-main button:disabled { color: var(--button-disabled-text); background: var(--bg-control); cursor: not-allowed; }
+        
+        .list-controls-secondary { display: flex; gap: var(--spacing-xs); flex-wrap: wrap; flex-shrink: 0; }
+        .list-controls-secondary button { 
+            flex-grow: 1; padding: var(--spacing-xs) var(--spacing-sm); font-size: var(--font-size-footnote); font-weight: 500; 
+            border-radius: var(--radius-xs); border: 1px solid var(--border); 
+            background-color: var(--bg-control); color: var(--text-secondary); 
+            cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); 
+        }
+        .list-controls-secondary button:not(:disabled):hover { background-color: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2)); color: var(--text-primary); }
+        .list-controls-secondary button:disabled { color: var(--button-disabled-text); background: var(--bg-control); cursor: not-allowed; }
+        
+        .current-list-indicator { 
+            font-size: var(--font-size-footnote); color: var(--text-secondary); text-align: left; 
+            padding: 0 var(--spacing-xs); margin-bottom: var(--spacing-xs); display: none; flex-shrink: 0; font-weight: 500;
+        }
+
+        .modal-overlay { 
+            position: fixed; inset: 0; z-index: 1000; background-color: var(--modal-overlay-bg); 
+            display: flex; justify-content: center; align-items: center; 
+            opacity: 0; visibility: hidden; 
+            transition: opacity var(--transition-duration-base) var(--transition-timing-ease), visibility 0s var(--transition-duration-base) var(--transition-timing-ease); 
+        }
+        .modal-overlay.visible { 
+            opacity: 1; visibility: visible; 
+            transition-delay: 0s;
+        }
+        .modal-content { 
+            background-color: var(--bg-card); 
+            backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
+            -webkit-backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
+            padding: var(--spacing-lg); border-radius: var(--radius-lg); 
+            box-shadow: var(--shadow-lg), var(--inset-shadow); /* 모달에도 내부 그림자 적용 */
+            border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 0.7));
+            width: calc(100% - var(--spacing-lg) * 2); max-width: 380px; 
+            transform: scale(0.9) translateY(10px); opacity: 0; 
+            transition: transform var(--transition-duration-base) var(--transition-timing-spring), opacity var(--transition-duration-base) var(--transition-timing-ease); 
+        }
+        .modal-overlay.visible .modal-content { transform: scale(1) translateY(0); opacity: 1; }
+        .modal-header { font-size: var(--font-size-title1); font-weight: 600; margin-bottom: var(--spacing-sm); }
+        .modal-body { font-size: var(--font-size-callout); color: var(--text-secondary); margin-bottom: var(--spacing-lg); line-height: 1.5; }
+        .modal-body input { 
+            width: 100%; padding: var(--spacing-sm); font-size: var(--font-size-callout); 
+            border-radius: var(--radius-xs); border: 1px solid var(--border); 
+            background-color: var(--bg-control); color: var(--text-primary); 
+        }
+        .modal-body input:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 3px var(--accent-glow); }
+        .modal-footer { display: flex; gap: var(--spacing-sm); justify-content: flex-end; }
+        .modal-footer button { 
+            padding: var(--spacing-xs) var(--spacing-md); font-size: var(--font-size-callout); font-weight: 600; 
+            border: none; border-radius: var(--radius-xs); cursor: pointer; 
+            transition: filter var(--transition-duration-subtle) var(--transition-timing-ease), transform var(--transition-duration-subtle) var(--transition-timing-spring); 
+        }
+        .modal-footer button:hover { filter: brightness(1.1); }
+        .modal-footer button:active { transform: scale(0.96); }
+        #modal-cancel-btn { background-color: var(--bg-control); color: var(--text-secondary); }
+        #modal-confirm-btn { background-color: var(--accent-color); color: white; }
+        #modal-confirm-btn.danger { background-color: var(--danger-color); }
+
+        .toast-container { 
+            position: fixed; bottom: var(--spacing-lg); right: var(--spacing-lg); z-index: 1100; 
+            display: flex; flex-direction: column; gap: var(--spacing-sm); 
+        }
+        .toast { 
+            padding: var(--spacing-sm) var(--spacing-md); border-radius: var(--radius-sm); 
+            color: white; font-weight: 600; font-size: var(--font-size-subheadline); 
+            box-shadow: var(--shadow-md); 
+            opacity: 0; transform: translateY(20px) scale(0.95); 
+            transition: all var(--transition-duration-emphasis) var(--transition-timing-spring); 
+            backdrop-filter: blur(5px) saturate(150%);
+            -webkit-backdrop-filter: blur(5px) saturate(150%);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .toast.show { opacity: 1; transform: translateY(0) scale(1); }
+        .toast.success { background-color: rgba(var(--success-color-rgb), 0.85); }
+        .toast.error { background-color: rgba(var(--danger-color-rgb), 0.85); }
+        .toast.info { background-color: rgba(var(--accent-color-rgb), 0.85); }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <header class="header">
+            <h1>⚡️ 여러 URL 열기</h1>
+            <p>목록을 붙여넣고 한번에 실행하세요.</p>
+        </header>
+
+        <div class="section-card-container" data-view-state="input">
+            <div class="input-wrapper">
+                <div class="input-wrapper-content">
+                    <div class="list-management">
+                        <div class="section-header"><span>🗂️ 목록 관리</span></div>
+                        <div class="list-controls-main">
+                            <button type="button" id="newListButton" title="새 목록 작성 시작" aria-label="새 목록 작성 시작">➕ 새 목록</button>
+                            <select id="savedListsDropdown"></select>
+                            <button type="button" id="saveListButton" title="새 목록으로 저장 / 현재 목록 업데이트" aria-label="새 목록으로 저장 / 현재 목록 업데이트">💾</button>
+                            <button type="button" id="renameListButton" title="선택한 목록 이름 변경" aria-label="선택한 목록 이름 변경">✏️</button>
+                            <button type="button" id="deleteListButton" title="선택한 목록 삭제" aria-label="선택한 목록 삭제">🗑️</button>
+                        </div>
+                         <div class="list-controls-secondary">
+                            <button type="button" id="getCurrentTabsButton" title="현재 열린 탭 목록 가져오기">현재 탭 가져오기</button>
+                            <button type="button" id="importButton" title="파일에서 목록 가져오기">가져오기 (TXT, JSON)</button>
+                            <button type="button" id="exportButton" title="모든 목록을 파일로 내보내기">내보내기 (JSON) </button>
+                            <input type="file" id="importFileInput" accept=".json,.txt,text/plain" style="display: none;">
+                        </div>
+                    </div>
+
+                    <div class="textarea-wrapper">
+                        <p id="currentListIndicator" class="current-list-indicator"></p>
+                        <div class="textarea-container">
+                            <textarea id="urlInput" placeholder="한 줄에 하나씩 URL을 입력하세요."></textarea>
+                            <button id="clearButton" type="button" title="입력 내용 모두 지우기">지우기</button>
+                        </div>
+                        <div class="editor-actions">
+                            <button type="button" id="sortUrlsButton" title="목록 정렬 (A-Z)">정렬 (A-Z)</button>
+                            <button type="button" id="deduplicateUrlsButton" title="목록에서 중복 URL 제거">중복 제거</button>
+                            <button type="button" id="cancelEditButton" title="편집 내용 취소" aria-label="편집 내용 취소">↩️ 취소</button>
+                        </div>
+                    </div>
+
+                    <div class="options-list-wrapper"> 
+                        <div class="section-header"><span>⚙️ 실행 옵션</span></div>
+                        <ul class="options-list">
+                            <li class="option-item"><label for="intervalInput">실행 간격 (초)</label><input type="number" id="intervalInput" value="2.5" min="0.1" step="0.1"></li>
+                            <li class="option-item"><label for="removeDuplicates">중복 제거</label><input type="checkbox" id="removeDuplicates" checked></li>
+                            <li class="option-item"><label for="focusLock">백그라운드에서 탭 열기</label><input type="checkbox" id="focusLock" checked></li>
+                            <li class="option-item"><label for="delayLoading">탭 로딩 지연 (메모리 절약)</label><input type="checkbox" id="delayLoading"></li>
+                        </ul>
+                    </div>
+                </div>
+                <div id="input-control-buttons-wrapper">
+                    <button id="startRunButton" type="button"></button>
+                </div>
+            </div>
+
+            <div class="running-wrapper">
+                <div class="running-wrapper-sticky-header">
+                    <div id="progressStats" role="status" aria-live="polite"></div>
+                    <progress id="progressBar" value="0" max="100"></progress>
+                    <div id="running-control-buttons-wrapper">
+                        <button id="pauseResumeButton" type="button"></button>
+                        <button id="stopProcessButton" type="button" title="현재 작업 즉시 종료">❌ 종료</button>
+                    </div>
+                </div>
+                <div class="running-wrapper-scrollable-content">
+                    <div id="urlQueue"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-overlay" class="modal-overlay">
+        <div class="modal-content">
+            <div id="modal-header" class="modal-header"></div>
+            <div id="modal-body" class="modal-body"></div>
+            <div class="modal-footer">
+                <button type="button" id="modal-cancel-btn">취소</button>
+                <button type="button" id="modal-confirm-btn">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="sidepanel.js"></script>
+</body>
+</html>
