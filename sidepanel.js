@@ -1185,7 +1185,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (state.isPaused) {
             progressMessage = `${listDisplayName} | ${CONFIG.TEXT.PAUSED_BY_USER}`;
         } else {
-            progressMessage = `${listDisplayName} | ${CONFIG.TEXT.PROGRESS(opened, total, remaining)}`;
+            const percentage = total > 0 ? Math.round((opened / total) * 100) : 0;
+            progressMessage = `${listDisplayName} | ⏳ 총 ${total}개 | ${opened}개 열림 | ${remaining}개 남음 | ${percentage}% 진행`;
         }
         UI.progressStats.textContent = progressMessage;
         UI.progressStats.className = '';
