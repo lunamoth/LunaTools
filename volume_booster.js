@@ -1,7 +1,7 @@
-(function() { 
+(function() {
 
     if (window.self !== window.top) {
-        return; 
+        return;
     }
 
     'use strict';
@@ -49,7 +49,10 @@
             document.body.appendChild(this.#indicatorElement);
 
             this.#injectStyles();
-            this.#indicatorElement.addEventListener('click', this.#toggleCallback);
+            this.#indicatorElement.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.#toggleCallback();
+            });
             this.update(false, 1);
         }
 
@@ -115,8 +118,16 @@
     class AudioProcessor {
         #audioContext = null;
         #sourceNodeMap = new Map();
+        #userHasInteracted = false; 
+
+        setUserInteracted() {
+            this.#userHasInteracted = true;
+        }
 
         async #getOrCreateAudioContext() {
+            if (!this.#userHasInteracted && !this.#audioContext) {
+                return null;
+            }
             if (this.#audioContext) return this.#audioContext;
             try {
                 this.#audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -150,14 +161,14 @@
 
         async updateAllVolumes(isActivated, multiplier) {
             const context = await this.ensureContextIsRunning();
-            if (!context) return;
+            if (!context) return; 
             const volume = isActivated ? multiplier : 1.0;
             this.#applyVolume(this.#findAllMediaElements(document.documentElement), volume, context);
         }
 
         async processNewNodes(nodeList, isActivated, multiplier) {
             const context = await this.ensureContextIsRunning();
-            if (!context || !nodeList?.length) return;
+            if (!context || !nodeList?.length) return; 
 
             const newMediaElements = this.#findMediaInNodes(nodeList);
             if (newMediaElements.length === 0) return;
@@ -238,8 +249,13 @@
         }
 
         async #toggleActivation() {
+            this.#audioProcessor.setUserInteracted();
+            
             const context = await this.#audioProcessor.ensureContextIsRunning();
-            if (!context) return;
+            if (!context) {
+                const newContext = await this.#audioProcessor.ensureContextIsRunning();
+                if(!newContext) return;
+            }
 
             this.#isActivated = !this.#isActivated;
             const multiplier = CONFIG.VOLUME_MULTIPLIER;
