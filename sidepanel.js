@@ -36,6 +36,7 @@ document.addEventListener('DOMContentLoaded', function() {
             NEW_LIST_BUTTON: '#newListButton',
             SAVE_LIST_BUTTON: '#saveListButton', DELETE_LIST_BUTTON: '#deleteListButton',
             RENAME_LIST_BUTTON: '#renameListButton', SAVED_LISTS_DROPDOWN: '#savedListsDropdown',
+            GET_ALL_TABS_BUTTON: '#getAllTabsButton',
             GET_CURRENT_TABS_BUTTON: '#getCurrentTabsButton', IMPORT_BUTTON: '#importButton', EXPORT_BUTTON: '#exportButton', IMPORT_FILE_INPUT: '#importFileInput',
             CURRENT_LIST_INDICATOR: '#currentListIndicator',
             MODAL_OVERLAY: '#modal-overlay', MODAL_HEADER: '#modal-header', MODAL_BODY: '#modal-body',
@@ -304,7 +305,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if(UI.optionsList) UI.optionsList.querySelectorAll('input, button').forEach(el => el.disabled = !isEnabled);
 
         [UI.savedListsDropdown, UI.importButton, UI.exportButton, UI.clearButton,
-         UI.sortUrlsButton, UI.deduplicateUrlsButton, UI.getCurrentTabsButton,
+         UI.sortUrlsButton, UI.deduplicateUrlsButton, UI.getAllTabsButton, UI.getCurrentTabsButton,
          UI.cancelEditButton, UI.newListButton].forEach(el => {
             if (el) el.disabled = !isEnabled;
         });
@@ -789,9 +790,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     };
 
-    const fetchAndApplyTabs = async (mode) => {
+    const fetchAndApplyTabs = async (mode, queryOptions) => {
         try {
-            const tabs = await chrome.tabs.query({ currentWindow: true });
+            const tabs = await chrome.tabs.query(queryOptions);
             let newUrls = tabs
                 .map(tab => tab.url)
                 .filter(url => url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://')));
@@ -824,24 +825,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     };
 
-    const handleGetCurrentTabs = async () => {
-        if (UI.urlInput && UI.urlInput.value.trim() === '' && !state.loadedListName && !state.isDirty) {
-            fetchAndApplyTabs('overwrite');
-            return;
-        }
+    const createTabFetchHandler = (queryOptions, modalTitle) => {
+        return async () => {
+            if (UI.urlInput && UI.urlInput.value.trim() === '' && !state.loadedListName && !state.isDirty) {
+                fetchAndApplyTabs('overwrite', queryOptions);
+                return;
+            }
 
-        const choice = await Modal.show({
-            title: '현재 탭 가져오기',
-            body: '기존 목록을 지우고 새로 가져오거나, 현재 목록의 끝에 추가할 수 있습니다.',
-            buttons: [
-                { text: '취소', value: 'cancel', isDefaultCancel: true },
-                { text: '추가하기', value: 'append' },
-                { text: '덮어쓰기', value: 'overwrite', isDanger: true }
-            ]
-        });
+            const choice = await Modal.show({
+                title: modalTitle,
+                body: '기존 목록을 지우고 새로 가져오거나, 현재 목록의 끝에 추가할 수 있습니다.',
+                buttons: [
+                    { text: '취소', value: 'cancel', isDefaultCancel: true },
+                    { text: '추가하기', value: 'append' },
+                    { text: '덮어쓰기', value: 'overwrite', isDanger: true }
+                ]
+            });
 
-        if (choice === 'append') fetchAndApplyTabs('append');
-        else if (choice === 'overwrite') fetchAndApplyTabs('overwrite');
+            if (choice === 'append') fetchAndApplyTabs('append', queryOptions);
+            else if (choice === 'overwrite') fetchAndApplyTabs('overwrite', queryOptions);
+        };
     };
 
     const handleExportLists = async () => {
@@ -1217,6 +1220,9 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     async function initializeApp() {
+        const handleGetAllTabs = createTabFetchHandler({}, '모든 창의 탭 가져오기');
+        const handleGetCurrentTabs = createTabFetchHandler({ currentWindow: true }, '현재 창의 탭 가져오기');
+
         if (UI.startRunButton) UI.startRunButton.addEventListener('click', handleStartRunButtonClick);
         if (UI.pauseResumeButton) UI.pauseResumeButton.addEventListener('click', togglePause);
         if (UI.stopProcessButton) {
@@ -1339,6 +1345,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
+        if (UI.getAllTabsButton) UI.getAllTabsButton.addEventListener('click', handleGetAllTabs);
         if (UI.getCurrentTabsButton) UI.getCurrentTabsButton.addEventListener('click', handleGetCurrentTabs);
         if (UI.exportButton) UI.exportButton.addEventListener('click', handleExportLists);
         if (UI.importButton) UI.importButton.addEventListener('click', () => { if (UI.importFileInput) UI.importFileInput.click(); });
