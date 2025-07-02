@@ -1,14 +1,15 @@
-if (window.self !== window.top) {
-    return;
-}
+(function() { 
 
-(function() {
+    if (window.self !== window.top) {
+        return; 
+    }
+
     'use strict';
 
     const CONFIG = {
-        VOLUME_MULTIPLIER: 3.0,  // 볼륨 증폭 배율 (예: 3.0 = 300%)
-        ACTIVATION_KEY: 'v',     // 활성화 단축키 (Alt + Key)
-        DEBOUNCE_DELAY: 200,     // 새 미디어 요소 감지 지연 시간 (ms)
+        VOLUME_MULTIPLIER: 3.0,
+        ACTIVATION_KEY: 'v',
+        DEBOUNCE_DELAY: 200,
         UI: {
             INDICATOR_ID: 'sound-booster-indicator',
             VISIBLE_CLASS: 'sbi-visible',
