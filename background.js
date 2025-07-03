@@ -4,6 +4,28 @@ const FETCH_EXCHANGE_RATE_ACTION = "fetchLunaToolsExchangeRate";
 const API_TIMEOUT_MS_EXCHANGE_RATE = 7000;
 const CONTEXT_MENU_ID_MERGE_TABS = "lunaToolsMergeTabsContextMenu";
 
+async function updateTabCountBadge() {
+  try {
+    const allTabs = await chrome.tabs.query({});
+    const tabCount = allTabs.length.toString();
+
+    await chrome.action.setBadgeText({
+      text: tabCount
+    });
+
+    await chrome.action.setBadgeBackgroundColor({
+      color: '#FFCE00'
+    });
+    await chrome.action.setBadgeTextColor({
+      color: '#000000'
+    });
+
+  } catch (error) {
+    console.error("LunaTools: 탭 개수 배지 업데이트 중 오류 발생.", error);
+    await chrome.action.setBadgeText({ text: '' });
+  }
+}
+
 try {
   if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -18,6 +40,7 @@ chrome.runtime.onInstalled.addListener(() => {
     title: "모든 탭을 하나의 창으로 합치기",
     contexts: ["action"]
   });
+  updateTabCountBadge();
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -238,7 +261,7 @@ class TabManager {
     const pathCompare = urlA.pathname.localeCompare(urlB.pathname);
     if (pathCompare !== 0) return pathCompare;
     
-    const searchCompare = urlA.search.localeCompare(urlB.search);
+    const searchCompare = urlA.search.localeCompare(urlA.search);
     if (searchCompare !== 0) return searchCompare;
 
     return urlA.hash.localeCompare(urlA.hash);
@@ -458,6 +481,7 @@ const tabManager = new TabManager();
 
 (async () => {
   await tabManager.initializeCache();
+  updateTabCountBadge();
 })();
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
@@ -519,6 +543,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
+  updateTabCountBadge();
   if (!tabManager._isValidTabForProcessing(tab)) return;
   
   const urlString = tabManager._getTabUrlString(tab);
@@ -551,6 +576,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  updateTabCountBadge();
   tabManager.handleTabRemoved(tabId, removeInfo);
 });
 
