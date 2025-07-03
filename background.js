@@ -14,7 +14,7 @@ async function updateTabCountBadge() {
     });
 
     await chrome.action.setBadgeBackgroundColor({
-      color: '#FFCE00'
+      color: '#FFCB00'
     });
     await chrome.action.setBadgeTextColor({
       color: '#000000'
