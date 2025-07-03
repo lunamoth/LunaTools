@@ -261,7 +261,7 @@ class TabManager {
     const pathCompare = urlA.pathname.localeCompare(urlB.pathname);
     if (pathCompare !== 0) return pathCompare;
     
-    const searchCompare = urlA.search.localeCompare(urlB.search);
+    const searchCompare = urlA.search.localeCompare(urlA.search);
     if (searchCompare !== 0) return searchCompare;
 
     return urlA.hash.localeCompare(urlA.hash);
