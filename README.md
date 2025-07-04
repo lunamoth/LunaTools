@@ -38,7 +38,7 @@
 <br/><br>
 
 ## 설치 방법
- 1. 깃허브 https://github.com/lunamoth/LunaTools/ 에서 릴리스에서 최신 버전 다운로드 받아서 압축을 해제합니다.
+ 1. LunaTools 깃허브 저장소 https://github.com/lunamoth/LunaTools/ 릴리스에서 최신 버전 다운로드 받아서 압축을 해제합니다.
  2. 해당 LunaTools 폴더를 구글 크롬 확장 프로그램 설정으로 드래그앤드롭 합니다.
  3. 끝 (참고로 아이콘은 없습니다)
 
