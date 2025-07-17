@@ -7,18 +7,27 @@ const CONTEXT_MENU_ID_MERGE_TABS = "lunaToolsMergeTabsContextMenu";
 async function updateTabCountBadge() {
   try {
     const allTabs = await chrome.tabs.query({});
-    const tabCount = allTabs.length.toString();
+    const tabCount = allTabs.length;
 
     await chrome.action.setBadgeText({
-      text: tabCount
+      text: tabCount.toString()
     });
 
-    await chrome.action.setBadgeBackgroundColor({
-      color: '#FFCB00'
-    });
-    await chrome.action.setBadgeTextColor({
-      color: '#000000'
-    });
+    if (tabCount >= 200) {
+      await chrome.action.setBadgeBackgroundColor({
+        color: '#EB4D3D'
+      });
+      await chrome.action.setBadgeTextColor({
+        color: '#FFFFFF'
+      });
+    } else {
+      await chrome.action.setBadgeBackgroundColor({
+        color: '#FFCB00'
+      });
+      await chrome.action.setBadgeTextColor({
+        color: '#000000'
+      });
+    }
 
   } catch (error) {
     console.error("LunaTools: 탭 개수 배지 업데이트 중 오류 발생.", error);
