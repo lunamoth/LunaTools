@@ -77,12 +77,7 @@ async function handleGestureAction(gesture, tabId) {
   try {
     switch (gesture) {
       case 'U':
-        const currentTab = await chrome.tabs.get(tabId).catch(() => null);
-        await chrome.tabs.create({
-          index: currentTab ? currentTab.index + 1 : undefined,
-          openerTabId: tabId,
-          active: true
-        });
+        await chrome.tabs.reload(tabId, { bypassCache: true });
         break;
       case 'D':
         await chrome.tabs.remove(tabId);
