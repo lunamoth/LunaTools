@@ -21,7 +21,7 @@
 
       if (lockedSites.length > 0) {
         const currentHostname = window.location.hostname;
-        const isLocked = lockedSites.some(site => site && currentHostname.endsWith(site));
+        const isLocked = lockedSites.some(site => site && (currentHostname === site || currentHostname.endsWith('.' + site)));
 
         if (isLocked) {
           const preventUnload = (event) => {

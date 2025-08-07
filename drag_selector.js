@@ -383,7 +383,7 @@
             }
 
             const currentHostname = window.location.hostname;
-            const isDragDisabled = disabledDragSites.some(site => site && currentHostname.endsWith(site));
+            const isDragDisabled = disabledDragSites.some(site => site && (currentHostname === site || currentHostname.endsWith('.' + site)));
 
             if (!isDragDisabled) {
                 initializeDragSelector();
