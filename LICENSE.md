@@ -1,38 +1,30 @@
-# 사용한 오픈소스 정보 및 라이선스
+# LunaTools License
 
-이 프로젝트는 아래에 명시된 오픈소스 덕분에 만들어질 수 있었습니다. 멋진 서비스와 폰트를 공개해주신 개발자분들의 노고에 깊은 감사를 드립니다.
+The source code for LunaTools is released under the MIT License.
 
-아울러 PiP 기능 개선에 PIP screen for html5 video 확장 프로그램 (https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg) 소스 코드 참고했습니다. 개발자 keisokoo님에게 연락드려서 소스 코드 참고 허락 받았습니다. 허락 감사드립니다.
+Copyright (c) 2025 lunamoth. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ---
+
+### 감사의 말 (Acknowledgements)
+
+- 아울러 PiP 기능 개선에 PIP screen for html5 video 확장 프로그램 (https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg) 소스 코드 참고했습니다. 개발자 keisokoo님에게 연락드려서 소스 코드 참고 허락 받았습니다. 허락 감사드립니다.
+
+# 사용한 오픈소스 정보 및 라이선스
+
+LunaTools 는 아래에 명시된 오픈소스 덕분에 만들어질 수 있었습니다. 멋진 소프트웨어, 서비스, 폰트를 공개해주신 개발자분들의 노고에 깊은 감사를 드립니다.
 
 ### Frankfurter.app
 
 - **용도**: 환율 변환 기능에 필요한 실시간 환율 데이터를 가져오기 위해 사용됩니다.
 - **출처**: https://www.frankfurter.app/
 - **라이선스**: MIT License (아래 전문 참고)
-
----
-
-### Lato 폰트
-
-- **용도**: 옵션 및 사이드 패널 페이지의 사용자 인터페이스 웹 폰트로 사용됩니다.
-- **출처**: Google Fonts (https://fonts.google.com/specimen/Lato)
-- **라이선스**: SIL Open Font License, Version 1.1 (아래 전문 참고)
-
----
-
-### 나눔바른고딕 폰트 (Nanum Barun Gothic)
-
-- **용도**: 옵션 및 사이드 패널 페이지의 사용자 인터페이스 웹 폰트로 사용됩니다.
-- **출처**: 네이버 나눔글꼴 (https://hangeul.naver.com/font)
-- **라이선스**: SIL Open Font License, Version 1.1 (아래 전문 참고)
-
----
-
-## 라이선스 전문 (Full License Texts)
-
-### MIT License
 
 Copyright (c) 2020 Hakan Ensari
 
@@ -53,6 +45,18 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+### Lato 폰트
+
+- **용도**: 옵션 및 사이드 패널 페이지의 사용자 인터페이스 웹 폰트로 사용됩니다.
+- **출처**: Google Fonts (https://fonts.google.com/specimen/Lato)
+- **라이선스**: SIL Open Font License, Version 1.1 (아래 전문 참고)
+
+### 나눔바른고딕 폰트 (Nanum Barun Gothic)
+
+- **용도**: 옵션 및 사이드 패널 페이지의 사용자 인터페이스 웹 폰트로 사용됩니다.
+- **출처**: 네이버 나눔글꼴 (https://hangeul.naver.com/font)
+- **라이선스**: SIL Open Font License, Version 1.1 (아래 전문 참고)
 
 ### SIL Open Font License, Version 1.1
 
