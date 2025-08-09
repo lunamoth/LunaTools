@@ -56,10 +56,6 @@ SOFTWARE.
 
 ### SIL Open Font License, Version 1.1
 
-License
-Copyright (c) 2010-2014 by tyPoland Lukasz Dziedzic (team@latofonts.com) with Reserved Font Name "Lato"
-This Font Software is licensed under the SIL Open Font License, Version 1.1 . This license is copied below, and is also available with a FAQ at: https://openfontlicense.org
-
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
 
 PREAMBLE
