@@ -12,9 +12,9 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 
 ---
 
-### 감사의 말 (Acknowledgements)
+# 감사의 말 (Acknowledgements)
 
-- 아울러 PiP 기능 개선에 PIP screen for html5 video 확장 프로그램 (https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg) 소스 코드 참고했습니다. 개발자 keisokoo님에게 연락드려서 소스 코드 참고 허락 받았습니다. 허락 감사드립니다.
+- PiP 기능 개선에 **PIP screen for html5 video 확장 프로그램** (https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg) 소스 코드 참고했습니다. 개발자 keisokoo님에게 연락드려서 소스 코드 참고 허락 받았습니다. 허락해주셔서 감사드립니다.
 
 # 사용한 오픈소스 정보 및 라이선스
 
