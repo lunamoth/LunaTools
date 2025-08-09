@@ -16,6 +16,8 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 
 - PiP 기능 개선에 **PIP screen for html5 video 확장 프로그램** (https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg) 소스 코드 참고했습니다. 개발자 keisokoo님에게 연락드려서 소스 코드 참고 허락 받았습니다. 허락해주셔서 감사드립니다.
 
+---
+
 # 사용한 오픈소스 정보 및 라이선스
 
 LunaTools 는 아래에 명시된 오픈소스 덕분에 만들어질 수 있었습니다. 멋진 소프트웨어, 서비스, 폰트를 공개해주신 개발자분들의 노고에 깊은 감사를 드립니다.
