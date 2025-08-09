@@ -2,6 +2,8 @@
 
 이 프로젝트는 아래에 명시된 오픈소스 덕분에 만들어질 수 있었습니다. 멋진 서비스와 폰트를 공개해주신 개발자분들의 노고에 깊은 감사를 드립니다.
 
+아울러 PiP 기능 개선에 PIP screen for html5 video 확장 프로그램 (https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg) 소스 코드 참고했습니다. 개발자분에게 연락드려서 소스 코드 참고 허락 받았습니다. 허락 감사드립니다.
+
 ---
 
 ### Frankfurter.app
