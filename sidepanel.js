@@ -1315,8 +1315,19 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             UI.optionsList.addEventListener('click', (e) => {
                 const item = e.target.closest('.option-item');
-                const checkbox = item?.querySelector('input[type="checkbox"]');
-                if (checkbox && e.target !== checkbox && e.target.tagName !== 'INPUT') {
+                if (!item) return;
+
+                const checkbox = item.querySelector('input[type="checkbox"]');
+                if (!checkbox) return;
+
+                // The native behavior of the <label> containing the switch handles the toggle.
+                // We only want to manually toggle if the click was on other parts of the list item (e.g., the title).
+                // This prevents a double-toggle when the switch itself is clicked.
+                if (e.target.closest('.switch')) {
+                    return; // Let native behavior handle the toggle and change event.
+                }
+
+                if (e.target !== checkbox) {
                     checkbox.checked = !checkbox.checked;
                     checkbox.dispatchEvent(new Event('change', { bubbles: true }));
                 }
