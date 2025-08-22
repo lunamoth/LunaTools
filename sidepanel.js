@@ -1069,6 +1069,9 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        // ▼ BUG FIX: 현재 인덱스 기준으로 먼저 UI를 업데이트합니다.
+        updateProgress();
+
         const previousSpan = UI.urlQueue ? UI.urlQueue.querySelector(`.${CONFIG.CSS.PROCESSING_CLASS}`) : null;
         if (previousSpan) {
             previousSpan.classList.remove(CONFIG.CSS.PROCESSING_CLASS);
@@ -1101,8 +1104,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        // ▼ BUG FIX: 모든 작업이 끝난 후, 다음 작업을 위해 인덱스를 증가시킵니다.
         state.currentUrlIndex++;
-        updateProgress();
 
         const value = UI.intervalInput ? parseFloat(UI.intervalInput.value) : CONFIG.DEFAULT_OPTIONS.interval;
         const intervalSeconds = !isNaN(value) && value >= 0.1 ? value : 0.1;
@@ -1159,6 +1162,8 @@ document.addEventListener('DOMContentLoaded', function() {
             UI.progressStats.textContent = CONFIG.TEXT.PROCESS_COMPLETE(total, success, state.errorCount);
             UI.progressStats.className = CONFIG.CSS.COMPLETE_CLASS;
         }
+        // ▼ BUG FIX: 완료 시점에 진행률 바를 100으로 확실하게 설정합니다.
+        if (UI.progressBar) UI.progressBar.value = 100;
         if (UI.urlQueue) UI.urlQueue.innerHTML = '';
 
         setView('complete');
