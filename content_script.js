@@ -1687,7 +1687,7 @@
             --glass-border-cs: rgba(0, 0, 0, 0.1);
             --glass-highlight-cs: rgba(255, 255, 255, 0.7);
             --glass-shadow-cs: rgba(0, 0, 0, 0.1);
-            --font-family-cs: "Lato", "나눔바른고딕", "Pretendard", "Malgun Gothic", sans-serif;
+            --font-family-cs: "Lato", "나눔바른고딕", "Malgun Gothic", sans-serif;
             position: fixed;
             z-index: 2147483647 !important;
             cursor: default;
