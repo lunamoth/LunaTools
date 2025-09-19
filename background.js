@@ -13,7 +13,7 @@ async function updateTabCountBadge() {
       text: tabCount.toString()
     });
 
-    if (tabCount >= 200) {
+    if (tabCount >= 100) {
       await chrome.action.setBadgeBackgroundColor({
         color: '#EB4D3D'
       });
