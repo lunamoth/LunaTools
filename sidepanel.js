@@ -1324,18 +1324,27 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 const checkbox = item.querySelector('input[type="checkbox"]');
                 if (!checkbox) return;
-
-                // The native behavior of the <label> containing the switch handles the toggle.
-                // We only want to manually toggle if the click was on other parts of the list item (e.g., the title).
-                // This prevents a double-toggle when the switch itself is clicked.
+                
                 if (e.target.closest('.switch')) {
-                    return; // Let native behavior handle the toggle and change event.
+                    return; 
                 }
 
                 if (e.target !== checkbox) {
                     checkbox.checked = !checkbox.checked;
                     checkbox.dispatchEvent(new Event('change', { bubbles: true }));
                 }
+            });
+
+            // Add event listeners for preset buttons
+            const presetButtons = UI.optionsList.querySelectorAll('.preset-btn');
+            presetButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    if (UI.intervalInput) {
+                        UI.intervalInput.value = button.dataset.value;
+                        // Dispatch a change event so saveOptions gets called
+                        UI.intervalInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                });
             });
         }
 
