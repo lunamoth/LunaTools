@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', function() {
         STORAGE_KEY: 'multiOpenUrlOptions',
         URL_LISTS_KEY: 'savedUrlLists',
         DEFAULT_OPTIONS: {
-            interval: 2.5, removeDuplicates: true, focusLock: true, delayLoading: false
+            interval: 2, removeDuplicates: true, focusLock: true, delayLoading: false
         },
         FADE_DURATION: 300
     };

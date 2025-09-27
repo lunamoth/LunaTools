@@ -266,7 +266,7 @@
         .options-list-wrapper { flex-shrink: 0; }
         .options-list { list-style: none; } 
         .option-item { 
-            display: flex; justify-content: space-between; align-items: center; 
+            display: flex; justify-content: space-between; align-items: flex-start; /* ★ [1] 수정: center -> flex-start */
             padding: var(--spacing-sm) var(--spacing-xxs); flex-wrap: wrap; row-gap: var(--spacing-xs); 
         }
         .option-item + .option-item { border-top: 1px solid var(--border); }
@@ -276,9 +276,12 @@
             transition: background-color var(--transition-duration-subtle) var(--transition-timing-ease); 
         }
         .option-item:has(.switch):hover { background-color: rgba(var(--bg-control-rgb), 0.3); }
-        .option-item .option-title { font-size: var(--font-size-callout); }
+        .option-item .option-title { 
+            font-size: var(--font-size-callout);
+            padding-top: var(--spacing-xxs); /* ★ [2] 추가: 상단 여백으로 세로 위치 미세 조정 */
+        }
         .option-item input[type="number"] { 
-            width: 100px; padding: var(--spacing-xs); font-size: var(--font-size-callout); 
+            width: 70px; padding: var(--spacing-xs); font-size: var(--font-size-callout); 
             border-radius: var(--radius-xs); border: 1px solid var(--border); 
             color: var(--text-primary); background-color: var(--bg-control); text-align: center; 
         }
@@ -286,8 +289,7 @@
         .input-with-presets {
             display: flex;
 			flex-direction: column;
-			align-items: center;
-            align-items: center;
+			align-items: flex-end; /* ★ [3] 수정: center -> flex-end */
             gap: var(--spacing-xs);
         }
 
@@ -303,7 +305,7 @@
             color: var(--text-secondary); 
 			font-size: 14px;
             font-weight: 500; 
-            padding: 6px 10px;
+            padding: 4px 4px;
             cursor: pointer; 
             transition: all var(--transition-duration-subtle) var(--transition-timing-ease);
         }
@@ -611,10 +613,13 @@
                             <li class="option-item">
                                 <label class="option-title">실행 간격 (초)</label>
                                 <div class="input-with-presets">
-                                    <input type="number" id="intervalInput" value="2.5" min="0.1" step="0.1">
+                                    <input type="number" id="intervalInput" value="2" min="0.1" step="0.1">
                                     <div class="preset-buttons">
-                                        <button type="button" class="preset-btn" data-value="2.5">2.5초</button>
-                                        <button type="button" class="preset-btn" data-value="5.0">5초</button>
+                                        <button type="button" class="preset-btn" data-value="1">1초</button>
+                                        <button type="button" class="preset-btn" data-value="2">2초</button>
+                                        <button type="button" class="preset-btn" data-value="3">3초</button>
+                                        <button type="button" class="preset-btn" data-value="4">4초</button>
+                                        <button type="button" class="preset-btn" data-value="5">5초</button>
                                     </div>
                                 </div>
                             </li>
