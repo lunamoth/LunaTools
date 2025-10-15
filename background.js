@@ -216,10 +216,15 @@ class TabManager {
 
   async _sortAndMoveTabsInWindow(windowId) {
     try {
-      const tabsInWindow = await chrome.tabs.query({ windowId });
-      if (tabsInWindow.length <= 1) return;
+      const allTabsInWindow = await chrome.tabs.query({ windowId });
+      const pinnedTabs = allTabsInWindow.filter(tab => tab.pinned);
+      const unpinnedTabs = allTabsInWindow.filter(tab => !tab.pinned);
 
-      const tabsWithParsedUrls = tabsInWindow.map(tab => {
+      if (unpinnedTabs.length <= 1) {
+        return; // 정렬할 일반 탭이 없거나 하나뿐이면 종료
+      }
+
+      const tabsWithParsedUrls = unpinnedTabs.map(tab => {
         const cachedInfo = this.urlCache.get(tab.id);
         let parsedUrl = cachedInfo?.url;
         if (!parsedUrl) {
@@ -238,17 +243,21 @@ class TabManager {
       
       const sortedTabIds = tabsWithParsedUrls.map(tab => tab.id);
 
-      const currentSortableTabIds = tabsInWindow
+      // 최적화: 이미 정렬된 상태인지 확인 (일반 탭 기준)
+      const currentUnpinnedSortableTabIds = unpinnedTabs
         .map(tab => tab.id)
         .filter(id => sortedTabIds.includes(id));
       
-      if (JSON.stringify(sortedTabIds) === JSON.stringify(currentSortableTabIds)) {
+      if (JSON.stringify(sortedTabIds) === JSON.stringify(currentUnpinnedSortableTabIds)) {
         return;
       }
 
-      await chrome.tabs.move(sortedTabIds, { index: 0 });
+      // 고정된 탭 바로 뒤로 이동
+      const targetIndex = pinnedTabs.length;
+      await chrome.tabs.move(sortedTabIds, { index: targetIndex });
 
     } catch (error) {
+      // 오류 처리는 기존과 동일하게 유지
     }
   }
 
