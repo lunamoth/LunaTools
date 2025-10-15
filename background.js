@@ -234,21 +234,19 @@ class TabManager {
 
       if (tabsWithParsedUrls.length <= 1) return;
 
-      const originalIndices = new Map(tabsInWindow.map(tab => [tab.id, tab.index]));
       tabsWithParsedUrls.sort((a, b) => this._compareTabUrls(a.parsedUrl, b.parsedUrl));
-
-      const movePromises = tabsWithParsedUrls.reduce((promises, tab, desiredIndex) => {
-        const currentIndex = originalIndices.get(tab.id);
-        if (typeof currentIndex === 'number' && currentIndex !== desiredIndex && tab.id !== undefined) {
-          promises.push(
-            chrome.tabs.move(tab.id, { index: desiredIndex }).catch(error => {
-            })
-          );
-        }
-        return promises;
-      }, []);
       
-      if (movePromises.length > 0) await Promise.all(movePromises);
+      const sortedTabIds = tabsWithParsedUrls.map(tab => tab.id);
+
+      const currentSortableTabIds = tabsInWindow
+        .map(tab => tab.id)
+        .filter(id => sortedTabIds.includes(id));
+      
+      if (JSON.stringify(sortedTabIds) === JSON.stringify(currentSortableTabIds)) {
+        return;
+      }
+
+      await chrome.tabs.move(sortedTabIds, { index: 0 });
 
     } catch (error) {
     }
@@ -258,17 +256,17 @@ class TabManager {
     if (!urlA && !urlB) return 0;
     if (!urlA) return 1;
     if (!urlB) return -1;
-
+  
+    // 먼저 전체 호스트 이름(서브도메인 포함)을 기준으로 비교합니다.
     const hostCompare = urlA.hostname.localeCompare(urlB.hostname);
-    if (hostCompare !== 0) return hostCompare;
-
-    const pathCompare = urlA.pathname.localeCompare(urlB.pathname);
-    if (pathCompare !== 0) return pathCompare;
-    
-    const searchCompare = urlA.search.localeCompare(urlB.search);
-    if (searchCompare !== 0) return searchCompare;
-
-    return urlA.hash.localeCompare(urlA.hash);
+    if (hostCompare !== 0) {
+      return hostCompare;
+    }
+  
+    // 호스트 이름이 같다면, 나머지 전체 경로를 기준으로 비교합니다.
+    const pathA = urlA.pathname + urlA.search + urlA.hash;
+    const pathB = urlB.pathname + urlB.search + urlB.hash;
+    return pathA.localeCompare(pathB);
   }
 
   async checkForDuplicateAndFocusExisting(tab) {
