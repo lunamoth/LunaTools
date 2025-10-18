@@ -33,6 +33,7 @@
             --bg-icon-lock: rgba(0, 122, 255, 0.1);
             --bg-icon-block: rgba(255, 59, 48, 0.1);
             --bg-icon-drag: rgba(88, 86, 214, 0.1);
+            --bg-icon-data: rgba(52, 199, 89, 0.1);
             --bg-textarea: rgba(118, 118, 128, 0.12);
             --shadow-textarea-inset: rgba(0, 0, 0, 0.05);
             --ring-focus: rgba(0, 122, 255, 0.3);
@@ -54,6 +55,7 @@
                 --bg-icon-lock: rgba(10, 132, 255, 0.2);
                 --bg-icon-block: rgba(255, 69, 58, 0.2);
                 --bg-icon-drag: rgba(94, 92, 230, 0.2);
+                --bg-icon-data: rgba(48, 209, 88, 0.2);
                 --bg-textarea: rgba(118, 118, 128, 0.24);
                 --shadow-textarea-inset: rgba(0, 0, 0, 0.2);
                 --ring-focus: rgba(10, 132, 255, 0.35);
@@ -170,8 +172,9 @@
         main > .card:nth-of-type(1) { animation-delay: 0.2s; }
         main > .card:nth-of-type(2) { animation-delay: 0.3s; }
         main > .card:nth-of-type(3) { animation-delay: 0.4s; }
+        main > .card:nth-of-type(4) { animation-delay: 0.5s; }
 
-        .card__header, .card__description, .card__textarea {
+        .card__header, .card__description, .card__textarea, .card__actions {
             position: relative;
             z-index: 1;
         }
@@ -199,6 +202,7 @@
         .card__icon-wrapper--lock { background-color: var(--bg-icon-lock); }
         .card__icon-wrapper--block { background-color: var(--bg-icon-block); }
         .card__icon-wrapper--drag { background-color: var(--bg-icon-drag); }
+        .card__icon-wrapper--data { background-color: var(--bg-icon-data); }
         .card__icon { font-size: 1.2rem; }
         .card__title { font-size: var(--font-size-subtitle); font-weight: var(--font-weight-semibold); margin: 0; }
         .card__description {
@@ -232,6 +236,13 @@
             box-shadow: inset 0 1px 2px var(--shadow-textarea-inset), 0 0 0 2px var(--ring-focus);
         }
 
+        .card__actions {
+            display: flex;
+            justify-content: center;
+            gap: var(--spacing-md);
+            margin-top: var(--spacing-sm);
+        }
+
         .btn {
             font-size: var(--font-size-button);
             font-weight: var(--font-weight-semibold);
@@ -241,6 +252,14 @@
             cursor: pointer;
             transition: transform 0.2s cubic-bezier(0.3, 1, 0.4, 1), box-shadow 0.2s ease-out, background-color 0.2s ease-out;
             overflow: hidden;
+        }
+        
+        .btn--secondary {
+            background-color: rgba(118, 118, 128, 0.12);
+            color: var(--color-text);
+        }
+        .btn--secondary:hover {
+             background-color: rgba(118, 118, 128, 0.20);
         }
 
         .btn--primary {
@@ -335,6 +354,21 @@
             <p class="card__description">Shift/Ctrl/Alt + 드래그 기능을 비활성화 하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)</p>
             <label for="disabledDragSites" class="visually-hidden">드래그 기능 비활성화 사이트 목록</label>
             <textarea id="disabledDragSites" class="card__textarea" rows="5"></textarea>
+        </section>
+
+        <section class="card liquid-glass">
+            <div class="card__header">
+                <div class="card__icon-wrapper card__icon-wrapper--data">
+                    <span class="card__icon">💾</span>
+                </div>
+                <h2 class="card__title">데이터 관리</h2>
+            </div>
+            <p class="card__description">모든 설정을 하나의 파일로 백업하거나, 백업 파일로부터 설정을 복원합니다.</p>
+            <div class="card__actions">
+                <button id="backupButton" class="btn btn--secondary">백업</button>
+                <button id="restoreButton" class="btn btn--secondary">복원</button>
+                <input type="file" id="restoreFileInput" class="visually-hidden" accept=".json,application/json">
+            </div>
         </section>
 
         <footer class="page-footer">

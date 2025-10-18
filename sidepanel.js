@@ -1935,7 +1935,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const year = now.getFullYear().toString().slice(-2);
         const month = (now.getMonth() + 1).toString().padStart(2, '0');
         const day = now.getDate().toString().padStart(2, '0');
-        const filename = `${year}${month}${day}_TabHaiku_Backup.json`;
+        const filename = `${year}${month}${day}_LunaTools_Session_Manager_Backup.json`;
         
         chrome.downloads.download({ url, filename }, (downloadId) => {
           if (downloadId === undefined && chrome.runtime.lastError) {
