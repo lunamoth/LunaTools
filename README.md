@@ -1,6 +1,6 @@
 # LunaTools
 
-![LunaTools]([이미지 URL](https://raw.githubusercontent.com/lunamoth/LunaTools/refs/heads/main/251018_LunaTools_11.0_Screenshot.png))
+![LunaTools](https://raw.githubusercontent.com/lunamoth/LunaTools/refs/heads/main/251018_LunaTools_11.0_Screenshot.png)
 
 **LunaTools - 구글 크롬 확장 프로그램: 마우스 제스처, 좌우키 페이지 이동, 탭 중복 제거/정렬/병합, PiP, 환율/단위/시각 변환, 영상 회전, 사이트 잠금/차단, 드래그 복사/열기,여러 URL 열기, 볼륨 300% 증폭, 세션 매니저**
 
