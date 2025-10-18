@@ -889,7 +889,11 @@ document.addEventListener('DOMContentLoaded', function() {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `multi_url_opener_lists_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.json`;
+            const now = new Date();
+            const year = now.getFullYear().toString().slice(-2);
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            a.download = `${year}${month}${day}_LunaTools_Multi_URL_Opener_Lists.json`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
