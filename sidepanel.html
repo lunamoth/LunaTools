@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>여러 URL 열기</title>
+    <title>LunaTools</title>
 	<link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css2?family=Lato&display=swap" >
 	<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/moonspam/NanumBarunGothic@latest/nanumbarungothicsubset.css">  
     <style>
+        /* --- Global Styles & Tab UI --- */
         :root {
             --font-family: 'Lato', '나눔바른고딕', -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             --accent-color-rgb: 0, 122, 255;
@@ -79,7 +80,6 @@
             --inset-shadow-color-rgb: 0, 0, 0;
             --inset-shadow: inset 0 0 0 1px rgba(var(--inset-shadow-color-rgb), 0.05);
 
-
             --button-disabled-bg-rgb: 233, 236, 239;
             --button-disabled-bg: rgb(var(--button-disabled-bg-rgb));
             --button-disabled-text-rgb: 173, 181, 189;
@@ -111,7 +111,6 @@
                 --inset-shadow-color-rgb: 255, 255, 255;
                 --inset-shadow: inset 0 0 0 1px rgba(var(--inset-shadow-color-rgb), 0.08);
 
-
                 --button-disabled-bg-rgb: 44, 44, 46;
                 --button-disabled-text-rgb: 99, 99, 102;
                 
@@ -126,34 +125,90 @@
             font-family: var(--font-family);
             background: var(--bg-body);
             color: var(--text-primary);
-            padding: var(--spacing-lg);
             overflow: hidden; 
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
         }
 
-        .main-container { 
+        .tab-nav {
+            display: flex;
+            background-color: var(--bg-control);
+            padding: var(--spacing-xxs);
+            margin: var(--spacing-sm);
+            border-radius: var(--radius-xs);
+            flex-shrink: 0;
+        }
+        .tab-button {
+            flex: 1;
+            padding: var(--spacing-xs) var(--spacing-sm);
+            font-size: var(--font-size-subheadline);
+            font-weight: 600;
+            border: none;
+            background-color: transparent;
+            color: var(--text-secondary);
+            border-radius: var(--radius-xxs);
+            cursor: pointer;
+            transition: all var(--transition-duration-subtle) ease-in-out;
+            white-space: nowrap;
+        }
+        .tab-button.active {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .tab-content {
+            flex-grow: 1;
+            position: relative;
+            overflow: hidden;
+            padding: 0 var(--spacing-sm) var(--spacing-sm);
+        }
+        .tab-pane {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity var(--transition-duration-base) ease-in-out, visibility 0s var(--transition-duration-base);
+            display: flex;
+            flex-direction: column;
+        }
+        .tab-pane.active {
+            opacity: 1;
+            visibility: visible;
+            transition-delay: 0s;
+        }
+
+        /* --- Styles for "여러 URL 열기" (Original sidepanel.css) --- */
+        #multi-url-opener-pane {
+            padding: 0; /* Pane itself doesn't need padding */
+        }
+        #multi-url-opener-pane .main-container { 
             width: 100%; 
-            margin: 0 auto; 
+            height: 100%;
+            margin: 0; 
+            padding: var(--spacing-sm);
             display: flex; 
             flex-direction: column; 
             gap: var(--spacing-xl);
-            height: calc(100vh - (var(--spacing-lg) * 2)); 
             overflow: hidden; 
             background-color: transparent;
         }
-        .main-container.dragover { 
+        #multi-url-opener-pane .main-container.dragover { 
             outline: 3px dashed var(--accent-color); 
-            outline-offset: calc(var(--spacing-sm) * -1); 
+            outline-offset: -12px;
             border-radius: var(--radius-lg);
             background-color: rgba(var(--accent-color-rgb), 0.05);
         }
-
-        .header { text-align: center; flex-shrink: 0; }
-        .header h1 { font-size: var(--font-size-display); font-weight: 700; letter-spacing: -0.5px; }
-        .header p { font-size: var(--font-size-title1); color: var(--text-secondary); margin-top: var(--spacing-xs); font-weight: 400; }
-
-        .section-card-container { 
+        #multi-url-opener-pane .header { text-align: center; flex-shrink: 0; }
+        #multi-url-opener-pane .header h1 { font-size: var(--font-size-display); font-weight: 700; letter-spacing: -0.5px; }
+        #multi-url-opener-pane .header p { font-size: var(--font-size-title1); color: var(--text-secondary); margin-top: var(--spacing-xs); font-weight: 400; }
+        #multi-url-opener-pane .section-card-container { 
             background-color: var(--bg-card);
             backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
             -webkit-backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
@@ -170,8 +225,7 @@
             transition: background-color var(--transition-duration-base) var(--transition-timing-ease),
                         box-shadow var(--transition-duration-base) var(--transition-timing-ease);
         }
-        
-        .input-wrapper, .running-wrapper {
+        #multi-url-opener-pane .input-wrapper, #multi-url-opener-pane .running-wrapper {
             width: 100%;
             display: flex; 
             flex-direction: column;
@@ -180,25 +234,22 @@
             padding: var(--spacing-lg);
             overflow-y: hidden; 
         }
-        .running-wrapper { display: none; opacity: 0; padding: 0; flex-grow: 1; overflow-y: auto; }
-        
-        .input-wrapper-content {
+        #multi-url-opener-pane .running-wrapper { display: none; opacity: 0; padding: 0; flex-grow: 1; overflow-y: auto; }
+        #multi-url-opener-pane .input-wrapper-content {
             display: flex;
             flex-direction: column;
             gap: var(--spacing-lg); 
             min-height: 0; 
             overflow-y: hidden; 
         }
-
-        #input-control-buttons-wrapper {
+        #multi-url-opener-pane #input-control-buttons-wrapper {
             display: flex;
             gap: var(--spacing-sm);
             padding-top: var(--spacing-lg); 
             margin-top: auto; 
             flex-shrink: 0; 
         }
-
-        .running-wrapper-sticky-header { 
+        #multi-url-opener-pane .running-wrapper-sticky-header { 
             flex-shrink: 0;
             position: sticky;
             top: 0;
@@ -210,18 +261,16 @@
             border-bottom: 1px solid var(--border);
             box-shadow: var(--inset-shadow);
         }
-        
-        .running-wrapper-scrollable-content { padding: var(--spacing-lg); display: flex; flex-direction: column; }
-
-        .section-header { 
+        #multi-url-opener-pane .running-wrapper-scrollable-content { padding: var(--spacing-lg); display: flex; flex-direction: column; }
+        #multi-url-opener-pane .section-header { 
             display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-sm); 
             font-size: var(--font-size-title2); font-weight: 600; 
             padding-bottom: var(--spacing-sm); border-bottom: 1px solid var(--border); 
             margin-bottom: var(--spacing-sm); color: var(--text-secondary); flex-shrink: 0; 
         }
-        .textarea-wrapper { display: flex; flex-direction: column; gap: var(--spacing-sm); flex-shrink: 0; }
-        .textarea-container { position: relative; }
-        #clearButton { 
+        #multi-url-opener-pane .textarea-wrapper { display: flex; flex-direction: column; gap: var(--spacing-sm); flex-shrink: 0; }
+        #multi-url-opener-pane .textarea-container { position: relative; }
+        #multi-url-opener-pane #clearButton { 
             position: absolute; top: var(--spacing-sm); right: var(--spacing-sm); 
             background: rgba(var(--bg-control-rgb), 0.7); backdrop-filter: blur(5px);
             color: var(--text-secondary); border: 1px solid rgba(var(--border-rgb), var(--border-alpha)); 
@@ -229,9 +278,9 @@
             padding: var(--spacing-xxs) var(--spacing-xs); cursor: pointer; 
             opacity: 0; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); z-index: 5; 
         }
-        .textarea-container:focus-within #clearButton, .textarea-container:hover #clearButton { opacity: 1; }
-        #clearButton:hover { background: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.5)); }
-        #urlInput { 
+        #multi-url-opener-pane .textarea-container:focus-within #clearButton, #multi-url-opener-pane .textarea-container:hover #clearButton { opacity: 1; }
+        #multi-url-opener-pane #clearButton:hover { background: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.5)); }
+        #multi-url-opener-pane #urlInput { 
             width: 100%; 
             min-height: 280px; 
             padding: var(--spacing-md); 
@@ -246,441 +295,375 @@
             line-height: 1.6; 
             overflow-y: auto; 
         }
-        #urlInput:focus { 
+        #multi-url-opener-pane #urlInput:focus { 
             outline: none; border-color: var(--accent-color); 
             box-shadow: 0 0 0 3px var(--accent-glow); 
             background-color: var(--bg-card-opaque); 
         }
-        #urlInput:disabled { background-color: rgba(var(--bg-control-rgb), 0.5); cursor: not-allowed; opacity: 0.6; }
-        
-        .editor-actions { display: flex; gap: var(--spacing-xs); justify-content: flex-end; flex-wrap: wrap; flex-shrink: 0;}
-        .editor-actions button { 
+        #multi-url-opener-pane #urlInput:disabled { background-color: rgba(var(--bg-control-rgb), 0.5); cursor: not-allowed; opacity: 0.6; }
+        #multi-url-opener-pane .editor-actions { display: flex; gap: var(--spacing-xs); justify-content: flex-end; flex-wrap: wrap; flex-shrink: 0;}
+        #multi-url-opener-pane .editor-actions button { 
             background: transparent; border: 1px solid var(--border); 
             border-radius: var(--radius-xxs); color: var(--text-secondary); 
             font-size: var(--font-size-footnote); font-weight: 500; padding: var(--spacing-xxs) var(--spacing-xs); 
             cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); 
         }
-        .editor-actions button:hover:not(:disabled) { background-color: rgba(var(--bg-control-rgb), 0.5); color: var(--text-primary); }
-        .editor-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
-        
-        .options-list-wrapper { flex-shrink: 0; }
-        .options-list { list-style: none; } 
-        .option-item { 
-            display: flex; justify-content: space-between; align-items: flex-start; /* ★ [1] 수정: center -> flex-start */
+        #multi-url-opener-pane .editor-actions button:hover:not(:disabled) { background-color: rgba(var(--bg-control-rgb), 0.5); color: var(--text-primary); }
+        #multi-url-opener-pane .editor-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #multi-url-opener-pane .options-list-wrapper { flex-shrink: 0; }
+        #multi-url-opener-pane .options-list { list-style: none; } 
+        #multi-url-opener-pane .option-item { 
+            display: flex; justify-content: space-between; align-items: flex-start;
             padding: var(--spacing-sm) var(--spacing-xxs); flex-wrap: wrap; row-gap: var(--spacing-xs); 
         }
-        .option-item + .option-item { border-top: 1px solid var(--border); }
-        .option-item:has(.switch) { 
+        #multi-url-opener-pane .option-item + .option-item { border-top: 1px solid var(--border); }
+        #multi-url-opener-pane .option-item:has(.switch) { 
             cursor: pointer;
             border-radius: var(--radius-xs); 
             transition: background-color var(--transition-duration-subtle) var(--transition-timing-ease); 
         }
-        .option-item:has(.switch):hover { background-color: rgba(var(--bg-control-rgb), 0.3); }
-        .option-item .option-title { 
+        #multi-url-opener-pane .option-item:has(.switch):hover { background-color: rgba(var(--bg-control-rgb), 0.3); }
+        #multi-url-opener-pane .option-item .option-title { 
             font-size: var(--font-size-callout);
-            padding-top: var(--spacing-xxs); /* ★ [2] 추가: 상단 여백으로 세로 위치 미세 조정 */
+            padding-top: var(--spacing-xxs);
         }
-        .option-item input[type="number"] { 
+        #multi-url-opener-pane .option-item input[type="number"] { 
             width: 70px; padding: var(--spacing-xs); font-size: var(--font-size-callout); 
             border-radius: var(--radius-xs); border: 1px solid var(--border); 
             color: var(--text-primary); background-color: var(--bg-control); text-align: center; 
         }
-
-        .input-with-presets {
+        #multi-url-opener-pane .input-with-presets {
             display: flex;
 			flex-direction: column;
-			align-items: flex-end; /* ★ [3] 수정: center -> flex-end */
+			align-items: flex-end;
             gap: var(--spacing-xs);
         }
-
-        .preset-buttons {
+        #multi-url-opener-pane .preset-buttons { display: flex; gap: var(--spacing-xxs); }
+        #multi-url-opener-pane .preset-btn {
+            background: transparent; border: 1px solid var(--border); 
+            border-radius: var(--radius-xxs); color: var(--text-secondary); 
+			font-size: 14px; font-weight: 500; padding: 4px 4px;
+            cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease);
+        }
+        #multi-url-opener-pane .preset-btn:hover:not(:disabled) { background-color: rgba(var(--bg-control-rgb), 0.5); color: var(--text-primary); }
+        #multi-url-opener-pane .switch { position: relative; display: inline-block; width: 51px; height: 31px; flex-shrink: 0; }
+        #multi-url-opener-pane .switch input { opacity: 0; width: 0; height: 0; }
+        #multi-url-opener-pane .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--bg-control); border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2)); transition: all var(--transition-duration-base) var(--transition-timing-ease); border-radius: 34px; }
+        #multi-url-opener-pane .slider:before { position: absolute; content: ""; height: 27px; width: 27px; left: 1px; bottom: 1px; background-color: var(--bg-card-opaque); box-shadow: 0 1px 3px rgba(var(--shadow-color-rgb), 0.2), 0 0 1px rgba(var(--shadow-color-rgb), 0.1); border: 0.5px solid rgba(0,0,0,0.04); transition: all var(--transition-duration-base) var(--transition-timing-spring); border-radius: 50%; }
+        #multi-url-opener-pane .switch input:checked + .slider { background-color: var(--success-color); border-color: transparent; }
+        #multi-url-opener-pane .switch input:focus-visible + .slider { box-shadow: 0 0 0 4px var(--accent-glow); }
+        #multi-url-opener-pane .switch input:checked + .slider:before { transform: translateX(20px); }
+        #multi-url-opener-pane #progressStats { font-size: var(--font-size-title2); font-weight: 600; text-align: center; color: var(--text-secondary); padding-top: var(--spacing-xs); flex-shrink: 0; }
+        #multi-url-opener-pane #progressStats.error { color: var(--danger-color); }
+        #multi-url-opener-pane #progressStats.complete { color: var(--success-color); }
+        #multi-url-opener-pane #progressBar { width: 100%; height: 8px; border: none; border-radius: 4px; overflow: hidden; transition: opacity var(--transition-duration-subtle) var(--transition-timing-ease); appearance: none; margin-top: var(--spacing-sm); flex-shrink: 0; }
+        #multi-url-opener-pane #progressBar::-webkit-progress-bar { background-color: var(--border); }
+        #multi-url-opener-pane #progressBar::-webkit-progress-value { background-color: var(--accent-color); transition: width var(--transition-duration-emphasis) var(--transition-timing-spring); }
+        #multi-url-opener-pane #running-control-buttons-wrapper { display: flex; gap: var(--spacing-sm); padding-top: var(--spacing-md); flex-shrink: 0; }
+        #multi-url-opener-pane #urlQueue { font-size: var(--font-size-callout); color: var(--text-tertiary); line-height: 1.7; word-break: break-all; border-radius: var(--radius-md); padding: var(--spacing-sm); border: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--spacing-xs); margin-top: 0; background-color: rgba(var(--bg-control-rgb), 0.2); }
+        #multi-url-opener-pane #urlQueue span { padding: var(--spacing-xs); border-radius: var(--radius-xs); transition: all var(--transition-duration-emphasis) var(--transition-timing-spring); }
+        #multi-url-opener-pane #urlQueue span.processing { background-color: var(--accent-glow); color: var(--text-primary); font-weight: 600; box-shadow: var(--shadow-sm); }
+        #multi-url-opener-pane #urlQueue span.removing { opacity: 0; max-height: 0; margin: 0; padding-top: 0; padding-bottom: 0; transform: scale(0.9); }
+        #multi-url-opener-pane #urlQueue span.error { color: var(--danger-color); text-decoration: line-through; opacity: 0.6; }
+        #multi-url-opener-pane #startRunButton, #multi-url-opener-pane #pauseResumeButton, #multi-url-opener-pane #stopProcessButton { padding: var(--spacing-md) var(--spacing-xl); font-size: var(--font-size-title2); font-weight: 600; color: white; border: none; border-radius: var(--radius-sm); cursor: pointer; transition: all var(--transition-duration-base) var(--transition-timing-spring); box-shadow: 0 1px 2px rgba(var(--shadow-color-rgb), 0.1), inset 0 1px 0px rgba(255,255,255,0.1); text-shadow: 0 1px 1px rgba(0,0,0,0.2); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+        #multi-url-opener-pane #startRunButton, #multi-url-opener-pane #pauseResumeButton { flex-grow: 1; background-color: var(--accent-color-transparent); }
+        #multi-url-opener-pane #startRunButton:hover, #multi-url-opener-pane #pauseResumeButton:hover { background-color: rgba(var(--accent-color-rgb), 0.95); box-shadow: 0 3px 8px -1px rgba(var(--accent-color-rgb), 0.4), inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm); transform: translateY(-1px); }
+        #multi-url-opener-pane #startRunButton.success, #multi-url-opener-pane #pauseResumeButton.success { background-color: var(--success-color-transparent); }
+        #multi-url-opener-pane #startRunButton.success:hover, #multi-url-opener-pane #pauseResumeButton.success:hover { background-color: rgba(var(--success-color-rgb), 0.95); box-shadow: 0 3px 8px -1px rgba(var(--success-color-rgb), 0.4), inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm); }
+        #multi-url-opener-pane #stopProcessButton { background-color: var(--danger-color-transparent); flex-shrink: 0; font-size: var(--font-size-body); }
+        #multi-url-opener-pane #stopProcessButton:hover { background-color: rgba(var(--danger-color-rgb), 0.95); box-shadow: 0 3px 8px -1px rgba(var(--danger-color-rgb), 0.4), inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm); transform: translateY(-1px); }
+        #multi-url-opener-pane #startRunButton:active, #multi-url-opener-pane #pauseResumeButton:active, #multi-url-opener-pane #stopProcessButton:active { transform: scale(0.97) translateY(0px); filter: brightness(0.95); }
+        #multi-url-opener-pane #startRunButton:disabled, #multi-url-opener-pane #pauseResumeButton:disabled, #multi-url-opener-pane #stopProcessButton:disabled { background: var(--button-disabled-bg); color: var(--button-disabled-text); cursor: not-allowed; transform: none; filter: none; box-shadow: none; text-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+        #multi-url-opener-pane .list-management { display: flex; flex-direction: column; gap: var(--spacing-md); flex-shrink: 0; }
+        #multi-url-opener-pane .list-controls-main { display: flex; gap: var(--spacing-xs); flex-wrap: wrap; align-items: center;}
+        #multi-url-opener-pane .list-controls-main select { flex-grow: 1; padding: var(--spacing-xs) var(--spacing-sm); font-size: var(--font-size-callout); border-radius: var(--radius-xs); border: 1px solid var(--border); color: var(--text-primary); background-color: var(--bg-control); min-width: 150px; }
+        #multi-url-opener-pane .list-controls-main button { padding: 0 var(--spacing-md); font-size: var(--font-size-title1); font-weight: 500; height: 36px; line-height: 34px; border-radius: var(--radius-xs); border: 1px solid var(--border); background-color: var(--bg-control); color: var(--text-secondary); cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); flex-shrink: 0; }
+        #multi-url-opener-pane #newListButton { font-size: var(--font-size-callout); padding: 0 var(--spacing-sm); }
+        #multi-url-opener-pane .list-controls-main button:not(:disabled):hover { background-color: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2)); color: var(--text-primary); }
+        #multi-url-opener-pane .list-controls-main button:disabled { color: var(--button-disabled-text); background: var(--bg-control); cursor: not-allowed; }
+        #multi-url-opener-pane .list-controls-secondary { display: flex; gap: var(--spacing-xs); flex-wrap: wrap; flex-shrink: 0; }
+        #multi-url-opener-pane .list-controls-secondary button { flex-grow: 1; padding: var(--spacing-xs) var(--spacing-sm); font-size: var(--font-size-footnote); font-weight: 500; border-radius: var(--radius-xs); border: 1px solid var(--border); background-color: var(--bg-control); color: var(--text-secondary); cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); }
+        #multi-url-opener-pane .list-controls-secondary button:not(:disabled):hover { background-color: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2)); color: var(--text-primary); }
+        #multi-url-opener-pane .list-controls-secondary button:disabled { color: var(--button-disabled-text); background: var(--bg-control); cursor: not-allowed; }
+        #multi-url-opener-pane .current-list-indicator { font-size: var(--font-size-footnote); color: var(--text-secondary); text-align: left; padding: 0 var(--spacing-xs); margin-bottom: var(--spacing-xs); display: none; flex-shrink: 0; font-weight: 500;}
+        #multi-url-opener-pane .modal-overlay { position: fixed; inset: 0; z-index: 1000; background-color: var(--modal-overlay-bg); display: flex; justify-content: center; align-items: center; opacity: 0; visibility: hidden; transition: opacity var(--transition-duration-base) var(--transition-timing-ease), visibility 0s var(--transition-duration-base) var(--transition-timing-ease); }
+        #multi-url-opener-pane .modal-overlay.visible { opacity: 1; visibility: visible; transition-delay: 0s;}
+        #multi-url-opener-pane .modal-content { background-color: var(--bg-card); backdrop-filter: blur(var(--blur-intensity)) saturate(180%); -webkit-backdrop-filter: blur(var(--blur-intensity)) saturate(180%); padding: var(--spacing-lg); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg), var(--inset-shadow); border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 0.7)); width: calc(100% - var(--spacing-lg) * 2); max-width: 380px; transform: scale(0.9) translateY(10px); opacity: 0; transition: transform var(--transition-duration-base) var(--transition-timing-spring), opacity var(--transition-duration-base) var(--transition-timing-ease); }
+        #multi-url-opener-pane .modal-overlay.visible .modal-content { transform: scale(1) translateY(0); opacity: 1; }
+        #multi-url-opener-pane .modal-header { font-size: var(--font-size-title1); font-weight: 600; margin-bottom: var(--spacing-sm); }
+        #multi-url-opener-pane .modal-body { font-size: var(--font-size-callout); color: var(--text-secondary); margin-bottom: var(--spacing-lg); line-height: 1.5; }
+        #multi-url-opener-pane .modal-body input { width: 100%; padding: var(--spacing-sm); font-size: var(--font-size-callout); border-radius: var(--radius-xs); border: 1px solid var(--border); background-color: var(--bg-control); color: var(--text-primary); }
+        #multi-url-opener-pane .modal-body input:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 3px var(--accent-glow); }
+        #multi-url-opener-pane .modal-footer { display: flex; gap: var(--spacing-sm); justify-content: flex-end; }
+        #multi-url-opener-pane .modal-footer button { padding: var(--spacing-xs) var(--spacing-md); font-size: var(--font-size-callout); font-weight: 600; border: none; border-radius: var(--radius-xs); cursor: pointer; transition: filter var(--transition-duration-subtle) var(--transition-timing-ease), transform var(--transition-duration-subtle) var(--transition-timing-spring); }
+        #multi-url-opener-pane .modal-footer button:hover { filter: brightness(1.1); }
+        #multi-url-opener-pane .modal-footer button:active { transform: scale(0.96); }
+        #multi-url-opener-pane #modal-cancel-btn { background-color: var(--bg-control); color: var(--text-secondary); }
+        #multi-url-opener-pane #modal-confirm-btn { background-color: var(--accent-color); color: white; }
+        #multi-url-opener-pane #modal-confirm-btn.danger { background-color: var(--danger-color); }
+        #multi-url-opener-pane .toast-container { position: fixed; bottom: var(--spacing-lg); right: var(--spacing-lg); z-index: 1100; display: flex; flex-direction: column; gap: var(--spacing-sm); }
+        #multi-url-opener-pane .toast { padding: var(--spacing-sm) var(--spacing-md); border-radius: var(--radius-sm); color: white; font-weight: 600; font-size: var(--font-size-subheadline); box-shadow: var(--shadow-md); opacity: 0; transform: translateY(20px) scale(0.95); transition: all var(--transition-duration-emphasis) var(--transition-timing-spring); backdrop-filter: blur(5px) saturate(150%); -webkit-backdrop-filter: blur(5px) saturate(150%); border: 1px solid rgba(255,255,255,0.1); }
+        #multi-url-opener-pane .toast.show { opacity: 1; transform: translateY(0) scale(1); }
+        #multi-url-opener-pane .toast.success { background-color: rgba(var(--success-color-rgb), 0.85); }
+        #multi-url-opener-pane .toast.error { background-color: rgba(var(--danger-color-rgb), 0.85); }
+        #multi-url-opener-pane .toast.info { background-color: rgba(var(--accent-color-rgb), 0.85); }
+        
+        /* --- Styles for "세션 매니저" (Scoped from TabHaiku) --- */
+		#session-manager-pane {
+            --beos-bg: #c5c5c5;
+            --beos-gray: #dcdcdc;
+            --beos-yellow: #ffcc00;
+            --beos-blue: #3366cc;
+            --beos-text: #000000;
+            --beos-light-bevel: #ffffff;
+            --beos-dark-bevel: #838383;
+            --font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
+            --beos-border-outset: 1px solid;
+            --beos-border-inset: 1px solid;
+            font-family: var(--font-family);
+            background-color: var(--beos-bg);
+            color: var(--beos-text);
+            font-size: 12px;
+            border: 2px solid;
+            border-color: var(--beos-light-bevel) var(--beos-dark-bevel) var(--beos-dark-bevel) var(--beos-light-bevel);
             display: flex;
-            gap: var(--spacing-xxs);
-        }
-
-        .preset-btn {
-            background: transparent; 
-            border: 1px solid var(--border); 
-            border-radius: var(--radius-xxs); 
-            color: var(--text-secondary); 
-			font-size: 14px;
-            font-weight: 500; 
-            padding: 4px 4px;
-            cursor: pointer; 
-            transition: all var(--transition-duration-subtle) var(--transition-timing-ease);
-        }
-
-        .preset-btn:hover:not(:disabled) { 
-            background-color: rgba(var(--bg-control-rgb), 0.5); 
-            color: var(--text-primary); 
-        }
-
-        .switch {
+            flex-direction: column;
+            height: 100%;
+		}
+		#session-manager-pane *, #session-manager-pane *::before, #session-manager-pane *::after { box-sizing: border-box; }
+		#session-manager-pane .beos-window-tab {
+            background-color: var(--beos-bg);
+            padding: 2px 4px 0 4px;
+            display: flex;
+            align-items: flex-end;
+            flex-shrink: 0;
             position: relative;
-            display: inline-block;
-            width: 51px;
-            height: 31px;
-            flex-shrink: 0;
-        }
-
-        .switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: var(--bg-control);
-            border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2));
-            transition: all var(--transition-duration-base) var(--transition-timing-ease);
-            border-radius: 34px;
-        }
-
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 27px;
-            width: 27px;
-            left: 1px;
-            bottom: 1px;
-            background-color: var(--bg-card-opaque);
-            box-shadow: 0 1px 3px rgba(var(--shadow-color-rgb), 0.2), 0 0 1px rgba(var(--shadow-color-rgb), 0.1);
-            border: 0.5px solid rgba(0,0,0,0.04);
-            transition: all var(--transition-duration-base) var(--transition-timing-spring);
-            border-radius: 50%;
-        }
-
-        .switch input:checked + .slider {
-            background-color: var(--success-color);
-            border-color: transparent;
-        }
-
-        .switch input:focus-visible + .slider {
-            box-shadow: 0 0 0 4px var(--accent-glow);
-        }
-
-        .switch input:checked + .slider:before {
-            transform: translateX(20px);
-        }
-
-        #progressStats { 
-            font-size: var(--font-size-title2); font-weight: 600; text-align: center; 
-            color: var(--text-secondary); padding-top: var(--spacing-xs); flex-shrink: 0; 
-        }
-        #progressStats.error { color: var(--danger-color); }
-        #progressStats.complete { color: var(--success-color); }
-        #progressBar { 
-            width: 100%; height: 8px; border: none; border-radius: 4px; overflow: hidden; 
-            transition: opacity var(--transition-duration-subtle) var(--transition-timing-ease); 
-            appearance: none; margin-top: var(--spacing-sm); flex-shrink: 0; 
-        }
-        #progressBar::-webkit-progress-bar { background-color: var(--border); }
-        #progressBar::-webkit-progress-value { 
-            background-color: var(--accent-color); 
-            transition: width var(--transition-duration-emphasis) var(--transition-timing-spring); 
-        }
-        
-        #running-control-buttons-wrapper { 
-            display: flex; gap: var(--spacing-sm);
-            padding-top: var(--spacing-md); flex-shrink: 0;
-        }
-
-        #urlQueue { 
-            font-size: var(--font-size-callout); color: var(--text-tertiary); 
-            line-height: 1.7; word-break: break-all; 
-            border-radius: var(--radius-md); padding: var(--spacing-sm); 
-            border: 1px solid var(--border); 
-            display: flex; flex-direction: column; gap: var(--spacing-xs); 
-            margin-top: 0; background-color: rgba(var(--bg-control-rgb), 0.2);
-        }
-        #urlQueue span { 
-            padding: var(--spacing-xs); border-radius: var(--radius-xs); 
-            transition: all var(--transition-duration-emphasis) var(--transition-timing-spring); 
-        }
-        #urlQueue span.processing { 
-            background-color: var(--accent-glow); color: var(--text-primary); 
-            font-weight: 600; box-shadow: var(--shadow-sm);
-        }
-        #urlQueue span.removing { opacity: 0; max-height: 0; margin: 0; padding-top: 0; padding-bottom: 0; transform: scale(0.9); }
-        #urlQueue span.error { color: var(--danger-color); text-decoration: line-through; opacity: 0.6; }
-
-        #startRunButton, #pauseResumeButton, #stopProcessButton {
-            padding: var(--spacing-md) var(--spacing-xl); 
-            font-size: var(--font-size-title2); 
-            font-weight: 600; 
-            color: white;
-            border: none; 
-            border-radius: var(--radius-sm); 
-            cursor: pointer;
-            transition: all var(--transition-duration-base) var(--transition-timing-spring);
-            box-shadow: 0 1px 2px rgba(var(--shadow-color-rgb), 0.1), 
-                        inset 0 1px 0px rgba(255,255,255,0.1);
-            text-shadow: 0 1px 1px rgba(0,0,0,0.2);
-            -webkit-backdrop-filter: blur(3px); 
-            backdrop-filter: blur(3px);
-        }
-        
-        #startRunButton, #pauseResumeButton {
-            flex-grow: 1;
-            background-color: var(--accent-color-transparent);
-        }
-
-        #startRunButton:hover, #pauseResumeButton:hover { 
-            background-color: rgba(var(--accent-color-rgb), 0.95);
-            box-shadow: 0 3px 8px -1px rgba(var(--accent-color-rgb), 0.4), 
-                        inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm);
-            transform: translateY(-1px);
-        }
-
-        #startRunButton.success, #pauseResumeButton.success {
-            background-color: var(--success-color-transparent);
-        }
-        #startRunButton.success:hover, #pauseResumeButton.success:hover {
-            background-color: rgba(var(--success-color-rgb), 0.95);
-            box-shadow: 0 3px 8px -1px rgba(var(--success-color-rgb), 0.4),
-                        inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm);
-        }
-
-        #stopProcessButton {
-            background-color: var(--danger-color-transparent);
-            flex-shrink: 0;
-            font-size: var(--font-size-body);
-        }
-        #stopProcessButton:hover {
-            background-color: rgba(var(--danger-color-rgb), 0.95);
-            box-shadow: 0 3px 8px -1px rgba(var(--danger-color-rgb), 0.4),
-                        inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm);
-            transform: translateY(-1px);
-        }
-
-        #startRunButton:active, #pauseResumeButton:active, #stopProcessButton:active {
-            transform: scale(0.97) translateY(0px);
-            filter: brightness(0.95);
-        }
-        #startRunButton:disabled, #pauseResumeButton:disabled, #stopProcessButton:disabled { 
-            background: var(--button-disabled-bg); 
-            color: var(--button-disabled-text); 
-            cursor: not-allowed; transform: none; filter: none; box-shadow: none; text-shadow: none;
-            -webkit-backdrop-filter: none;
-            backdrop-filter: none;
-        }
-
-
-        .list-management { display: flex; flex-direction: column; gap: var(--spacing-md); flex-shrink: 0; }
-        .list-controls-main { display: flex; gap: var(--spacing-xs); flex-wrap: wrap; align-items: center;}
-        .list-controls-main select { 
-            flex-grow: 1; padding: var(--spacing-xs) var(--spacing-sm); font-size: var(--font-size-callout); 
-            border-radius: var(--radius-xs); border: 1px solid var(--border); 
-            color: var(--text-primary); background-color: var(--bg-control); min-width: 150px; 
-        }
-        .list-controls-main button { 
-            padding: 0 var(--spacing-md); font-size: var(--font-size-title1); font-weight: 500; height: 36px; line-height: 34px; 
-            border-radius: var(--radius-xs); border: 1px solid var(--border); 
-            background-color: var(--bg-control); color: var(--text-secondary); 
-            cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); flex-shrink: 0; 
-        }
-        #newListButton { font-size: var(--font-size-callout); padding: 0 var(--spacing-sm); }
-        .list-controls-main button:not(:disabled):hover { background-color: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2)); color: var(--text-primary); }
-        .list-controls-main button:disabled { color: var(--button-disabled-text); background: var(--bg-control); cursor: not-allowed; }
-        
-        .list-controls-secondary { display: flex; gap: var(--spacing-xs); flex-wrap: wrap; flex-shrink: 0; }
-        .list-controls-secondary button { 
-            flex-grow: 1; padding: var(--spacing-xs) var(--spacing-sm); font-size: var(--font-size-footnote); font-weight: 500; 
-            border-radius: var(--radius-xs); border: 1px solid var(--border); 
-            background-color: var(--bg-control); color: var(--text-secondary); 
-            cursor: pointer; transition: all var(--transition-duration-subtle) var(--transition-timing-ease); 
-        }
-        .list-controls-secondary button:not(:disabled):hover { background-color: rgba(var(--border-rgb), calc(var(--border-alpha) * 1.2)); color: var(--text-primary); }
-        .list-controls-secondary button:disabled { color: var(--button-disabled-text); background: var(--bg-control); cursor: not-allowed; }
-        
-        .current-list-indicator { 
-            font-size: var(--font-size-footnote); color: var(--text-secondary); text-align: left; 
-            padding: 0 var(--spacing-xs); margin-bottom: var(--spacing-xs); display: none; flex-shrink: 0; font-weight: 500;
-        }
-
-        .modal-overlay { 
-            position: fixed; inset: 0; z-index: 1000; background-color: var(--modal-overlay-bg); 
-            display: flex; justify-content: center; align-items: center; 
-            opacity: 0; visibility: hidden; 
-            transition: opacity var(--transition-duration-base) var(--transition-timing-ease), visibility 0s var(--transition-duration-base) var(--transition-timing-ease); 
-        }
-        .modal-overlay.visible { 
-            opacity: 1; visibility: visible; 
-            transition-delay: 0s;
-        }
-        .modal-content { 
-            background-color: var(--bg-card); 
-            backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
-            -webkit-backdrop-filter: blur(var(--blur-intensity)) saturate(180%);
-            padding: var(--spacing-lg); border-radius: var(--radius-lg); 
-            box-shadow: var(--shadow-lg), var(--inset-shadow);
-            border: 1px solid rgba(var(--border-rgb), calc(var(--border-alpha) * 0.7));
-            width: calc(100% - var(--spacing-lg) * 2); max-width: 380px; 
-            transform: scale(0.9) translateY(10px); opacity: 0; 
-            transition: transform var(--transition-duration-base) var(--transition-timing-spring), opacity var(--transition-duration-base) var(--transition-timing-ease); 
-        }
-        .modal-overlay.visible .modal-content { transform: scale(1) translateY(0); opacity: 1; }
-        .modal-header { font-size: var(--font-size-title1); font-weight: 600; margin-bottom: var(--spacing-sm); }
-        .modal-body { font-size: var(--font-size-callout); color: var(--text-secondary); margin-bottom: var(--spacing-lg); line-height: 1.5; }
-        .modal-body input { 
-            width: 100%; padding: var(--spacing-sm); font-size: var(--font-size-callout); 
-            border-radius: var(--radius-xs); border: 1px solid var(--border); 
-            background-color: var(--bg-control); color: var(--text-primary); 
-        }
-        .modal-body input:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 3px var(--accent-glow); }
-        .modal-footer { display: flex; gap: var(--spacing-sm); justify-content: flex-end; }
-        .modal-footer button { 
-            padding: var(--spacing-xs) var(--spacing-md); font-size: var(--font-size-callout); font-weight: 600; 
-            border: none; border-radius: var(--radius-xs); cursor: pointer; 
-            transition: filter var(--transition-duration-subtle) var(--transition-timing-ease), transform var(--transition-duration-subtle) var(--transition-timing-spring); 
-        }
-        .modal-footer button:hover { filter: brightness(1.1); }
-        .modal-footer button:active { transform: scale(0.96); }
-        #modal-cancel-btn { background-color: var(--bg-control); color: var(--text-secondary); }
-        #modal-confirm-btn { background-color: var(--accent-color); color: white; }
-        #modal-confirm-btn.danger { background-color: var(--danger-color); }
-
-        .toast-container { 
-            position: fixed; bottom: var(--spacing-lg); right: var(--spacing-lg); z-index: 1100; 
-            display: flex; flex-direction: column; gap: var(--spacing-sm); 
-        }
-        .toast { 
-            padding: var(--spacing-sm) var(--spacing-md); border-radius: var(--radius-sm); 
-            color: white; font-weight: 600; font-size: var(--font-size-subheadline); 
-            box-shadow: var(--shadow-md); 
-            opacity: 0; transform: translateY(20px) scale(0.95); 
-            transition: all var(--transition-duration-emphasis) var(--transition-timing-spring); 
-            backdrop-filter: blur(5px) saturate(150%);
-            -webkit-backdrop-filter: blur(5px) saturate(150%);
-            border: 1px solid rgba(255,255,255,0.1);
-        }
-        .toast.show { opacity: 1; transform: translateY(0) scale(1); }
-        .toast.success { background-color: rgba(var(--success-color-rgb), 0.85); }
-        .toast.error { background-color: rgba(var(--danger-color-rgb), 0.85); }
-        .toast.info { background-color: rgba(var(--accent-color-rgb), 0.85); }
+            border-bottom: 1px solid var(--beos-dark-bevel);
+		}
+		#session-manager-pane .beos-window-tab h1 {
+            background-color: var(--beos-yellow);
+            font-size: 14px;
+            font-weight: bold;
+            margin: 0;
+            padding: 3px 24px 3px 24px;
+            position: relative;
+            border-top: 1px solid var(--beos-light-bevel);
+            border-left: 1px solid var(--beos-light-bevel);
+            border-right: 1px solid var(--beos-dark-bevel);
+            border-bottom: 2px solid var(--beos-text);
+            display: flex;
+            align-items: center;
+		}
+		#session-manager-pane .beos-close-button {
+            position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+            width: 12px; height: 12px;
+            border: var(--beos-border-outset);
+            border-color: var(--beos-light-bevel) var(--beos-dark-bevel) var(--beos-dark-bevel) var(--beos-light-bevel);
+		}
+		#session-manager-pane .beos-menu-bar { display: flex; background-color: var(--beos-bg); padding: 2px 4px; border-bottom: 1px solid var(--beos-dark-bevel); flex-shrink: 0; }
+		#session-manager-pane .menu-item { position: relative; padding: 4px 8px; cursor: default; }
+		#session-manager-pane .menu-item:hover { background-color: var(--beos-blue); color: white; }
+		#session-manager-pane .menu-item .dropdown-content { display: none; position: absolute; left: 0; top: 100%; background-color: var(--beos-bg); min-width: 160px; border: 2px solid; border-color: var(--beos-light-bevel) var(--beos-dark-bevel) var(--beos-dark-bevel) var(--beos-light-bevel); z-index: 100; box-shadow: none; }
+		#session-manager-pane .menu-item:hover .dropdown-content { display: block; }
+		#session-manager-pane .dropdown-content a { color: black; padding: 6px 10px; text-decoration: none; display: flex; align-items: center; gap: 8px; }
+		#session-manager-pane .dropdown-content a:hover { background-color: var(--beos-blue); color: white; }
+		#session-manager-pane .container { padding: 0; flex-grow: 1; display: flex; flex-direction: column; min-height: 0; }
+		#session-manager-pane .controls-bar { display: flex; gap: 4px; margin: 8px 8px 8px; }
+		#session-manager-pane #session-input { flex-grow: 1; min-width: 0; }
+		#session-manager-pane .beos-button, #session-manager-pane .beos-input { background-color: var(--beos-gray); border: var(--beos-border-outset); border-color: var(--beos-light-bevel) var(--beos-dark-bevel) var(--beos-dark-bevel) var(--beos-light-bevel); padding: 5px 8px; font-family: var(--font-family); font-size: 12px; }
+		#session-manager-pane .beos-button { cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; }
+		#session-manager-pane .beos-button:active { border-color: var(--beos-dark-bevel) var(--beos-light-bevel) var(--beos-light-bevel) var(--beos-dark-bevel); padding: 6px 7px 4px 9px; }
+		#session-manager-pane .beos-button:disabled { color: var(--beos-dark-bevel); cursor: wait; }
+		#session-manager-pane .beos-input { width: 100%; border: var(--beos-border-inset); border-color: var(--beos-dark-bevel) var(--beos-light-bevel) var(--beos-light-bevel) var(--beos-dark-bevel); }
+		#session-manager-pane .beos-input:focus { outline: 2px solid var(--beos-blue); outline-offset: -2px; }
+		#session-manager-pane .beos-emoji-icon { display: inline-block; font-size: 14px; line-height: 1; }
+		#session-manager-pane #session-list-container { flex-grow: 1; min-height: 0; border: var(--beos-border-inset); border-color: var(--beos-dark-bevel) var(--beos-light-bevel) var(--beos-light-bevel) var(--beos-dark-bevel); background-color: #fff; padding: 2px; overflow-y: auto; margin: 0 8px 8px; }
+		#session-manager-pane #session-list { list-style: none; padding: 0; margin: 0; }
+		#session-manager-pane .session-item { padding: 6px; }
+		#session-manager-pane .session-item:hover { background-color: var(--beos-blue); color: white; }
+		#session-manager-pane .session-item:hover .session-meta { color: #e0e0e0; }
+		#session-manager-pane .session-item:hover .beos-icon-button { color: white; }
+		#session-manager-pane .session-item.pinned { background-color: #fdfbe8; }
+        #session-manager-pane .session-item.pinned:hover { background-color: var(--beos-blue); }
+        #session-manager-pane .session-item.pinned .session-name::before { content: '📍'; margin-right: 6px; }
+		#session-manager-pane .session-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+		#session-manager-pane .session-info { display: flex; flex-direction: column; gap: 2px; overflow: hidden; min-width: 0; }
+		#session-manager-pane .session-name { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		#session-manager-pane .session-meta { font-size: 10px; color: #555; }
+		#session-manager-pane .session-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+		#session-manager-pane .beos-icon-button { background: none; border: none; padding: 2px; cursor: pointer; font-size: 14px; line-height: 1; color: var(--beos-text); }
+		#session-manager-pane .beos-icon-button:active { border: var(--beos-border-inset); border-color: var(--beos-dark-bevel) var(--beos-light-bevel) var(--beos-light-bevel) var(--beos-dark-bevel); background-color: #b0b0b0; }
+		#session-manager-pane .beos-icon-button:disabled { color: var(--beos-dark-bevel); cursor: wait; }
+		#session-manager-pane .session-details { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px dotted var(--beos-dark-bevel); }
+		#session-manager-pane .session-details-list { list-style: none; padding: 0 0 0 8px; margin: 0; max-height: 120px; overflow-y: auto; }
+		#session-manager-pane .session-details-list li { padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		#session-manager-pane #session-list-container::-webkit-scrollbar { width: 14px; }
+		#session-manager-pane #session-list-container::-webkit-scrollbar-track { background: var(--beos-gray); }
+		#session-manager-pane #session-list-container::-webkit-scrollbar-thumb { background: var(--beos-bg); border: var(--beos-border-outset); border-color: var(--beos-light-bevel) var(--beos-dark-bevel) var(--beos-dark-bevel) var(--beos-light-bevel); }
+		#session-manager-pane #session-list-container::-webkit-scrollbar-button { background: var(--beos-bg); border: var(--beos-border-outset); border-color: var(--beos-light-bevel) var(--beos-dark-bevel) var(--beos-dark-bevel) var(--beos-light-bevel); height: 14px; width: 14px; display: block; }
+		#session-manager-toast {
+            position: fixed; width: 95%; bottom: -60px; left: 50%;
+            transform: translateX(-50%);
+            background-color: var(--beos-bg); color: var(--beos-text);
+            padding: 8px 12px; font-size: 12px; z-index: 999;
+            border: 2px solid;
+            border-color: var(--beos-light-bevel) var(--beos-dark-bevel) var(--beos-dark-bevel) var(--beos-light-bevel);
+            box-shadow: none; display: flex; align-items: center; gap: 12px;
+            opacity: 0; visibility: hidden;
+            transition: bottom 0.3s ease-in-out, opacity 0.3s ease-in-out, visibility 0s 0.3s;
+		}
+		#session-manager-toast.show { bottom: 10px; opacity: 1; visibility: visible; transition: bottom 0.3s ease-in-out, opacity 0.3s ease-in-out, visibility 0s 0s; }
+		#session-manager-pane .toast-undo-btn {
+            background-color: var(--beos-gray); border: var(--beos-border-outset);
+            border-color: var(--beos-light-bevel) var(--beos-dark-bevel) var(--beos-dark-bevel) var(--beos-light-bevel);
+            padding: 2px 8px; font-family: var(--font-family); font-size: 11px;
+            cursor: pointer; flex-shrink: 0;
+		}
+		#session-manager-pane .toast-undo-btn:active { border-color: var(--beos-dark-bevel) var(--beos-light-bevel) var(--beos-light-bevel) var(--beos-dark-bevel); padding: 3px 7px 1px 9px; }
     </style>
 </head>
 <body>
-    <div class="main-container">
-        <header class="header">
-            <h1>⚡️ 여러 URL 열기</h1>
-            <p>목록을 붙여넣고 한번에 실행하세요.</p>
-        </header>
+    <div class="tab-nav">
+        <button class="tab-button active" data-tab="multi-url-opener">여러 URL 열기</button>
+        <button class="tab-button" data-tab="session-manager">세션 매니저</button>
+    </div>
 
-        <div class="section-card-container" data-view-state="input">
-            <div class="input-wrapper">
-                <div class="input-wrapper-content">
-                    <div class="list-management">
-                        <div class="section-header"><span>🗂️ 목록 관리</span></div>
-                        <div class="list-controls-main">
-                            <button type="button" id="newListButton" title="새 목록 작성 시작" aria-label="새 목록 작성 시작">➕ 새 목록</button>
-                            <select id="savedListsDropdown"></select>
-                            <button type="button" id="saveListButton" title="새 목록으로 저장 / 현재 목록 업데이트" aria-label="새 목록으로 저장 / 현재 목록 업데이트">💾</button>
-                            <button type="button" id="renameListButton" title="선택한 목록 이름 변경" aria-label="선택한 목록 이름 변경">✏️</button>
-                            <button type="button" id="deleteListButton" title="선택한 목록 삭제" aria-label="선택한 목록 삭제">🗑️</button>
-                        </div>
-                         <div class="list-controls-secondary">
-                            <button type="button" id="getAllTabsButton" title="브라우저의 모든 창에서 탭 목록을 가져옵니다">모든 창 탭 가져오기</button>
-                            <button type="button" id="getCurrentTabsButton" title="현재 창의 모든 탭 목록을 가져옵니다">현재 창 탭 가져오기</button>
-                            <button type="button" id="importButton" title="파일에서 목록 가져오기">가져오기 (TXT, JSON)</button>
-                            <button type="button" id="exportButton" title="모든 목록을 파일로 내보내기">내보내기 (JSON) </button>
-                            <input type="file" id="importFileInput" accept=".json,.txt,text/plain" style="display: none;">
-                        </div>
-                    </div>
-
-                    <div class="textarea-wrapper">
-                        <p id="currentListIndicator" class="current-list-indicator"></p>
-                        <div class="textarea-container">
-                            <textarea id="urlInput" placeholder="한 줄에 하나씩 URL을 입력하세요."></textarea>
-                            <button id="clearButton" type="button" title="입력 내용 모두 지우기">지우기</button>
-                        </div>
-                        <div class="editor-actions">
-                            <button type="button" id="sortUrlsButton" title="목록 정렬 (A-Z)">정렬 (A-Z)</button>
-                            <button type="button" id="deduplicateUrlsButton" title="목록에서 중복 URL 제거">중복 제거</button>
-                            <button type="button" id="cancelEditButton" title="편집 내용 취소" aria-label="편집 내용 취소">↩️ 취소</button>
-                        </div>
-                    </div>
-
-                    <div class="options-list-wrapper"> 
-                        <div class="section-header"><span>⚙️ 실행 옵션</span></div>
-                        <ul class="options-list">
-                            <li class="option-item">
-                                <label class="option-title">실행 간격 (초)</label>
-                                <div class="input-with-presets">
-                                    <input type="number" id="intervalInput" value="2" min="0.1" step="0.1">
-                                    <div class="preset-buttons">
-                                        <button type="button" class="preset-btn" data-value="1">1초</button>
-                                        <button type="button" class="preset-btn" data-value="2">2초</button>
-                                        <button type="button" class="preset-btn" data-value="3">3초</button>
-                                        <button type="button" class="preset-btn" data-value="4">4초</button>
-                                        <button type="button" class="preset-btn" data-value="5">5초</button>
-                                    </div>
+    <div class="tab-content">
+        <div id="multi-url-opener-pane" class="tab-pane active">
+            <div class="main-container">
+                <header class="header">
+                    <h1>⚡️ 여러 URL 열기</h1>
+                    <p>목록을 붙여넣고 한번에 실행하세요.</p>
+                </header>
+                <div class="section-card-container" data-view-state="input">
+                    <div class="input-wrapper">
+                        <div class="input-wrapper-content">
+                            <div class="list-management">
+                                <div class="section-header"><span>🗂️ 목록 관리</span></div>
+                                <div class="list-controls-main">
+                                    <button type="button" id="newListButton" title="새 목록 작성 시작" aria-label="새 목록 작성 시작">➕ 새 목록</button>
+                                    <select id="savedListsDropdown"></select>
+                                    <button type="button" id="saveListButton" title="새 목록으로 저장 / 현재 목록 업데이트" aria-label="새 목록으로 저장 / 현재 목록 업데이트">💾</button>
+                                    <button type="button" id="renameListButton" title="선택한 목록 이름 변경" aria-label="선택한 목록 이름 변경">✏️</button>
+                                    <button type="button" id="deleteListButton" title="선택한 목록 삭제" aria-label="선택한 목록 삭제">🗑️</button>
                                 </div>
-                            </li>
-                            <li class="option-item">
-                                <label class="option-title">중복 제거</label>
-                                <label class="switch">
-                                    <input type="checkbox" id="removeDuplicates" checked>
-                                    <span class="slider"></span>
-                                </label>
-                            </li>
-                            <li class="option-item">
-                                <label class="option-title">백그라운드에서 탭 열기</label>
-                                <label class="switch">
-                                    <input type="checkbox" id="focusLock" checked>
-                                    <span class="slider"></span>
-                                </label>
-                            </li>
-                            <li class="option-item">
-                                <label class="option-title">탭 로딩 지연 (메모리 절약)</label>
-                                <label class="switch">
-                                    <input type="checkbox" id="delayLoading">
-                                    <span class="slider"></span>
-                                </label>
-                            </li>
-                        </ul>
+                                 <div class="list-controls-secondary">
+                                    <button type="button" id="getAllTabsButton" title="브라우저의 모든 창에서 탭 목록을 가져옵니다">모든 창 탭 가져오기</button>
+                                    <button type="button" id="getCurrentTabsButton" title="현재 창의 모든 탭 목록을 가져옵니다">현재 창 탭 가져오기</button>
+                                    <button type="button" id="importButton" title="파일에서 목록 가져오기">가져오기 (TXT, JSON)</button>
+                                    <button type="button" id="exportButton" title="모든 목록을 파일로 내보내기">내보내기 (JSON) </button>
+                                    <input type="file" id="importFileInput" accept=".json,.txt,text/plain" style="display: none;">
+                                </div>
+                            </div>
+                            <div class="textarea-wrapper">
+                                <p id="currentListIndicator" class="current-list-indicator"></p>
+                                <div class="textarea-container">
+                                    <textarea id="urlInput" placeholder="한 줄에 하나씩 URL을 입력하세요."></textarea>
+                                    <button id="clearButton" type="button" title="입력 내용 모두 지우기">지우기</button>
+                                </div>
+                                <div class="editor-actions">
+                                    <button type="button" id="sortUrlsButton" title="목록 정렬 (A-Z)">정렬 (A-Z)</button>
+                                    <button type="button" id="deduplicateUrlsButton" title="목록에서 중복 URL 제거">중복 제거</button>
+                                    <button type="button" id="cancelEditButton" title="편집 내용 취소" aria-label="편집 내용 취소">↩️ 취소</button>
+                                </div>
+                            </div>
+                            <div class="options-list-wrapper"> 
+                                <div class="section-header"><span>⚙️ 실행 옵션</span></div>
+                                <ul class="options-list">
+                                    <li class="option-item">
+                                        <label class="option-title">실행 간격 (초)</label>
+                                        <div class="input-with-presets">
+                                            <input type="number" id="intervalInput" value="2" min="0.1" step="0.1">
+                                            <div class="preset-buttons">
+                                                <button type="button" class="preset-btn" data-value="1">1초</button>
+                                                <button type="button" class="preset-btn" data-value="2">2초</button>
+                                                <button type="button" class="preset-btn" data-value="3">3초</button>
+                                                <button type="button" class="preset-btn" data-value="4">4초</button>
+                                                <button type="button" class="preset-btn" data-value="5">5초</button>
+                                            </div>
+                                        </div>
+                                    </li>
+                                    <li class="option-item"><label class="option-title">중복 제거</label><label class="switch"><input type="checkbox" id="removeDuplicates" checked><span class="slider"></span></label></li>
+                                    <li class="option-item"><label class="option-title">백그라운드에서 탭 열기</label><label class="switch"><input type="checkbox" id="focusLock" checked><span class="slider"></span></label></li>
+                                    <li class="option-item"><label class="option-title">탭 로딩 지연 (메모리 절약)</label><label class="switch"><input type="checkbox" id="delayLoading"><span class="slider"></span></label></li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div id="input-control-buttons-wrapper">
+                            <button id="startRunButton" type="button"></button>
+                        </div>
+                    </div>
+                    <div class="running-wrapper">
+                        <div class="running-wrapper-sticky-header">
+                            <div id="progressStats" role="status" aria-live="polite"></div>
+                            <progress id="progressBar" value="0" max="100"></progress>
+                            <div id="running-control-buttons-wrapper">
+                                <button id="pauseResumeButton" type="button"></button>
+                                <button id="stopProcessButton" type="button" title="현재 작업 즉시 종료">❌ 종료</button>
+                            </div>
+                        </div>
+                        <div class="running-wrapper-scrollable-content">
+                            <div id="urlQueue"></div>
+                        </div>
                     </div>
                 </div>
-                <div id="input-control-buttons-wrapper">
-                    <button id="startRunButton" type="button"></button>
-                </div>
             </div>
-
-            <div class="running-wrapper">
-                <div class="running-wrapper-sticky-header">
-                    <div id="progressStats" role="status" aria-live="polite"></div>
-                    <progress id="progressBar" value="0" max="100"></progress>
-                    <div id="running-control-buttons-wrapper">
-                        <button id="pauseResumeButton" type="button"></button>
-                        <button id="stopProcessButton" type="button" title="현재 작업 즉시 종료">❌ 종료</button>
+            <div id="modal-overlay" class="modal-overlay">
+                <div class="modal-content">
+                    <div id="modal-header" class="modal-header"></div>
+                    <div id="modal-body" class="modal-body"></div>
+                    <div class="modal-footer">
+                        <button type="button" id="modal-cancel-btn">취소</button>
+                        <button type="button" id="modal-confirm-btn">확인</button>
                     </div>
                 </div>
-                <div class="running-wrapper-scrollable-content">
-                    <div id="urlQueue"></div>
+            </div>
+            <div id="toast-container" class="toast-container"></div>
+        </div>
+
+        <div id="session-manager-pane" class="tab-pane">
+            <div class="beos-window-tab">
+                <h1><div class="beos-close-button"></div>세션 매니저</h1>
+            </div>
+            <div class="beos-menu-bar">
+                <div class="menu-item">
+                    <span>파일</span>
+                    <div class="dropdown-content">
+                        <a href="#" id="export-btn"><span class="beos-emoji-icon">📤</span>파일로 백업하기</a>
+                        <a href="#" id="import-btn"><span class="beos-emoji-icon">📥</span>파일에서 가져오기</a>
+                    </div>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <div id="modal-overlay" class="modal-overlay">
-        <div class="modal-content">
-            <div id="modal-header" class="modal-header"></div>
-            <div id="modal-body" class="modal-body"></div>
-            <div class="modal-footer">
-                <button type="button" id="modal-cancel-btn">취소</button>
-                <button type="button" id="modal-confirm-btn">확인</button>
+            <div class="container">
+                <div class="controls-bar">
+                    <input type="text" id="session-input" class="beos-input" placeholder="새 세션 이름/세션 검색" maxlength="200">
+                    <button id="save-current-window-btn" class="beos-button" title="현재 창의 모든 탭을 저장합니다."><span class="beos-emoji-icon">💾</span>현재창</button>
+                    <button id="save-all-windows-btn" class="beos-button" title="모든 창의 모든 탭을 저장합니다."><span class="beos-emoji-icon">💾</span>전체창(엔터)</button>
+                </div>
+                <div id="session-list-container">
+                    <ul id="session-list"></ul>
+                </div>
             </div>
+            <input type="file" id="import-file-input" style="display: none;" accept=".json">
+            <div id="session-manager-toast"></div>
+            <template id="session-item-template">
+                <li class="session-item">
+                    <div class="session-header">
+                        <div class="session-info">
+                            <span class="session-name"></span>
+                            <span class="session-meta session-meta-date"></span>
+                            <span class="session-meta session-meta-count"></span>
+                        </div>
+                        <div class="session-actions"></div>
+                    </div>
+                    <div class="session-details" style="display: none;">
+                        <ul class="session-details-list"></ul>
+                    </div>
+                </li>
+            </template>
         </div>
     </div>
-
-    <div id="toast-container" class="toast-container"></div>
-
+    
     <script src="sidepanel.js"></script>
 </body>
 </html>
