@@ -157,10 +157,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 showStatus('데이터를 성공적으로 복원했습니다. 페이지가 새로고침됩니다.');
                 
-                // UI 갱신 및 상태 반영
+                // 페이지를 새로고침하여 모든 변경사항을 완전히 적용
                 setTimeout(() => {
-                    restoreOptions();
-                }, 200);
+                    location.reload();
+                }, 1500);
 
             } catch (error) {
                 console.error('Restore failed:', error);
