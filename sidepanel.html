@@ -486,9 +486,9 @@
 		#session-manager-pane .session-item.pinned { background-color: #fdfbe8; }
         #session-manager-pane .session-item.pinned:hover { background-color: var(--beos-blue); }
         #session-manager-pane .session-item.pinned .session-name::before { content: '📍'; margin-right: 6px; }
-		#session-manager-pane .session-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+		#session-manager-pane .session-header { display: flex; justify-content: space-between; align-items: flex-start; cursor: pointer; }
 		#session-manager-pane .session-info { display: flex; flex-direction: column; gap: 2px; overflow: hidden; min-width: 0; }
-		#session-manager-pane .session-name { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		#session-manager-pane .session-name { font-weight: bold; overflow: hidden; word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 		#session-manager-pane .session-meta { font-size: 10px; color: #555; }
 		#session-manager-pane .session-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 		#session-manager-pane .beos-icon-button { background: none; border: none; padding: 2px; cursor: pointer; font-size: 14px; line-height: 1; color: var(--beos-text); }
