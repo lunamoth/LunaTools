@@ -1499,6 +1499,8 @@ document.addEventListener('DOMContentLoaded', function() {
             EXPORT_SUCCESS: '📤 모든 세션을 내보냈습니다.', IMPORT_FILE_TOO_LARGE: '❌ 파일이 너무 큽니다 (최대 10MB)',
             IMPORT_FILE_READ_ERROR: '❌ 파일을 읽는 중 오류가 발생했습니다.', IMPORT_INVALID_FORMAT: '❌ 잘못된 파일 형식입니다.',
             IMPORT_NO_VALID_SESSIONS: '유효한 세션이 없습니다.',
+            SESSION_SAVED_AND_TABS_CLOSED: (name, count) => `✅ '${escapeHtml(name)}'으로 저장하고 ${count}개의 탭을 닫았습니다.`,
+            SESSION_SAVED_TABS_CLOSE_FAILED: (name) => `⚠️ 탭 닫기 실패. '${escapeHtml(name)}' 세션은 저장되었습니다.`,
             createDuplicateNameWarning: (name) => `⚠️ 중복된 이름입니다. '${name}'(으)로 저장합니다.`,
             createSessionUpdatedMessage: (name) => `🔄 '${escapeHtml(name)}' 세션을 업데이트했습니다.`,
             createSessionSavedMessage: (name) => `💾 '${escapeHtml(name)}' 세션을 저장했습니다.`,
@@ -1507,7 +1509,8 @@ document.addEventListener('DOMContentLoaded', function() {
             createNameTooLongMessage: (max) => `⚠️ 이름은 ${max}자를 초과할 수 없습니다.`,
             createNameAlreadyExistsMessage: (name) => `⚠️ '${escapeHtml(name)}' 이름이 이미 존재합니다.`,
             createNameChangedMessage: (name) => `✅ 이름이 '${escapeHtml(name)}'(으)로 변경되었습니다.`,
-            createImportSuccessMessage: (count) => `📥 ${count}개의 세션을 가져왔습니다.`
+            createImportSuccessMessage: (count) => `📥 ${count}개의 세션을 가져왔습니다.`,
+            createConfirmSaveAndCloseMessage: (count) => `현재 탭을 제외한 모든 탭을 닫고, 전체 ${count}개의 탭을 새 세션으로 저장하시겠습니까?`
         }
       };
 
@@ -1520,6 +1523,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const importBtn = pane.querySelector('#import-btn');
       const importFileInput = pane.querySelector('#import-file-input');
       const exportBtn = pane.querySelector('#export-btn');
+      const saveAndCloseBtn = pane.querySelector('#save-and-close-btn');
 
       let allSessions = [];
       let toastTimeout;
@@ -1809,6 +1813,47 @@ document.addEventListener('DOMContentLoaded', function() {
           { errorMessagePrefix: CONSTANTS.MESSAGES.SESSION_SAVE_FAILED }
         );
       };
+
+      const handleSaveAndCloseAll = async () => {
+        const tabsForSession = await getTabsToSave(CONSTANTS.SAVE_SCOPES.ALL_WINDOWS);
+        if (tabsForSession.length === 0) {
+            showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
+            return;
+        }
+
+        if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(tabsForSession.length))) {
+            return;
+        }
+
+        await updateAndSaveSessions(
+            async () => {
+                let name = sessionInput.value.trim();
+                if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`;
+                name = generateUniqueSessionName(name);
+                
+                allSessions.push({ id: generateUniqueId(), name, tabs: tabsForSession, isPinned: false });
+                sessionInput.value = '';
+
+                try {
+                    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+                    const allTabs = await chrome.tabs.query({});
+                    const tabIdsToClose = allTabs
+                        .filter(t => t.id !== activeTab?.id && t.url && isValidUrl(t.url))
+                        .map(t => t.id);
+
+                    if (tabIdsToClose.length > 0) {
+                        await chrome.tabs.remove(tabIdsToClose);
+                    }
+                    return CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, tabIdsToClose.length);
+                } catch (closeError) {
+                    console.error("Error closing tabs:", closeError);
+                    showToast(CONSTANTS.MESSAGES.SESSION_SAVED_TABS_CLOSE_FAILED(name), CONSTANTS.UI.TOAST_DURATION * 1.5);
+                    return CONSTANTS.MESSAGES.createSessionSavedMessage(name);
+                }
+            },
+            { errorMessagePrefix: CONSTANTS.MESSAGES.SESSION_SAVE_FAILED }
+        );
+      };
       
       const handleRestoreSession = async (sessionId) => {
         const session = findSessionById(sessionId);
@@ -2062,6 +2107,11 @@ document.addEventListener('DOMContentLoaded', function() {
         exportBtn.addEventListener('click', (e) => { e.preventDefault(); handleExport(); });
         importBtn.addEventListener('click', (e) => { e.preventDefault(); importFileInput.click(); });
         importFileInput.addEventListener('change', handleImport);
+        saveAndCloseBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const menuItems = pane.querySelectorAll('.dropdown-content a');
+            withLoadingState(menuItems, handleSaveAndCloseAll);
+        });
         
         sessionListEl.addEventListener('click', handleSessionAction);
         
