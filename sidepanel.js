@@ -56,6 +56,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 MAIN_CONTAINER: '.main-container',
                 SECTION_CARD_CONTAINER: '.section-card-container',
                 URL_INPUT: '#urlInput', INTERVAL_INPUT: '#intervalInput', REMOVE_DUPLICATES_CHECKBOX: '#removeDuplicates',
+                SORT_URLS_BEFORE_RUN_CHECKBOX: '#sortUrlsBeforeRun',
                 FOCUS_LOCK_CHECKBOX: '#focusLock', DELAY_LOADING_CHECKBOX: '#delayLoading',
                 START_RUN_BUTTON: '#startRunButton',
                 PAUSE_RESUME_BUTTON: '#pauseResumeButton',
@@ -84,7 +85,7 @@ document.addEventListener('DOMContentLoaded', function() {
             STORAGE_KEY: 'multiOpenUrlOptions',
             URL_LISTS_KEY: 'savedUrlLists',
             DEFAULT_OPTIONS: {
-                interval: 2, removeDuplicates: true, focusLock: true, delayLoading: false
+                interval: 2, removeDuplicates: true, focusLock: true, delayLoading: false, sortUrlsBeforeRun: true
             },
             FADE_DURATION: 300
         };
@@ -1146,10 +1147,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const startProcess = () => {
             if (!UI.urlInput) return;
-            const rawUrls = UI.urlInput.value.split('\n').map(u => u.trim()).filter(Boolean);
-            state.urlsToProcess = (UI.removeDuplicatesCheckbox && UI.removeDuplicatesCheckbox.checked)
-                ? [...new Set(rawUrls)]
-                : rawUrls;
+            let urls = UI.urlInput.value.split('\n').map(u => u.trim()).filter(Boolean);
+
+            if (UI.sortUrlsBeforeRunCheckbox && UI.sortUrlsBeforeRunCheckbox.checked) {
+                urls.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+            }
+            
+            if (UI.removeDuplicatesCheckbox && UI.removeDuplicatesCheckbox.checked) {
+                urls = [...new Set(urls)];
+            }
+
+            state.urlsToProcess = urls;
 
             if (state.urlsToProcess.length === 0) {
                 resetToIdle(CONFIG.TEXT.EMPTY_INPUT, true);
@@ -1232,18 +1240,19 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const saveOptions = () => {
-            if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox) return;
+            if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox) return;
             try {
                 chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: {
                     interval: parseFloat(UI.intervalInput.value),
                     removeDuplicates: UI.removeDuplicatesCheckbox.checked,
                     focusLock: UI.focusLockCheckbox.checked,
-                    delayLoading: UI.delayLoadingCheckbox.checked
+                    delayLoading: UI.delayLoadingCheckbox.checked,
+                    sortUrlsBeforeRun: UI.sortUrlsBeforeRunCheckbox.checked
                 }});
             } catch (e) { console.error('Failed to save options:', e); }
         };
         const loadOptions = async () => {
-            if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox) return;
+            if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox) return;
             try {
                 const data = await chrome.storage.local.get(CONFIG.STORAGE_KEY);
                 const options = { ...CONFIG.DEFAULT_OPTIONS, ...(data[CONFIG.STORAGE_KEY] || {}) };
@@ -1251,6 +1260,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 UI.removeDuplicatesCheckbox.checked = options.removeDuplicates;
                 UI.focusLockCheckbox.checked = options.focusLock;
                 UI.delayLoadingCheckbox.checked = options.delayLoading;
+                UI.sortUrlsBeforeRunCheckbox.checked = options.sortUrlsBeforeRun;
             } catch (e) { console.error('Failed to load options:', e); }
         };
 
