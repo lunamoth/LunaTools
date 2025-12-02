@@ -53,6 +53,12 @@
 (크롬 웹 스토어 배포도 생각해 봤는데 개인용으로 쓰려고 만들어서 과한것 같아서 깃허브 방식으로 배포합니다.)<br/>
 <br><br/>
 
+## 단축키 가이드 
+
+![LunaTools 단축키 가이드](https://raw.githubusercontent.com/lunamoth/LunaTools/refs/heads/main/251202_LuaTools_Keyboard_Shortcut_Guide.png)
+
+<br><br/>
+
 ## 업데이트 내역
 * 2025-04-19 오후 10:38 // 1.1, 제미나이 2.5 프로로 통합본 제작
 * 2025-05-13 오후 3:38 // 1.2, PiP 기능 추가
