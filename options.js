@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     'use strict';
 
+    // --- DOM Elements ---
     const lockedSitesTextarea = document.getElementById('lockedSites');
     const blockedSitesTextarea = document.getElementById('blockedSites');
     const disabledDragSitesTextarea = document.getElementById('disabledDragSites');
@@ -9,8 +10,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const backupButton = document.getElementById('backupButton');
     const restoreButton = document.getElementById('restoreButton');
     const restoreFileInput = document.getElementById('restoreFileInput');
+    
+    // Tab Elements
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    // Select all elements for the glass effect (including the new guide cards)
     const elementsWithHighlight = document.querySelectorAll('.liquid-glass, .btn--primary');
 
+    // --- Storage Keys ---
     const STORAGE_KEYS = {
         // Sync storage
         LOCKED: 'lockedSites',
@@ -25,6 +33,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const LOCAL_KEYS = [STORAGE_KEYS.MULTI_URL_OPTIONS, STORAGE_KEYS.SAVED_URL_LISTS, STORAGE_KEYS.SESSIONS];
     
     const STATUS_VISIBLE_DURATION = 3000;
+
+    // --- Helper Functions ---
 
     const showStatus = (message, isError = false) => {
         if (!statusDiv) return;
@@ -47,10 +57,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    const initializeTabs = () => {
+        tabButtons.forEach(tab => {
+            tab.addEventListener('click', () => {
+                // Remove active class from all
+                tabButtons.forEach(t => t.classList.remove('active'));
+                tabContents.forEach(c => c.classList.remove('active'));
+
+                // Add active class to clicked tab and target content
+                tab.classList.add('active');
+                const targetId = tab.getAttribute('data-tab');
+                const targetContent = document.getElementById(targetId);
+                if (targetContent) {
+                    targetContent.classList.add('active');
+                }
+            });
+        });
+    };
+
     const getValuesFromTextarea = (textarea) => {
         if (!textarea) return [];
         return textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
     };
+
+    // --- Actions ---
 
     const saveOptions = () => {
         const settingsToSave = {
@@ -188,6 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         restoreOptions();
         initializeDynamicHighlight();
+        initializeTabs();
     };
 
     init();

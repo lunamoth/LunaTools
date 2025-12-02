@@ -3,69 +3,101 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LunaTools 설정</title>
-	<link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css2?family=Lato&display=swap" >
-	<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/moonspam/NanumBarunGothic@latest/nanumbarungothicsubset.css">  
+    <title>🌙 LunaTools 설정, 단축키 가이드</title>
+    <link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap" >
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/moonspam/NanumBarunGothic@latest/nanumbarungothicsubset.css">  
     <script src="options.js" defer></script>
     <style>
         :root {
-            --font-family-base: "Lato", "나눔바른고딕", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
-            --font-size-title: 2.4rem;
-            --font-size-subtitle: 1.6rem;
-            --font-size-description: 1.125rem;
-            --font-size-button: 1.05rem;
-            --font-size-textarea: 1rem;
+            /* 폰트 설정 */
+            --font-family-base: "Lato", "나눔바른고딕", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;            
+            
+            --font-size-title: 1.5rem;
+            
+            --font-size-subtitle: 1.8rem;
+            --font-size-description: 1.25rem;
+            --font-size-button: 1.15rem;
+            --font-size-textarea: 1.15rem;
+            --font-size-table: 1.1rem;
+            
             --font-weight-bold: 700;
             --font-weight-semibold: 600;
-            --color-text: #1d1d1f;
-            --color-text-secondary: #555;
-            --color-primary: #007aff;
+
+            /* 색상 */
+            --color-text: #000000;
+            --color-text-secondary: #333333;
+            --color-primary: #006be6;
             --color-white: #ffffff;
-            --spacing-sm: 1rem;
-            --spacing-md: 1.75rem;
-            --spacing-lg: 2rem;
-            --spacing-xl: 4rem;
+            
+            /* 여백 */
+            --spacing-sm: 1.2rem;
+            --spacing-md: 2rem;
+            --spacing-lg: 2.5rem;
+            --spacing-xl: 5rem;
+
             --border-radius-small: 12px;
-            --border-radius-medium: 14px;
+            --border-radius-medium: 16px;
             --border-radius-large: 28px;
             --border-radius-pill: 999px;
-            --bg-page: #f0f0f5;
-            --bg-icon-lock: rgba(0, 122, 255, 0.1);
-            --bg-icon-block: rgba(255, 59, 48, 0.1);
-            --bg-icon-drag: rgba(88, 86, 214, 0.1);
-            --bg-icon-data: rgba(52, 199, 89, 0.1);
-            --bg-textarea: rgba(118, 118, 128, 0.12);
-            --shadow-textarea-inset: rgba(0, 0, 0, 0.05);
-            --ring-focus: rgba(0, 122, 255, 0.3);
-            --glass-bg: rgba(255, 255, 255, 0.55);
-            --glass-border: rgba(255, 255, 255, 0.8);
-            --glass-highlight: rgba(255, 255, 255, 0.7);
-            --glass-shadow: rgba(0, 0, 0, 0.07);
-            --glass-shadow-hover: rgba(0, 0, 0, 0.1);
-            --toast-success-bg: rgba(52, 199, 89, 0.65);
-            --toast-error-bg: rgba(255, 59, 48, 0.65);
+
+            --bg-page: #f2f2f7;
+            
+            /* 아이콘 배경색 */
+            --bg-icon-lock: rgba(0, 122, 255, 0.15);
+            --bg-icon-block: rgba(255, 59, 48, 0.15);
+            --bg-icon-drag: rgba(88, 86, 214, 0.15);
+            --bg-icon-data: rgba(52, 199, 89, 0.15);
+            --bg-icon-guide: rgba(255, 149, 0, 0.15);
+
+            /* 입력창 스타일 */
+            --bg-textarea: #ffffff;
+            --shadow-textarea-inset: rgba(0, 0, 0, 0.1);
+            --ring-focus: rgba(0, 107, 230, 0.4);
+
+            /* 유리 효과 */
+            --glass-bg: rgba(255, 255, 255, 0.85); 
+            --glass-border: rgba(255, 255, 255, 0.9);
+            --glass-highlight: rgba(255, 255, 255, 0.8);
+            --glass-shadow: rgba(0, 0, 0, 0.08);
+            --glass-shadow-hover: rgba(0, 0, 0, 0.12);
+
+            --toast-success-bg: rgba(34, 163, 67, 0.95);
+            --toast-error-bg: rgba(220, 38, 38, 0.95);
+
+            /* Table & Key Styles */
+            --table-border: rgba(0, 0, 0, 0.15);
+            --key-bg: #ffffff;
+            --key-border: #bbbbbb;
+            --key-shadow: 0 3px 0 #888888;
+            --key-text: #000000;
         }
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --color-text: #f2f2f7;
-                --color-text-secondary: #999;
-                --color-primary: #0a84ff;
-                --bg-page: #1c1c1e;
-                --bg-icon-lock: rgba(10, 132, 255, 0.2);
-                --bg-icon-block: rgba(255, 69, 58, 0.2);
-                --bg-icon-drag: rgba(94, 92, 230, 0.2);
-                --bg-icon-data: rgba(48, 209, 88, 0.2);
-                --bg-textarea: rgba(118, 118, 128, 0.24);
-                --shadow-textarea-inset: rgba(0, 0, 0, 0.2);
+                --color-text: #ffffff;
+                --color-text-secondary: #e0e0e0;
+                --color-primary: #3395ff;
+                --bg-page: #121212;
+                
+                --bg-icon-lock: rgba(10, 132, 255, 0.25);
+                --bg-icon-block: rgba(255, 69, 58, 0.25);
+                --bg-icon-drag: rgba(94, 92, 230, 0.25);
+                --bg-icon-data: rgba(48, 209, 88, 0.25);
+                --bg-icon-guide: rgba(255, 159, 10, 0.25);
+
+                --bg-textarea: rgba(255, 255, 255, 0.1);
+                --shadow-textarea-inset: rgba(0, 0, 0, 0.3);
                 --ring-focus: rgba(10, 132, 255, 0.35);
-                --glass-bg: rgba(28, 28, 30, 0.5);
-                --glass-border: rgba(255, 255, 255, 0.15);
+                
+                --glass-bg: rgba(30, 30, 30, 0.7);
+                --glass-border: rgba(255, 255, 255, 0.1);
                 --glass-highlight: rgba(255, 255, 255, 0.12);
-                --glass-shadow: rgba(0, 0, 0, 0.25);
-                --glass-shadow-hover: rgba(0, 0, 0, 0.35);
-                --toast-success-bg: rgba(52, 199, 89, 0.7);
-                --toast-error-bg: rgba(255, 69, 58, 0.7);
+                --glass-shadow: rgba(0, 0, 0, 0.3);
+                
+                --key-bg: #333333;
+                --key-border: #555555;
+                --key-shadow: 0 3px 0 #111111;
+                --key-text: #ffffff;
             }
         }
 
@@ -79,22 +111,23 @@
             background-color: var(--bg-page);
             color: var(--color-text);
             margin: 0;
+            line-height: 1.6;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
         }
 
         .container {
             width: 100%;
-            max-width: 680px;
+            max-width: 1100px;
             margin: 0 auto;
-            padding: var(--spacing-xl) var(--spacing-lg);
+            padding: 1rem var(--spacing-lg) var(--spacing-xl);
             display: flex;
             flex-direction: column;
         }
 
         .page-header {
             text-align: center;
-            margin-bottom: 3.5rem;
+            margin-bottom: 0.5rem;
             animation: fadeIn 0.6s ease-out 0.1s forwards;
             opacity: 0;
         }
@@ -103,11 +136,72 @@
             font-size: var(--font-size-title);
             font-weight: var(--font-weight-bold);
             margin: 0;
-            letter-spacing: -0.025em;
+            letter-spacing: -0.02em;
+            color: var(--color-text);
+        }
+
+        /* --- Tabs Navigation --- */
+        .tabs-nav {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+            animation: fadeIn 0.6s ease-out 0.2s forwards;
+            opacity: 0;
+        }
+
+        .tab-btn {
+            background: none;
+            border: none;
+            font-size: 1.3rem;
+            font-weight: var(--font-weight-bold);
+            color: var(--color-text-secondary);
+            padding: 1rem 2rem;
+            cursor: pointer;
+            position: relative;
+            transition: color 0.3s ease, opacity 0.3s ease;
+            opacity: 0.6;
+        }
+
+        .tab-btn::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            width: 0;
+            height: 4px;
+            background-color: var(--color-primary);
+            border-radius: 2px;
+            transform: translateX(-50%);
+            transition: width 0.3s ease;
+        }
+
+        .tab-btn.active {
+            color: var(--color-primary);
+            opacity: 1;
+        }
+
+        .tab-btn.active::after {
+            width: 80%;
+        }
+
+        .tab-btn:hover {
+            color: var(--color-text);
+            opacity: 1;
+        }
+
+        /* --- Tab Content Areas --- */
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+
+        .tab-content.active {
+            display: block;
         }
 
         .page-footer {
-            margin-top: var(--spacing-sm);
+            margin-top: var(--spacing-md);
             display: flex;
             justify-content: center;
             padding-bottom: var(--spacing-lg);
@@ -115,11 +209,13 @@
             opacity: 0;
         }
 
+        /* Glass Effect Style */
         .liquid-glass {
             position: relative;
             isolation: isolate;
             background-color: var(--glass-bg);
-            box-shadow: 0 10px 40px -10px var(--glass-shadow), inset 0 0.5px 0 0 rgba(255,255,255,0.2), inset 0 -0.5px 0 0 rgba(0,0,0,0.05);
+            box-shadow: 0 10px 40px -10px var(--glass-shadow), inset 0 0.5px 0 0 rgba(255,255,255,0.2);
+            border: 1px solid var(--glass-border);
         }
 
         .liquid-glass::after {
@@ -139,8 +235,7 @@
             inset: 0;
             z-index: -1;
             border-radius: inherit;
-            border: 1.5px solid var(--glass-border);
-            background: radial-gradient(250px circle at var(--mouse-x, 50%) var(--mouse-y, 0%), var(--glass-highlight) 0%, transparent 100%);
+            background: radial-gradient(350px circle at var(--mouse-x, 50%) var(--mouse-y, 0%), var(--glass-highlight) 0%, transparent 100%);
             opacity: 0;
             transition: opacity 0.4s ease-out;
             pointer-events: none;
@@ -154,25 +249,18 @@
             border-radius: var(--border-radius-large);
             padding: var(--spacing-lg);
             margin-bottom: 2.5rem;
-            transition: transform 0.5s cubic-bezier(0.32, 1.25, 0.5, 1.15), box-shadow 0.5s cubic-bezier(0.32, 1.25, 0.5, 1.15);
-            animation: fadeIn 0.7s ease-out forwards;
-            opacity: 0;
+            transition: transform 0.5s cubic-bezier(0.32, 1.25, 0.5, 1.15), box-shadow 0.5s;
         }
 
         .card:hover {
-            transform: translateY(-15px) scale(1.02);
-            box-shadow: 0 30px 60px -15px var(--glass-shadow-hover), inset 0 0.5px 0 0 rgba(255,255,255,0.2), inset 0 -0.5px 0 0 rgba(0,0,0,0.05);
+            transform: translateY(-10px) scale(1.01);
+            box-shadow: 0 30px 60px -15px var(--glass-shadow-hover);
         }
 
         .card:active {
-            transform: translateY(-7px) scale(0.98);
+            transform: translateY(-5px) scale(0.99);
             transition-duration: 0.15s;
         }
-
-        main > .card:nth-of-type(1) { animation-delay: 0.2s; }
-        main > .card:nth-of-type(2) { animation-delay: 0.3s; }
-        main > .card:nth-of-type(3) { animation-delay: 0.4s; }
-        main > .card:nth-of-type(4) { animation-delay: 0.5s; }
 
         .card__header, .card__description, .card__textarea, .card__actions {
             position: relative;
@@ -183,14 +271,14 @@
             display: flex;
             align-items: center;
             gap: var(--spacing-sm);
-            margin-bottom: var(--spacing-sm);
+            margin-bottom: 1.5rem;
         }
 
         .card__icon-wrapper {
             position: relative;
             z-index: 1;
-            width: 38px;
-            height: 38px;
+            width: 48px;
+            height: 48px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -203,96 +291,181 @@
         .card__icon-wrapper--block { background-color: var(--bg-icon-block); }
         .card__icon-wrapper--drag { background-color: var(--bg-icon-drag); }
         .card__icon-wrapper--data { background-color: var(--bg-icon-data); }
-        .card__icon { font-size: 1.2rem; }
-        .card__title { font-size: var(--font-size-subtitle); font-weight: var(--font-weight-semibold); margin: 0; }
+        .card__icon-wrapper--guide { background-color: var(--bg-icon-guide); }
+        
+        .card__icon { font-size: 1.6rem; }
+        .card__title { font-size: var(--font-size-subtitle); font-weight: var(--font-weight-bold); margin: 0; color: var(--color-text); }
+        
         .card__description {
             font-size: var(--font-size-description);
             color: var(--color-text-secondary);
-            line-height: 1.65;
+            line-height: 1.75;
             margin: 0 0 var(--spacing-md) 0;
-            padding-left: 54px;
+            padding-left: 60px;
+            word-break: keep-all;
+        }
+        
+        .card__description strong {
+            color: var(--color-text);
+            font-weight: 800;
         }
 
         .card__textarea {
             width: 100%;
             box-sizing: border-box;
-            padding: 14px 18px;
-            border-radius: var(--border-radius-small);
-            border: 1px solid transparent;
+            padding: 18px 24px;
+            border-radius: var(--border-radius-medium);
+            border: 2px solid transparent;
             font-family: inherit;
             font-size: var(--font-size-textarea);
             line-height: 1.7;
             background-color: var(--bg-textarea);
             color: var(--color-text);
             resize: vertical;
-            min-height: 120px;
-            box-shadow: inset 0 1px 2px var(--shadow-textarea-inset);
-            transition: box-shadow 0.2s, background-color 0.2s, border-color 0.2s;
+            min-height: 150px;
+            box-shadow: inset 0 2px 4px var(--shadow-textarea-inset);
+            transition: all 0.2s;
         }
 
         .card__textarea:focus {
             outline: none;
             border-color: var(--color-primary);
-            box-shadow: inset 0 1px 2px var(--shadow-textarea-inset), 0 0 0 2px var(--ring-focus);
+            box-shadow: 0 0 0 4px var(--ring-focus);
+            background-color: var(--color-white);
         }
 
         .card__actions {
             display: flex;
             justify-content: center;
             gap: var(--spacing-md);
-            margin-top: var(--spacing-sm);
+            margin-top: var(--spacing-md);
+        }
+
+        /* --- Shortcuts Table Styles --- */
+        .shortcut-table {
+            border-collapse: separate;
+            border-spacing: 0;
+            margin-top: 1.5rem;
+            margin-left: 60px;
+            width: calc(100% - 60px);
+            table-layout: fixed;
+            font-size: var(--font-size-table);
+        }
+        
+        @media (max-width: 768px) {
+            .shortcut-table, .card__description {
+                margin-left: 0;
+                width: 100%;
+                padding-left: 0;
+            }
+        }
+
+        .shortcut-table th, .shortcut-table td {
+            text-align: left;
+            padding: 16px 12px 16px 0;
+            border-bottom: 1px solid var(--table-border);
+            vertical-align: top;
+            word-break: keep-all;
+        }
+        
+        /* 1열: 기능 이름 */
+        .shortcut-table th:nth-child(1),
+        .shortcut-table td:nth-child(1) {
+            width: 160px;
+            font-weight: var(--font-weight-bold);
+            color: var(--color-text);
+            white-space: nowrap;
+        }
+
+        /* 2열: 단축키 */
+        .shortcut-table th:nth-child(2),
+        .shortcut-table td:nth-child(2) {
+            width: 280px;
+        }
+
+        /* 3열: 설명 */
+        .shortcut-table td:nth-child(3) {
+            color: var(--color-text-secondary);
+            line-height: 1.7;
+        }
+
+        .shortcut-table tr:hover td {
+             background-color: rgba(0,0,0,0.02);
+        }
+
+        .shortcut-table tr:last-child th,
+        .shortcut-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        /* Keyboard Key Style */
+        kbd {
+            display: inline-block;
+            border-radius: 6px;
+            padding: 3px 10px;
+            font-family: "SF Mono", "Monaco", "Inconsolata", monospace;
+            font-size: 0.95em;
+            font-weight: 700;
+            line-height: normal;
+            background-color: var(--key-bg);
+            border: 1px solid var(--key-border);
+            border-bottom-width: 3px;
+            box-shadow: 0 2px 2px rgba(0,0,0,0.1);
+            color: var(--key-text);
+            white-space: nowrap;
+            margin: 0 2px;
         }
 
         .btn {
             font-size: var(--font-size-button);
-            font-weight: var(--font-weight-semibold);
+            font-weight: var(--font-weight-bold);
             border: none;
             border-radius: var(--border-radius-medium);
-            padding: 14px 32px;
+            padding: 16px 36px;
             cursor: pointer;
             transition: transform 0.2s cubic-bezier(0.3, 1, 0.4, 1), box-shadow 0.2s ease-out, background-color 0.2s ease-out;
             overflow: hidden;
         }
         
         .btn--secondary {
-            background-color: rgba(118, 118, 128, 0.12);
-            color: var(--color-text);
+            background-color: #e5e5ea;
+            color: #000;
         }
         .btn--secondary:hover {
-             background-color: rgba(118, 118, 128, 0.20);
+             background-color: #d1d1d6;
         }
 
         .btn--primary {
             background-color: var(--color-primary);
             color: var(--color-white);
-            transform: scale(1.05);
-            box-shadow: 0 5px 15px -3px rgba(0, 122, 255, 0.5), inset 0 -1px 0 0 rgba(0,0,0,0.2);
+            transform: scale(1.02);
+            box-shadow: 0 5px 15px -3px rgba(0, 107, 230, 0.5), inset 0 -1px 0 0 rgba(0,0,0,0.2);
         }
         .btn--primary:hover {
-            transform: scale(1.1);
-            box-shadow: 0 8px 20px -4px rgba(0, 122, 255, 0.6), inset 0 -1px 0 0 rgba(0,0,0,0.2);
+            transform: scale(1.05);
+            box-shadow: 0 8px 20px -4px rgba(0, 107, 230, 0.6);
             filter: brightness(1.1);
         }
         .btn--primary:active {
             transform: scale(1.0);
-            box-shadow: 0 1px 4px -1px rgba(0, 122, 255, 0.4), inset 0 2px 4px 0 rgba(0,0,0,0.3);
-            transition-duration: 0.1s;
         }
 
         .status-toast {
             position: fixed;
-            bottom: 30px;
+            bottom: 40px;
             left: 50%;
-            transform: translate(-50%, 10px);
-            padding: 12px 24px;
+            transform: translate(-50%, 20px);
+            padding: 16px 32px;
             color: var(--color-white);
             border-radius: var(--border-radius-pill);
-            font-weight: var(--font-weight-semibold);
+            font-size: 1.1rem;
+            font-weight: var(--font-weight-bold);
             text-shadow: 0 1px 2px rgba(0,0,0,0.2);
             opacity: 0;
             transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
             pointer-events: none;
             z-index: 100;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
         }
         .status-toast.liquid-glass::before {
             opacity: 1;
@@ -317,63 +490,233 @@
 <body>
     <main class="container">
         <header class="page-header">
-            <h1 class="page-header__title">LunaTools 설정</h1>
+            <h1 class="page-header__title">🌙 LunaTools</h1>
         </header>
 
-        <section class="card liquid-glass">
-            <div class="card__header">
-                <div class="card__icon-wrapper card__icon-wrapper--lock">
-                    <span class="card__icon">🔒</span>
-                </div>
-                <h2 class="card__title">사이트 잠금</h2>
-            </div>
-            <p class="card__description">실수로 탭을 닫는 것을 방지하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)</p>
-            <label for="lockedSites" class="visually-hidden">잠금할 사이트 목록</label>
-            <textarea id="lockedSites" class="card__textarea" rows="5"></textarea>
-        </section>
+        <!-- Tabs Navigation -->
+        <nav class="tabs-nav">
+            <button class="tab-btn active" data-tab="settings">옵션 설정</button>
+            <button class="tab-btn" data-tab="guide">단축키 가이드</button>
+        </nav>
 
-        <section class="card liquid-glass">
-            <div class="card__header">
-                <div class="card__icon-wrapper card__icon-wrapper--block">
-                    <span class="card__icon">🚫</span>
+        <!-- Tab 1: Settings -->
+        <div id="settings" class="tab-content active">
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--lock">
+                        <span class="card__icon">🔒</span>
+                    </div>
+                    <h2 class="card__title">사이트 잠금</h2>
                 </div>
-                <h2 class="card__title">사이트 차단</h2>
-            </div>
-            <p class="card__description">접속을 차단하고 싶은 사이트의 <strong>URL에 포함될 키워드</strong>를 한 줄에 하나씩 입력하세요. (예: example.com/board)</p>
-            <label for="blockedSites" class="visually-hidden">차단할 사이트 목록</label>
-            <textarea id="blockedSites" class="card__textarea" rows="5"></textarea>
-        </section>
+                <p class="card__description">실수로 탭을 닫는 것을 방지하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)</p>
+                <label for="lockedSites" class="visually-hidden">잠금할 사이트 목록</label>
+                <textarea id="lockedSites" class="card__textarea" rows="5"></textarea>
+            </section>
 
-        <section class="card liquid-glass">
-            <div class="card__header">
-                <div class="card__icon-wrapper card__icon-wrapper--drag">
-                    <span class="card__icon">🖱️</span>
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--block">
+                        <span class="card__icon">🚫</span>
+                    </div>
+                    <h2 class="card__title">사이트 차단</h2>
                 </div>
-                <h2 class="card__title">특정 사이트 드래그 기능 비활성화</h2>
-            </div>
-            <p class="card__description">Shift/Ctrl/Alt + 드래그 기능을 비활성화 하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)</p>
-            <label for="disabledDragSites" class="visually-hidden">드래그 기능 비활성화 사이트 목록</label>
-            <textarea id="disabledDragSites" class="card__textarea" rows="5"></textarea>
-        </section>
+                <p class="card__description">접속을 차단하고 싶은 사이트의 <strong>URL에 포함될 키워드</strong>를 한 줄에 하나씩 입력하세요. (예: example.com/board)</p>
+                <label for="blockedSites" class="visually-hidden">차단할 사이트 목록</label>
+                <textarea id="blockedSites" class="card__textarea" rows="5"></textarea>
+            </section>
 
-        <section class="card liquid-glass">
-            <div class="card__header">
-                <div class="card__icon-wrapper card__icon-wrapper--data">
-                    <span class="card__icon">💾</span>
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--drag">
+                        <span class="card__icon">🖱️</span>
+                    </div>
+                    <h2 class="card__title">드래그 기능 비활성화</h2>
                 </div>
-                <h2 class="card__title">데이터 관리</h2>
-            </div>
-            <p class="card__description">모든 설정을 하나의 파일로 백업하거나, 백업 파일로부터 설정을 복원합니다.</p>
-            <div class="card__actions">
-                <button id="backupButton" class="btn btn--secondary">💾 백업</button>
-                <button id="restoreButton" class="btn btn--secondary">↩️ 복원</button>
-                <input type="file" id="restoreFileInput" class="visually-hidden" accept=".json,application/json">
-            </div>
-        </section>
+                <p class="card__description">Shift/Ctrl/Alt + 드래그 기능을 비활성화 하고 싶은 사이트의 <strong>호스트 주소</strong>를 한 줄에 하나씩 입력하세요. (예: example.com)</p>
+                <label for="disabledDragSites" class="visually-hidden">드래그 기능 비활성화 사이트 목록</label>
+                <textarea id="disabledDragSites" class="card__textarea" rows="5"></textarea>
+            </section>
 
-        <footer class="page-footer">
-            <button id="save" class="btn btn--primary">설정 저장</button>
-        </footer>
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--data">
+                        <span class="card__icon">💾</span>
+                    </div>
+                    <h2 class="card__title">데이터 관리</h2>
+                </div>
+                <p class="card__description">모든 설정을 하나의 파일로 백업하거나, 백업 파일로부터 설정을 복원합니다.</p>
+                <div class="card__actions">
+                    <button id="backupButton" class="btn btn--secondary">💾 백업 다운로드</button>
+                    <button id="restoreButton" class="btn btn--secondary">↩️ 설정 복원하기</button>
+                    <input type="file" id="restoreFileInput" class="visually-hidden" accept=".json,application/json">
+                </div>
+            </section>
+
+            <footer class="page-footer">
+                <button id="save" class="btn btn--primary">모든 설정 저장하기</button>
+            </footer>
+        </div>
+
+        <!-- Tab 2: Shortcuts Guide -->
+        <div id="guide" class="tab-content">
+            <!-- Section 1 -->
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--guide">
+                        <span class="card__icon">📑</span>
+                    </div>
+                    <h2 class="card__title">1. 브라우저 및 탭 관리 (전역 기능)</h2>
+                </div>
+                <p class="card__description">브라우저 전체에 적용되는 탭 관리 및 패널 기능입니다.</p>
+                <table class="shortcut-table">
+                    <thead>
+                        <tr>
+                            <th>기능</th>
+                            <th>단축키 / 동작</th>
+                            <th>설명</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>사이드패널 열기</td>
+                            <td><kbd>Alt</kbd> + <kbd>L</kbd></td>
+                            <td>LunaTools 사이드패널(여러 URL 열기, 세션 매니저)을 엽니다.</td>
+                        </tr>
+                        <tr>
+                            <td>탭 정렬</td>
+                            <td><kbd>Alt</kbd> + <kbd>A</kbd></td>
+                            <td>현재 창의 탭들을 도메인 및 URL 경로 순서대로 정렬합니다.</td>
+                        </tr>
+                        <tr>
+                            <td>탭 합치기</td>
+                            <td>아이콘 우클릭</td>
+                            <td>확장 프로그램 아이콘 우클릭 메뉴 > '모든 탭을 하나의 창으로 합치기'</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Section 2 -->
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--guide">
+                        <span class="card__icon">🧭</span>
+                    </div>
+                    <h2 class="card__title">2. 웹 페이지 탐색 및 링크 (웹페이지 내 동작)</h2>
+                </div>
+                <p class="card__description">웹 페이지 내부에서 빠르게 이동하거나 링크를 처리하는 기능입니다.</p>
+                <table class="shortcut-table">
+                    <thead>
+                        <tr>
+                            <th>기능</th>
+                            <th>단축키 / 동작</th>
+                            <th>설명</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>이전 페이지</td>
+                            <td><kbd>←</kbd> (방향키)</td>
+                            <td>URL의 숫자를 인식하여 이전 페이지로 이동합니다.</td>
+                        </tr>
+                        <tr>
+                            <td>다음 페이지</td>
+                            <td><kbd>→</kbd> (방향키)</td>
+                            <td>URL의 숫자를 인식하여 다음 페이지로 이동합니다.</td>
+                        </tr>
+                        <tr>
+                            <td>링크 열기</td>
+                            <td><kbd>Shift</kbd> + 드래그</td>
+                            <td>드래그 영역 내의 링크들을 새 탭으로 <strong>즉시</strong> 엽니다.</td>
+                        </tr>
+                        <tr>
+                            <td>링크 복사</td>
+                            <td><kbd>Ctrl</kbd> + 드래그</td>
+                            <td>드래그 영역 내의 링크 주소들을 클립보드에 <strong>복사</strong>합니다.</td>
+                        </tr>
+                        <tr>
+                            <td>지연 열기</td>
+                            <td><kbd>Alt</kbd> + 드래그</td>
+                            <td>드래그 영역 내의 링크들을 <strong>2초 간격</strong>으로 순차적으로 엽니다.</td>
+                        </tr>
+                        <tr>
+                            <td>마우스 제스처</td>
+                            <td>우클릭 + 드래그</td>
+                            <td><kbd>↑</kbd>: 새로고침, <kbd>↓</kbd>: 탭 닫기, <kbd>←</kbd>: 뒤로 가기, <kbd>→</kbd>: 앞으로 가기</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Section 3 -->
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--guide">
+                        <span class="card__icon">🎬</span>
+                    </div>
+                    <h2 class="card__title">3. 미디어 제어 (영상/음성)</h2>
+                </div>
+                <p class="card__description">유튜브, 동영상 사이트 등에서 미디어를 편리하게 제어합니다.</p>
+                <table class="shortcut-table">
+                    <thead>
+                        <tr>
+                            <th>기능</th>
+                            <th>단축키 / 동작</th>
+                            <th>설명</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>PiP 모드</td>
+                            <td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd></td>
+                            <td>현재 재생 중인 동영상을 Picture-in-Picture(작은 창) 모드로 전환합니다.</td>
+                        </tr>
+                        <tr>
+                            <td>볼륨 부스터</td>
+                            <td><kbd>Alt</kbd> + <kbd>V</kbd></td>
+                            <td>현재 탭의 소리 크기를 3배(300%)로 증폭합니다. (토글 방식)</td>
+                        </tr>
+                        <tr>
+                            <td>영상 회전</td>
+                            <td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>R</kbd></td>
+                            <td>동영상을 90도씩 회전시킵니다.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Section 4 -->
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--guide">
+                        <span class="card__icon">⚡</span>
+                    </div>
+                    <h2 class="card__title">4. 유틸리티 (스마트 변환)</h2>
+                </div>
+                <p class="card__description">환율, 단위, 시간 등을 드래그하여 즉시 변환합니다.</p>
+                <table class="shortcut-table">
+                    <thead>
+                        <tr>
+                            <th>기능</th>
+                            <th>단축키 / 동작</th>
+                            <th>설명</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>스마트 변환</td>
+                            <td><kbd>Alt</kbd> + <kbd>Z</kbd></td>
+                            <td>웹페이지에서 텍스트(환율, 단위, 시간 등)를 드래그한 후 누르면 변환 결과를 팝업으로 보여줍니다.</td>
+                        </tr>
+                        <tr>
+                            <td>팝업 닫기</td>
+                            <td><kbd>Esc</kbd></td>
+                            <td>스마트 변환 결과 팝업 창을 닫습니다.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+        </div>
     </main>
     <div id="status" class="status-toast liquid-glass"></div>
 
