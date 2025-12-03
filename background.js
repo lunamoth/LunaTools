@@ -498,6 +498,19 @@ const tabManager = new TabManager();
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command === "sort-tabs") {
     await tabManager.sortTabsInCurrentWindow();
+  } else if (command === "toggle-mute-current") {
+    const currentTab = await chrome.tabs.query({active: true, currentWindow: true});
+    if (currentTab[0]) {
+      const isMuted = currentTab[0].mutedInfo.muted;
+      await chrome.tabs.update(currentTab[0].id, { muted: !isMuted });
+    }
+  } else if (command === "toggle-mute-all") {
+    const allTabs = await chrome.tabs.query({});
+    const anyUnmuted = allTabs.some(t => !t.mutedInfo.muted);
+    const targetMuteState = anyUnmuted;
+    for (const t of allTabs) {
+      await chrome.tabs.update(t.id, { muted: targetMuteState });
+    }
   }
 });
 
