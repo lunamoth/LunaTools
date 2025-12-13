@@ -1,4 +1,4 @@
-goup.js(function () {
+(function () {
     'use strict';
 
     // 악의적인 스크립트가 URL이나 location 등을 덮어씌웠을 경우를 대비해 네이티브 함수 캐싱
