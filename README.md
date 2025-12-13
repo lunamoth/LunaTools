@@ -61,7 +61,7 @@
 ## 단축키 가이드 
 
 ![LunaTools 단축키 가이드](https://raw.githubusercontent.com/lunamoth/LunaTools/refs/heads/main/251202_LuaTools_Keyboard_Shortcut_Guide.png)
-
+(단축키 추가로 더 업데이트 됐습니다. 옵션의 두번째 탭 단축키 가이드를 참고해주세요)
 <br><br/>
 
 ## 업데이트 내역
