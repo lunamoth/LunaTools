@@ -9,8 +9,8 @@
     <script src="options.js" defer></script>
     <style>
         :root {
-            /* 폰트 설정 */
-            --font-family-base: "Lato", "나눔바른고딕", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;            
+            /* 폰트 설정 (유지) */
+            --font-family-base: "Lato", "나눔바른고딕", "NanumBarunGothic", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;            
             
             --font-size-title: 1.5rem;
             
@@ -23,9 +23,9 @@
             --font-weight-bold: 700;
             --font-weight-semibold: 600;
 
-            /* 색상 */
-            --color-text: #000000;
-            --color-text-secondary: #333333;
+            /* 색상 - 가독성을 위해 대비(Contrast) 강화 */
+            --color-text: #111111; /* 더 진한 검정 */
+            --color-text-secondary: #333333; /* 회색조를 더 진하게 변경 */
             --color-primary: #006be6;
             --color-white: #ffffff;
             
@@ -42,7 +42,7 @@
 
             --bg-page: #f2f2f7;
             
-            /* 아이콘 배경색 */
+            /* 아이콘 배경색 - 명시성을 위해 약간 진하게 */
             --bg-icon-lock: rgba(0, 122, 255, 0.15);
             --bg-icon-block: rgba(255, 59, 48, 0.15);
             --bg-icon-drag: rgba(88, 86, 214, 0.15);
@@ -51,58 +51,67 @@
 
             /* 입력창 스타일 */
             --bg-textarea: #ffffff;
-            --shadow-textarea-inset: rgba(0, 0, 0, 0.1);
-            --ring-focus: rgba(0, 107, 230, 0.4);
+            --border-textarea: #c0c0c0; /* 테두리 더 진하게 */
+            --shadow-textarea-inset: rgba(0, 0, 0, 0.03);
+            --ring-focus: rgba(0, 107, 230, 0.3);
 
-            /* 유리 효과 */
-            --glass-bg: rgba(255, 255, 255, 0.85); 
-            --glass-border: rgba(255, 255, 255, 0.9);
-            --glass-highlight: rgba(255, 255, 255, 0.8);
-            --glass-shadow: rgba(0, 0, 0, 0.08);
+            /* 유리 효과 - 텍스트 가독성을 위해 불투명도 상향 */
+            --glass-bg: rgba(255, 255, 255, 0.98); 
+            --glass-border: rgba(255, 255, 255, 1);
+            --glass-highlight: rgba(255, 255, 255, 0.6);
+            --glass-shadow: rgba(0, 0, 0, 0.08); /* 그림자 약간 강화 */
             --glass-shadow-hover: rgba(0, 0, 0, 0.12);
 
-            --toast-success-bg: rgba(34, 163, 67, 0.95);
-            --toast-error-bg: rgba(220, 38, 38, 0.95);
+            --toast-success-bg: rgba(34, 163, 67, 1);
+            --toast-error-bg: rgba(220, 38, 38, 1);
 
             /* Table & Key Styles */
-            --table-border: rgba(0, 0, 0, 0.15);
-            --key-bg: #ffffff;
-            --key-border: #bbbbbb;
-            --key-shadow: 0 3px 0 #888888;
-            --key-text: #000000;
+            --table-border: rgba(0, 0, 0, 0.15); /* 라인 더 선명하게 */
+            --table-header-bg: rgba(0, 0, 0, 0.04); /* 헤더 배경 추가 */
+            --table-hover-bg: rgba(0, 0, 0, 0.03);
+            
+            --key-bg: #f8f9fa;
+            --key-border: #d1d5db;
+            --key-shadow: 0 2px 0 #adb5bd;
+            --key-text: #1f2937;
         }
 
         @media (prefers-color-scheme: dark) {
             :root {
                 --color-text: #ffffff;
-                --color-text-secondary: #e0e0e0;
-                --color-primary: #3395ff;
-                --bg-page: #121212;
+                --color-text-secondary: #e5e5e5; /* 다크모드에서 더 밝게 */
+                --color-primary: #5cb0ff;
+                --bg-page: #050505;
                 
-                --bg-icon-lock: rgba(10, 132, 255, 0.25);
-                --bg-icon-block: rgba(255, 69, 58, 0.25);
-                --bg-icon-drag: rgba(94, 92, 230, 0.25);
-                --bg-icon-data: rgba(48, 209, 88, 0.25);
-                --bg-icon-guide: rgba(255, 159, 10, 0.25);
+                --bg-icon-lock: rgba(10, 132, 255, 0.3);
+                --bg-icon-block: rgba(255, 69, 58, 0.3);
+                --bg-icon-drag: rgba(94, 92, 230, 0.3);
+                --bg-icon-data: rgba(48, 209, 88, 0.3);
+                --bg-icon-guide: rgba(255, 159, 10, 0.3);
 
                 --bg-textarea: rgba(255, 255, 255, 0.1);
-                --shadow-textarea-inset: rgba(0, 0, 0, 0.3);
-                --ring-focus: rgba(10, 132, 255, 0.35);
+                --border-textarea: rgba(255, 255, 255, 0.25);
+                --shadow-textarea-inset: rgba(0, 0, 0, 0.4);
+                --ring-focus: rgba(10, 132, 255, 0.4);
                 
-                --glass-bg: rgba(30, 30, 30, 0.7);
-                --glass-border: rgba(255, 255, 255, 0.1);
-                --glass-highlight: rgba(255, 255, 255, 0.12);
-                --glass-shadow: rgba(0, 0, 0, 0.3);
+                --glass-bg: rgba(28, 28, 30, 0.96); /* 다크모드 배경 불투명도 상향 */
+                --glass-border: rgba(255, 255, 255, 0.15);
+                --glass-highlight: rgba(255, 255, 255, 0.08);
+                --glass-shadow: rgba(0, 0, 0, 0.5);
                 
-                --key-bg: #333333;
-                --key-border: #555555;
-                --key-shadow: 0 3px 0 #111111;
+                --table-border: rgba(255, 255, 255, 0.2);
+                --table-header-bg: rgba(255, 255, 255, 0.08);
+                --table-hover-bg: rgba(255, 255, 255, 0.1);
+
+                --key-bg: #404040;
+                --key-border: #6b7280;
+                --key-shadow: 0 3px 0 #1f2937;
                 --key-text: #ffffff;
             }
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
+            from { opacity: 0; transform: translateY(15px); }
             to { opacity: 1; transform: translateY(0); }
         }
 
@@ -112,8 +121,10 @@
             color: var(--color-text);
             margin: 0;
             line-height: 1.6;
-            -webkit-font-smoothing: antialiased;
+            word-break: keep-all; /* 한글 단어 끊김 방지 */
+            -webkit-font-smoothing: antialiased; /* 폰트 렌더링 부드럽게 */
             -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility; /* 텍스트 렌더링 최적화 */
         }
 
         .container {
@@ -128,7 +139,7 @@
         .page-header {
             text-align: center;
             margin-bottom: 0.5rem;
-            animation: fadeIn 0.6s ease-out 0.1s forwards;
+            animation: fadeIn 0.5s ease-out forwards;
             opacity: 0;
         }
 
@@ -136,7 +147,7 @@
             font-size: var(--font-size-title);
             font-weight: var(--font-weight-bold);
             margin: 0;
-            letter-spacing: -0.02em;
+            letter-spacing: -0.01em;
             color: var(--color-text);
         }
 
@@ -146,7 +157,7 @@
             justify-content: center;
             gap: 1.5rem;
             margin-bottom: 1.5rem;
-            animation: fadeIn 0.6s ease-out 0.2s forwards;
+            animation: fadeIn 0.5s ease-out 0.1s forwards;
             opacity: 0;
         }
 
@@ -159,8 +170,8 @@
             padding: 1rem 2rem;
             cursor: pointer;
             position: relative;
-            transition: color 0.3s ease, opacity 0.3s ease;
-            opacity: 0.6;
+            transition: color 0.2s ease, opacity 0.2s ease;
+            opacity: 0.7; /* 비활성 상태 가독성 향상 */
         }
 
         .tab-btn::after {
@@ -173,7 +184,7 @@
             background-color: var(--color-primary);
             border-radius: 2px;
             transform: translateX(-50%);
-            transition: width 0.3s ease;
+            transition: width 0.25s cubic-bezier(0.2, 0, 0, 1);
         }
 
         .tab-btn.active {
@@ -182,7 +193,7 @@
         }
 
         .tab-btn.active::after {
-            width: 80%;
+            width: 70%;
         }
 
         .tab-btn:hover {
@@ -193,7 +204,7 @@
         /* --- Tab Content Areas --- */
         .tab-content {
             display: none;
-            animation: fadeIn 0.5s ease-out forwards;
+            animation: fadeIn 0.4s ease-out forwards;
         }
 
         .tab-content.active {
@@ -205,16 +216,16 @@
             display: flex;
             justify-content: center;
             padding-bottom: var(--spacing-lg);
-            animation: fadeIn 0.7s ease-out 0.5s forwards;
+            animation: fadeIn 0.6s ease-out 0.3s forwards;
             opacity: 0;
         }
 
-        /* Glass Effect Style */
+        /* Glass Effect Style - 가독성 중심 재설계 */
         .liquid-glass {
             position: relative;
             isolation: isolate;
             background-color: var(--glass-bg);
-            box-shadow: 0 10px 40px -10px var(--glass-shadow), inset 0 0.5px 0 0 rgba(255,255,255,0.2);
+            box-shadow: 0 4px 20px var(--glass-shadow);
             border: 1px solid var(--glass-border);
         }
 
@@ -224,9 +235,10 @@
             inset: 0;
             z-index: -2;
             border-radius: inherit;
-            backdrop-filter: blur(24px) saturate(180%);
-            -webkit-backdrop-filter: blur(24px) saturate(180%);
-            filter: url(#glass-distortion);
+            /* 배경 왜곡 필터 제거 -> 텍스트 선명도 대폭 향상 */
+            backdrop-filter: blur(25px); 
+            -webkit-backdrop-filter: blur(25px);
+            opacity: 1;
         }
 
         .liquid-glass::before {
@@ -235,9 +247,9 @@
             inset: 0;
             z-index: -1;
             border-radius: inherit;
-            background: radial-gradient(350px circle at var(--mouse-x, 50%) var(--mouse-y, 0%), var(--glass-highlight) 0%, transparent 100%);
+            background: radial-gradient(400px circle at var(--mouse-x, 50%) var(--mouse-y, 0%), var(--glass-highlight) 0%, transparent 100%);
             opacity: 0;
-            transition: opacity 0.4s ease-out;
+            transition: opacity 0.3s ease;
             pointer-events: none;
         }
 
@@ -249,17 +261,16 @@
             border-radius: var(--border-radius-large);
             padding: var(--spacing-lg);
             margin-bottom: 2.5rem;
-            transition: transform 0.5s cubic-bezier(0.32, 1.25, 0.5, 1.15), box-shadow 0.5s;
+            transition: box-shadow 0.3s ease;
         }
 
         .card:hover {
-            transform: translateY(-10px) scale(1.01);
-            box-shadow: 0 30px 60px -15px var(--glass-shadow-hover);
+            transform: none;
+            box-shadow: 0 12px 30px var(--glass-shadow-hover);
         }
-
+        
         .card:active {
-            transform: translateY(-5px) scale(0.99);
-            transition-duration: 0.15s;
+            transform: none;
         }
 
         .card__header, .card__description, .card__textarea, .card__actions {
@@ -284,15 +295,22 @@
             justify-content: center;
             border-radius: 50%;
             flex-shrink: 0;
-            transition: transform 0.3s cubic-bezier(0.3, 1, 0.4, 1);
         }
-        .card:hover .card__icon-wrapper { transform: scale(1.15); }
-        .card__icon-wrapper--lock { background-color: var(--bg-icon-lock); }
-        .card__icon-wrapper--block { background-color: var(--bg-icon-block); }
-        .card__icon-wrapper--drag { background-color: var(--bg-icon-drag); }
-        .card__icon-wrapper--data { background-color: var(--bg-icon-data); }
-        .card__icon-wrapper--guide { background-color: var(--bg-icon-guide); }
         
+        .card__icon-wrapper--lock { background-color: var(--bg-icon-lock); color: #007aff; }
+        .card__icon-wrapper--block { background-color: var(--bg-icon-block); color: #ff3b30; }
+        .card__icon-wrapper--drag { background-color: var(--bg-icon-drag); color: #5856d6; }
+        .card__icon-wrapper--data { background-color: var(--bg-icon-data); color: #34c759; }
+        .card__icon-wrapper--guide { background-color: var(--bg-icon-guide); color: #ff9500; }
+        
+        @media (prefers-color-scheme: dark) {
+             .card__icon-wrapper--lock { color: #5ac8fa; }
+             .card__icon-wrapper--block { color: #ff453a; }
+             .card__icon-wrapper--drag { color: #5e5ce6; }
+             .card__icon-wrapper--data { color: #30d158; }
+             .card__icon-wrapper--guide { color: #ff9f0a; }
+        }
+
         .card__icon { font-size: 1.6rem; }
         .card__title { font-size: var(--font-size-subtitle); font-weight: var(--font-weight-bold); margin: 0; color: var(--color-text); }
         
@@ -302,11 +320,11 @@
             line-height: 1.75;
             margin: 0 0 var(--spacing-md) 0;
             padding-left: 60px;
-            word-break: keep-all;
+            word-break: keep-all; /* 단어 단위 줄바꿈 유지 */
         }
         
         .card__description strong {
-            color: var(--color-text);
+            color: var(--color-text); /* 강조 텍스트 색상 더 진하게 */
             font-weight: 800;
         }
 
@@ -315,8 +333,8 @@
             box-sizing: border-box;
             padding: 18px 24px;
             border-radius: var(--border-radius-medium);
-            border: 2px solid transparent;
-            font-family: inherit;
+            border: 2px solid var(--border-textarea); /* 테두리 두께 1px -> 2px 증가 */
+            font-family: "SF Mono", "Monaco", "Inconsolata", monospace; /* 입력창은 고정폭 폰트가 가독성에 유리 */
             font-size: var(--font-size-textarea);
             line-height: 1.7;
             background-color: var(--bg-textarea);
@@ -333,6 +351,12 @@
             box-shadow: 0 0 0 4px var(--ring-focus);
             background-color: var(--color-white);
         }
+        
+        @media (prefers-color-scheme: dark) {
+            .card__textarea:focus {
+                 background-color: #2c2c2e;
+            }
+        }
 
         .card__actions {
             display: flex;
@@ -341,10 +365,9 @@
             margin-top: var(--spacing-md);
         }
 
-        /* --- Shortcuts Table Styles --- */
+        /* --- Shortcuts Table Styles Optimized --- */
         .shortcut-table {
-            border-collapse: separate;
-            border-spacing: 0;
+            border-collapse: collapse; /* separate -> collapse 로 변경하여 선 명확화 */
             margin-top: 1.5rem;
             margin-left: 60px;
             width: calc(100% - 60px);
@@ -362,35 +385,50 @@
 
         .shortcut-table th, .shortcut-table td {
             text-align: left;
-            padding: 16px 12px 16px 0;
+            padding: 18px 16px;
             border-bottom: 1px solid var(--table-border);
             vertical-align: top;
             word-break: keep-all;
+            transition: background-color 0.2s ease;
+        }
+
+        /* 헤더 스타일 강화 */
+        .shortcut-table thead th {
+            border-bottom: 2px solid var(--table-border);
+            background-color: var(--table-header-bg);
+            font-weight: 800;
+            color: var(--color-text);
+        }
+
+        .shortcut-table tr {
+            transition: background-color 0.15s ease;
+        }
+
+        .shortcut-table tbody tr:hover {
+            background-color: var(--table-hover-bg);
         }
         
         /* 1열: 기능 이름 */
         .shortcut-table th:nth-child(1),
         .shortcut-table td:nth-child(1) {
-            width: 160px;
+            width: 180px; /* 너비 약간 확보 */
             font-weight: var(--font-weight-bold);
             color: var(--color-text);
-            white-space: nowrap;
+            /* white-space: nowrap; 제거 - 긴 텍스트 대응 */
         }
 
         /* 2열: 단축키 */
         .shortcut-table th:nth-child(2),
         .shortcut-table td:nth-child(2) {
-            width: 280px;
+            width: 300px;
+            color: var(--color-text);
+            font-family: inherit;
         }
 
         /* 3열: 설명 */
         .shortcut-table td:nth-child(3) {
-            color: var(--color-text-secondary);
+            color: var(--color-text-secondary); /* 대비 높임 */
             line-height: 1.7;
-        }
-
-        .shortcut-table tr:hover td {
-             background-color: rgba(0,0,0,0.02);
         }
 
         .shortcut-table tr:last-child th,
@@ -398,22 +436,23 @@
             border-bottom: none;
         }
         
-        /* Keyboard Key Style */
+        /* Keyboard Key Style - 시인성 강화 */
         kbd {
             display: inline-block;
             border-radius: 6px;
-            padding: 3px 10px;
+            padding: 4px 10px;
             font-family: "SF Mono", "Monaco", "Inconsolata", monospace;
             font-size: 0.95em;
             font-weight: 700;
-            line-height: normal;
+            line-height: 1;
             background-color: var(--key-bg);
             border: 1px solid var(--key-border);
             border-bottom-width: 3px;
-            box-shadow: 0 2px 2px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
             color: var(--key-text);
             white-space: nowrap;
-            margin: 0 2px;
+            margin: 0 2px 2px 0;
+            vertical-align: middle;
         }
 
         .btn {
@@ -423,31 +462,43 @@
             border-radius: var(--border-radius-medium);
             padding: 16px 36px;
             cursor: pointer;
-            transition: transform 0.2s cubic-bezier(0.3, 1, 0.4, 1), box-shadow 0.2s ease-out, background-color 0.2s ease-out;
+            transition: transform 0.1s ease, box-shadow 0.2s ease, background-color 0.2s ease;
             overflow: hidden;
         }
         
         .btn--secondary {
             background-color: #e5e5ea;
-            color: #000;
+            color: #000000; /* 완전 검정으로 가독성 확보 */
         }
         .btn--secondary:hover {
              background-color: #d1d1d6;
+        }
+        .btn--secondary:active {
+            background-color: #c7c7cc;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .btn--secondary {
+                background-color: #3a3a3c;
+                color: #ffffff;
+            }
+            .btn--secondary:hover {
+                background-color: #48484a;
+            }
         }
 
         .btn--primary {
             background-color: var(--color-primary);
             color: var(--color-white);
-            transform: scale(1.02);
-            box-shadow: 0 5px 15px -3px rgba(0, 107, 230, 0.5), inset 0 -1px 0 0 rgba(0,0,0,0.2);
+            box-shadow: 0 4px 12px rgba(0, 107, 230, 0.3);
         }
         .btn--primary:hover {
-            transform: scale(1.05);
-            box-shadow: 0 8px 20px -4px rgba(0, 107, 230, 0.6);
-            filter: brightness(1.1);
+            filter: brightness(1.08);
+            box-shadow: 0 6px 16px rgba(0, 107, 230, 0.4);
+            transform: translateY(-1px);
         }
         .btn--primary:active {
-            transform: scale(1.0);
+            transform: translateY(0);
         }
 
         .status-toast {
@@ -460,17 +511,16 @@
             border-radius: var(--border-radius-pill);
             font-size: 1.1rem;
             font-weight: var(--font-weight-bold);
-            text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.15);
             opacity: 0;
-            transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+            transition: opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
             pointer-events: none;
             z-index: 100;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
         }
-        .status-toast.liquid-glass::before {
-            opacity: 1;
-            background: linear-gradient(to bottom, rgba(255,255,255,0.25), transparent);
-        }
+        
         .status-toast.show { opacity: 1; transform: translate(-50%, 0); }
         .status-toast.success { background-color: var(--toast-success-bg); }
         .status-toast.error { background-color: var(--toast-error-bg); }
@@ -739,14 +789,5 @@
         </div>
     </main>
     <div id="status" class="status-toast liquid-glass"></div>
-
-    <svg width="0" height="0" style="position:absolute; overflow:hidden;" aria-hidden="true">
-        <defs>
-            <filter id="glass-distortion" x="-10%" y="-10%" width="120%" height="120%">
-                <feTurbulence type="fractalNoise" baseFrequency="0.015 0.025" numOctaves="1" seed="2" stitchTiles="stitch" result="noise" />
-                <feDisplacementMap in="SourceGraphic" in2="noise" scale="10" xChannelSelector="R" yChannelSelector="G" />
-            </filter>
-        </defs>
-    </svg>
 </body>
 </html>
