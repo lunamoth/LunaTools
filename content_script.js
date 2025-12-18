@@ -753,7 +753,7 @@
 
     const Config = {
         API_TIMEOUT_MS: 7000,
-        ONE_HOUR_MS: 3600 * 1000,
+        CACHE_DURATION_MS: 12 * 3600 * 1000, // 기존 ONE_HOUR_MS: 3600 * 1000 에서 변경됨 (12시간)
         POPUP_OFFSET_X: 10,
         POPUP_OFFSET_Y: 10,
         POPUP_SCREEN_MARGIN: 10,
@@ -1522,38 +1522,54 @@
             if (fromCurrency === toCurrency) {
                 return { rate: 1, date: new Date().toISOString().split('T')[0] };
             }
-            const cacheKey = `${fromCurrency}_${toCurrency}`;
-            const now = Date.now();
-            if (AppState.exchangeRateCache[cacheKey] && (now - AppState.exchangeRateCache[cacheKey].timestamp < Config.ONE_HOUR_MS)) {
-                return AppState.exchangeRateCache[cacheKey];
-            }
-            return new Promise((resolve, reject) => {
-                try {
-                    chrome.runtime.sendMessage(
-                        { action: "fetchLunaToolsExchangeRate", from: fromCurrency, to: toCurrency },
-                        (response) => {
-                            if (chrome.runtime.lastError) {
-                                reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(chrome.runtime.lastError.message || 'extension_error')));
-                                return;
-                            }
-                            if (response.error) {
-                                if (response.error.includes('timed out')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_TIMEOUT));
-                                else if (response.error.includes('Network error')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(response.error.match(/\(status: (\w+)\)/)?.[1] || 'unknown')));
-                                else if (response.error.includes('API response error')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_RESPONSE_CURRENCY(toCurrency)));
-                                else reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING(response.error)));
-                            } else if (response.data && typeof response.data.rate === 'number' && response.data.date) {
-                                const result = { rate: response.data.rate, date: response.data.date };
-                                AppState.exchangeRateCache[cacheKey] = { ...result, timestamp: Date.now() };
-                                resolve(result);
-                            } else {
-                                reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING('Invalid or incomplete data from background.')));
-                            }
-                        }
-                    );
-                } catch (e) {
-                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK('sendMessage_failed')));
+
+            const cacheKey = `rate_${fromCurrency}_${toCurrency}`;
+            
+            try {
+                const storageData = await new Promise(resolve => {
+                    chrome.storage.local.get([cacheKey], (result) => resolve(result[cacheKey]));
+                });
+
+                const now = Date.now();
+                
+                if (storageData && (now - storageData.timestamp < Config.CACHE_DURATION_MS)) {
+                    return { rate: storageData.rate, date: storageData.date };
                 }
-            });
+
+                return new Promise((resolve, reject) => {
+                    try {
+                        chrome.runtime.sendMessage(
+                            { action: "fetchLunaToolsExchangeRate", from: fromCurrency, to: toCurrency },
+                            (response) => {
+                                if (chrome.runtime.lastError) {
+                                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(chrome.runtime.lastError.message || 'extension_error')));
+                                    return;
+                                }
+                                if (response.error) {
+                                    if (response.error.includes('timed out')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_TIMEOUT));
+                                    else if (response.error.includes('Network error')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(response.error.match(/\(status: (\w+)\)/)?.[1] || 'unknown')));
+                                    else if (response.error.includes('API response error')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_RESPONSE_CURRENCY(toCurrency)));
+                                    else reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING(response.error)));
+                                } else if (response.data && typeof response.data.rate === 'number' && response.data.date) {
+                                    const result = { rate: response.data.rate, date: response.data.date };
+                                    
+                                    const dataToStore = { ...result, timestamp: Date.now() };
+                                    chrome.storage.local.set({ [cacheKey]: dataToStore });
+                                    
+                                    resolve(result);
+                                } else {
+                                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING('Invalid or incomplete data from background.')));
+                                }
+                            }
+                        );
+                    } catch (e) {
+                        reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK('sendMessage_failed')));
+                    }
+                });
+
+            } catch (e) {
+                 return Promise.reject(e);
+            }
         }
     };
 
