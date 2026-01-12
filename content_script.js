@@ -753,7 +753,7 @@
 
     const Config = {
         API_TIMEOUT_MS: 7000,
-        CACHE_DURATION_MS: 12 * 3600 * 1000, // 기존 ONE_HOUR_MS: 3600 * 1000 에서 변경됨 (12시간)
+        CACHE_DURATION_MS: 12 * 3600 * 1000, 
         POPUP_OFFSET_X: 10,
         POPUP_OFFSET_Y: 10,
         POPUP_SCREEN_MARGIN: 10,
@@ -765,14 +765,18 @@
             { name: '만', value: 10000 }
         ],
         KOREAN_SUB_UNITS: [{ name: '천', value: 1000 }, { name: '백', value: 100 }],
-        MAGNITUDE_WORDS_EN: { 'thousand': 1000, 'million': 1000000, 'billion': 1000000000, 'trillion': 1000000000000 },
+        // [수정됨] trillion, tn 추가
+        MAGNITUDE_WORDS_EN: { 'thousand': 1000, 'million': 1000000, 'billion': 1000000000, 'trillion': 1000000000000, 'tn': 1000000000000 },
         CURRENCY_FLAGS: {
             'USD': '🇺🇸', 'EUR': '🇪🇺', 'JPY': '🇯🇵', 'GBP': '🇬🇧', 'AUD': '🇦🇺', 'CAD': '🇨🇦', 'CHF': '🇨🇭', 'CNY': '🇨🇳', 'HKD': '🇭🇰', 'NZD': '🇳🇿', 'SEK': '🇸🇪', 'KRW': '🇰🇷', 'SGD': '🇸🇬', 'NOK': '🇳🇴', 'MXN': '🇲🇽', 'INR': '🇮🇳', 'ZAR': '🇿🇦', 'TRY': '🇹🇷', 'BRL': '🇧🇷', 'DKK': '🇩🇰', 'PLN': '🇵🇱', 'THB': '🇹🇭', 'IDR': '🇮🇩', 'HUF': '🇭🇺', 'CZK': '🇨🇿', 'ILS': '🇮🇱', 'PHP': '🇵🇭', 'MYR': '🇲🇾', 'RON': '🇷🇴', 'BGN': '🇧🇬', 'ISK': '🇮🇸',
         },
         UNIT_CATEGORY_ICONS: { length: '📏', mass: '⚖️', volume: '💧', temperature: '🌡️', time: '🕒', data_rate: '⚡️' },
         CATEGORY_BASE_UNITS: { length: 'm', mass: 'kg', volume: 'L' },
         CURRENCY_PATTERNS: [
-            { code: 'CAD', regex: /캐나다\s*달러|캐나다달러|C\$|CAD/giu }, { code: 'AUD', regex: /호주\s*달러|호주달러|A\$|AUD/giu }, { code: 'CHF', regex: /스위스\s*프랑|스위스프랑|CHF|SFr\./giu }, { code: 'SGD', regex: /싱가포르\s*달러|싱가포르달러|S\$|SGD/giu }, { code: 'HKD', regex: /홍콩\s*달러|홍콩달러|HK\$|HKD/giu }, { code: 'NZD', regex: /뉴질랜드\s*달러|뉴질랜드달러|NZ\$|NZD/giu }, { code: 'MXN', regex: /멕시코\s*페소|멕시코페소|Mex\$|MXN/giu }, { code: 'BRL', regex: /브라질\s*헤알|헤알|R\$|BRL/giu }, { code: 'PHP', regex: /필리핀\s*페소|필리핀페소|₱|PHP/giu }, { code: 'MYR', regex: /말레이시아\s*링깃|링깃|RM|MYR/giu }, { code: 'GBP', regex: /파운드\s*스털링|영국\s*파운드|GBP\s*[£￡]|[£￡]\s*GBP/giu }, { code: 'JPY', regex: /엔|엔화|円|[¥￥]|JPY|일본\s*엔|일본\s*엔화/giu }, { code: 'EUR', regex: /유로|€|EUR/giu }, { code: 'CNY', regex: /위안|위안화|元|CNY|중국\s*위안|인민폐|런민비/giu }, { code: 'KRW', regex: /원|₩|KRW|한국\s*원|대한민국\s*원/giu }, { code: 'INR', regex: /인도\s*루피|인도루피|루피|₹|Rs\.?|INR/giu }, { code: 'TRY', regex: /터키\s*리라|튀르키예\s*리라|리라|₺|TRY/giu }, { code: 'IDR', regex: /인도네시아\s*루피아|루피아|Rp|IDR/giu }, { code: 'PLN', regex: /폴란드\s*즐로티|즐로티|zł|PLN/giu }, { code: 'ILS', regex: /이스라엘\s*셰켈|셰켈|₪|ILS/giu }, { code: 'THB', regex: /태국\s*바트|바트|밧|฿|THB/giu }, { code: 'SEK', regex: /스웨덴\s*크로나|스웨덴크로나|SEK(?:kr)?|(?:krSEK)/giu }, { code: 'NOK', regex: /노르웨이\s*크로나|노르웨이크로나|NOK(?:kr)?|(?:krNOK)/giu }, { code: 'DKK', regex: /덴마크\s*크로나|덴마크크로나|DKK(?:kr)?|(?:krDKK)/giu }, { code: 'ISK', regex: /아이슬란드\s*크로나|아이슬란드크로나|ISK(?:kr)?|(?:krISK)/giu }, { code: 'ZAR', regex: /남아프리카\s*공화국\s*랜드|남아공\s*랜드|랜드|R|ZAR/giu }, { code: 'RON', regex: /루마니아\s*레우|레우|lei|RON/giu }, { code: 'CZK', regex: /체코\s*코루나|코루나|Kč|CZK/giu }, { code: 'HUF', regex: /헝가리\s*포린트|포린트|Ft|HUF/giu }, { code: 'BGN', regex: /불가리아\s*레프|레프|лв|BGN/giu }, { code: 'GBP', regex: /파운드|[£￡]|GBP/giu }, { code: 'USD', regex: /달러|[\$＄]|USD|불|미국\s*달러/giu },
+            { code: 'CAD', regex: /캐나다\s*달러|캐나다달러|C\$|CAD/giu }, { code: 'AUD', regex: /호주\s*달러|호주달러|A\$|AUD/giu }, { code: 'CHF', regex: /스위스\s*프랑|스위스프랑|CHF|SFr\./giu }, { code: 'SGD', regex: /싱가포르\s*달러|싱가포르달러|S\$|SGD/giu }, { code: 'HKD', regex: /홍콩\s*달러|홍콩달러|HK\$|HKD/giu }, { code: 'NZD', regex: /뉴질랜드\s*달러|뉴질랜드달러|NZ\$|NZD/giu }, { code: 'MXN', regex: /멕시코\s*페소|멕시코페소|Mex\$|MXN/giu }, { code: 'BRL', regex: /브라질\s*헤알|헤알|R\$|BRL/giu }, { code: 'PHP', regex: /필리핀\s*페소|필리핀페소|₱|PHP/giu }, { code: 'MYR', regex: /말레이시아\s*링깃|링깃|RM|MYR/giu }, { code: 'GBP', regex: /파운드\s*스털링|영국\s*파운드|GBP\s*[£￡]|[£￡]\s*GBP/giu }, { code: 'JPY', regex: /엔|엔화|円|[¥￥]|JPY|일본\s*엔|일본\s*엔화/giu }, { code: 'EUR', regex: /유로|€|EUR/giu }, { code: 'CNY', regex: /위안|위안화|元|CNY|중국\s*위안|인민폐|런민비/giu }, { code: 'KRW', regex: /원|₩|KRW|한국\s*원|대한민국\s*원/giu }, { code: 'INR', regex: /인도\s*루피|인도루피|루피|₹|Rs\.?|INR/giu }, { code: 'TRY', regex: /터키\s*리라|튀르키예\s*리라|리라|₺|TRY/giu }, { code: 'IDR', regex: /인도네시아\s*루피아|루피아|Rp|IDR/giu }, { code: 'PLN', regex: /폴란드\s*즐로티|즐로티|zł|PLN/giu }, { code: 'ILS', regex: /이스라엘\s*셰켈|셰켈|₪|ILS/giu }, { code: 'THB', regex: /태국\s*바트|바트|밧|฿|THB/giu }, { code: 'SEK', regex: /스웨덴\s*크로나|스웨덴크로나|SEK(?:kr)?|(?:krSEK)/giu }, { code: 'NOK', regex: /노르웨이\s*크로나|노르웨이크로나|NOK(?:kr)?|(?:krNOK)/giu }, { code: 'DKK', regex: /덴마크\s*크로나|덴마크크로나|DKK(?:kr)?|(?:krDKK)/giu }, { code: 'ISK', regex: /아이슬란드\s*크로나|아이슬란드크로나|ISK(?:kr)?|(?:krISK)/giu }, 
+            // [수정됨] ZAR의 R을 단어 경계(\b)로 감쌈
+            { code: 'ZAR', regex: /남아프리카\s*공화국\s*랜드|남아공\s*랜드|랜드|\bR\b|ZAR/giu }, 
+            { code: 'RON', regex: /루마니아\s*레우|레우|lei|RON/giu }, { code: 'CZK', regex: /체코\s*코루나|코루나|Kč|CZK/giu }, { code: 'HUF', regex: /헝가리\s*포린트|포린트|Ft|HUF/giu }, { code: 'BGN', regex: /불가리아\s*레프|레프|лв|BGN/giu }, { code: 'GBP', regex: /파운드|[£￡]|GBP/giu }, { code: 'USD', regex: /달러|[\$＄]|USD|불|미국\s*달러/giu },
         ],
         UNIT_CONVERSION_CONFIG: {
             length: [
@@ -1070,7 +1074,12 @@
             if (abbreviationMatch) {
                 const numVal = Utils.parseFloatLenient(abbreviationMatch[1]);
                 const suffix = abbreviationMatch[2].toUpperCase();
-                if (numVal !== null && cleanText.substring(abbreviationMatch[0].length).trim() === "") {
+
+                // [수정됨] 남은 문자열이 없거나 문장 부호만 있는 경우 허용
+                const remainder = cleanText.substring(abbreviationMatch[0].length).trim();
+                const isValidRemainder = remainder === "" || /^[\.,;!?)]+$/.test(remainder);
+
+                if (numVal !== null && isValidRemainder) {
                     let multiplier = 1;
                     if (suffix === 'T') multiplier = 1e12;
                     else if (suffix === 'B') multiplier = 1e9;
@@ -1084,7 +1093,12 @@
             if (magnitudeMatch) {
                 const numVal = Utils.parseFloatLenient(magnitudeMatch[1]);
                 const word = magnitudeMatch[2].toLowerCase();
-                if (numVal !== null && Config.MAGNITUDE_WORDS_EN[word] && cleanText.substring(magnitudeMatch[0].length).trim() === "") {
+
+                // [수정됨] 남은 문자열이 없거나 문장 부호만 있는 경우 허용
+                const remainder = cleanText.substring(magnitudeMatch[0].length).trim();
+                const isValidRemainder = remainder === "" || /^[\.,;!?)]+$/.test(remainder);
+
+                if (numVal !== null && Config.MAGNITUDE_WORDS_EN[word] && isValidRemainder) {
                     return numVal * Config.MAGNITUDE_WORDS_EN[word];
                 }
             }
