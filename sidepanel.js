@@ -58,6 +58,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 URL_INPUT: '#urlInput', INTERVAL_INPUT: '#intervalInput', REMOVE_DUPLICATES_CHECKBOX: '#removeDuplicates',
                 SORT_URLS_BEFORE_RUN_CHECKBOX: '#sortUrlsBeforeRun',
                 FOCUS_LOCK_CHECKBOX: '#focusLock', DELAY_LOADING_CHECKBOX: '#delayLoading',
+                PLAY_SOUND_CHECKBOX: '#playSound',
                 START_RUN_BUTTON: '#startRunButton',
                 PAUSE_RESUME_BUTTON: '#pauseResumeButton',
                 STOP_PROCESS_BUTTON: '#stopProcessButton',
@@ -85,7 +86,7 @@ document.addEventListener('DOMContentLoaded', function() {
             STORAGE_KEY: 'multiOpenUrlOptions',
             URL_LISTS_KEY: 'savedUrlLists',
             DEFAULT_OPTIONS: {
-                interval: 2, removeDuplicates: true, focusLock: true, delayLoading: false, sortUrlsBeforeRun: true
+                interval: 2, removeDuplicates: true, focusLock: true, delayLoading: false, sortUrlsBeforeRun: true, playSound: true
             },
             FADE_DURATION: 300
         };
@@ -203,6 +204,42 @@ document.addEventListener('DOMContentLoaded', function() {
                     toast.classList.remove('show');
                     toast.addEventListener('transitionend', () => toast.remove(), { once: true });
                 }, duration);
+            }
+        };
+
+        const SoundEffect = {
+            playSuccess() {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContext) return;
+                    
+                    const ctx = new AudioContext();
+                    const now = ctx.currentTime;
+
+                    const createNote = (freq, startTime, duration) => {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+
+                        osc.type = 'sine';
+                        osc.frequency.value = freq;
+
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+
+                        gain.gain.setValueAtTime(0, startTime);
+                        gain.gain.linearRampToValueAtTime(0.1, startTime + 0.05);
+                        gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+                        osc.start(startTime);
+                        osc.stop(startTime + duration);
+                    };
+
+                    createNote(523.25, now, 0.6); // C5
+                    createNote(659.25, now + 0.1, 0.6); // E5
+                    createNote(783.99, now + 0.2, 0.8); // G5
+                } catch (e) {
+                    console.error("Audio playback failed", e);
+                }
             }
         };
 
@@ -1204,6 +1241,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             if (UI.progressBar) UI.progressBar.value = 100;
             if (UI.urlQueue) UI.urlQueue.innerHTML = '';
+            
+            if (UI.playSoundCheckbox && UI.playSoundCheckbox.checked) {
+                SoundEffect.playSuccess();
+            }
+
             setView('complete');
         };
 
@@ -1240,19 +1282,20 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const saveOptions = () => {
-            if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox) return;
+            if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox || !UI.playSoundCheckbox) return;
             try {
                 chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: {
                     interval: parseFloat(UI.intervalInput.value),
                     removeDuplicates: UI.removeDuplicatesCheckbox.checked,
                     focusLock: UI.focusLockCheckbox.checked,
                     delayLoading: UI.delayLoadingCheckbox.checked,
-                    sortUrlsBeforeRun: UI.sortUrlsBeforeRunCheckbox.checked
+                    sortUrlsBeforeRun: UI.sortUrlsBeforeRunCheckbox.checked,
+                    playSound: UI.playSoundCheckbox.checked
                 }});
             } catch (e) { console.error('Failed to save options:', e); }
         };
         const loadOptions = async () => {
-            if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox) return;
+            if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox || !UI.playSoundCheckbox) return;
             try {
                 const data = await chrome.storage.local.get(CONFIG.STORAGE_KEY);
                 const options = { ...CONFIG.DEFAULT_OPTIONS, ...(data[CONFIG.STORAGE_KEY] || {}) };
@@ -1261,6 +1304,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 UI.focusLockCheckbox.checked = options.focusLock;
                 UI.delayLoadingCheckbox.checked = options.delayLoading;
                 UI.sortUrlsBeforeRunCheckbox.checked = options.sortUrlsBeforeRun;
+                UI.playSoundCheckbox.checked = options.playSound;
             } catch (e) { console.error('Failed to load options:', e); }
         };
 
