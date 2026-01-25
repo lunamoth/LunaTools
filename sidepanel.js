@@ -207,7 +207,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
-        const SoundEffect = {
+		const SoundEffect = {
             playSuccess() {
                 try {
                     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -216,33 +216,47 @@ document.addEventListener('DOMContentLoaded', function() {
                     const ctx = new AudioContext();
                     const now = ctx.currentTime;
 
-                    const createNote = (freq, startTime, duration) => {
+                    // 노트 재생 헬퍼 함수 (샘플 파일의 로직 적용)
+                    const playNote = (freq, time, duration, vol = 0.1, type = 'sine') => {
                         const osc = ctx.createOscillator();
                         const gain = ctx.createGain();
-
-                        osc.type = 'sine';
+                        
+                        osc.type = type;
                         osc.frequency.value = freq;
-
+                        
                         osc.connect(gain);
                         gain.connect(ctx.destination);
-
-                        gain.gain.setValueAtTime(0, startTime);
-                        gain.gain.linearRampToValueAtTime(0.1, startTime + 0.05);
-                        gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
-
-                        osc.start(startTime);
-                        osc.stop(startTime + duration);
+                        
+                        gain.gain.setValueAtTime(0, time);
+                        gain.gain.linearRampToValueAtTime(vol, time + 0.1); // Attack
+                        gain.gain.exponentialRampToValueAtTime(0.001, time + duration); // Release
+                        
+                        osc.start(time);
+                        osc.stop(time + duration);
                     };
 
-                    createNote(523.25, now, 0.6); // C5
-                    createNote(659.25, now + 0.1, 0.6); // E5
-                    createNote(783.99, now + 0.2, 0.8); // G5
+                    // --- Finale 사운드 데이터 ---
+                    const C4=261.63, E4=329.63, G4=392.00;
+                    const C5=523.25, E5=659.25, G5=783.99;
+                    const C6=1046.50;
+
+                    // 1. 웅장한 베이스 (Triangle 파형 사용)
+                    playNote(C4/2, now, 4.0, 0.2, 'triangle'); // C3
+                    playNote(G4/2, now, 4.0, 0.15, 'triangle'); // G3
+                    
+                    // 2. 화려한 고음 아르페지오 (Sine 파형 사용)
+                    const grandArp = [C4, E4, G4, C5, E5, G5, C6];
+                    grandArp.forEach((note, i) => {
+                        // 0.1초 간격으로 펼쳐짐
+                        playNote(note, now + 0.1 + (i * 0.1), 3.0, 0.1, 'sine');
+                    });
+
                 } catch (e) {
                     console.error("Audio playback failed", e);
                 }
             }
         };
-
+				
         const getElementHeightWithMargins = (element) => {
             if (!element || getComputedStyle(element).display === 'none') return 0;
             const style = getComputedStyle(element);
