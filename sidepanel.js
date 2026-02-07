@@ -1686,7 +1686,8 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const isDuplicateSessionName = (name, excludeId = null) => allSessions.some(s => String(s.id) !== String(excludeId) && s.name === name);
-      const generateUniqueId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+	  const generateUniqueId = () => `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
       const findSessionById = (id) => allSessions.find(s => String(s.id) === String(id));
       const findSessionIndexById = (id) => allSessions.findIndex(s => String(s.id) === String(id));
       const findSessionDataOrShowError = (id) => {
@@ -2116,7 +2117,7 @@ document.addEventListener('DOMContentLoaded', function() {
             importFileInput.value = '';
           }
         };
-        reader.readText(file);
+        reader.readAsText(file);
       };
 
       const handleSessionAction = (e) => {

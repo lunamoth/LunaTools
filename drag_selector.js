@@ -264,7 +264,8 @@
             const urls = Array.from(links, a => a.href);
 
             if (this.#modifier === 'ctrl') {
-                navigator.clipboard.writeText(urls.join('\n'));
+                navigator.clipboard.writeText(urls.join('\n'))
+                    .catch(() => console.warn('LunaTools: 클립보드 복사 실패'));
             } else if (this.#modifier === 'shift') {
                 chrome.runtime.sendMessage({ action: 'openTabsInNewTab', urls });
             } else if (this.#modifier === 'alt') {
