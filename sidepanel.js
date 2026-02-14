@@ -110,8 +110,18 @@ document.addEventListener('DOMContentLoaded', function() {
             isDirty: false, loadedListName: null, originalLoadedListUrls: null,
             currentView: 'input',
             isTransitioning: false,
-            isInitialLoad: true
+            isInitialLoad: true,
+            currentRunId: 0
         };
+
+        const escapeHtml = (value) => String(value ?? '').replace(/[&<>"'`]/g, (ch) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+            '`': '&#96;'
+        }[ch]));
 
         const Modal = {
             resolve: null,
@@ -405,9 +415,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const resetToIdle = async (message = CONFIG.TEXT.IDLE, isError = false) => {
             if (!state.isInitialLoad && state.isDirty && state.currentView !== 'input') {
             } else if (!state.isInitialLoad && state.isDirty) {
+                 const safeListName = escapeHtml(state.loadedListName || '현재');
                  const confirmed = await Modal.show({
                     title: '저장되지 않은 변경사항',
-                    body: `<strong>${state.loadedListName || '현재'}</strong> 목록에 저장되지 않은 변경사항이 있습니다. 정말 새로 시작하시겠습니까? (모든 내용이 초기화됩니다)`,
+                    body: `<strong>${safeListName}</strong> 목록에 저장되지 않은 변경사항이 있습니다. 정말 새로 시작하시겠습니까? (모든 내용이 초기화됩니다)`,
                     danger: true,
                     confirmText: '새로 시작'
                 });
@@ -418,6 +429,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 urlsToProcess: [], currentUrlIndex: 0, isPaused: false, errorCount: 0,
                 isDirty: false, loadedListName: null, originalLoadedListUrls: null
             });
+            state.currentRunId += 1;
             clearTimeout(state.intervalId); state.intervalId = null;
 
             if(UI.urlInput) UI.urlInput.value = '';
@@ -440,6 +452,10 @@ document.addEventListener('DOMContentLoaded', function() {
             clearTimeout(state.intervalId);
             state.intervalId = null;
             state.isPaused = false;
+            state.currentRunId += 1;
+            state.urlsToProcess = [];
+            state.currentUrlIndex = 0;
+            state.errorCount = 0;
 
             if(UI.urlQueue) UI.urlQueue.innerHTML = '';
             if(UI.progressBar) UI.progressBar.value = 0;
@@ -452,14 +468,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const updateCurrentListIndicator = () => {
             if (!UI.currentListIndicator) return;
             if (state.loadedListName) {
-                let text = `현재 편집 중: <strong style="color: var(--accent-color);">${state.loadedListName}</strong>`;
+                let text = `현재 편집 중: ${state.loadedListName}`;
                 if (state.isDirty) {
-                    text += ' <span style="color:var(--danger-color); font-weight: 500;">(수정됨)</span>';
+                    text += ' (수정됨)';
                 }
-                UI.currentListIndicator.innerHTML = text;
+                UI.currentListIndicator.textContent = text;
                 UI.currentListIndicator.style.display = 'block';
             } else {
-                UI.currentListIndicator.innerHTML = '';
+                UI.currentListIndicator.textContent = '';
                 UI.currentListIndicator.style.display = 'none';
             }
              scheduleSetCardHeight();
@@ -596,9 +612,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const handleStartNewList = async () => {
             if (state.isDirty) {
+                const safeListName = escapeHtml(state.loadedListName || '현재');
                 const choice = await Modal.show({
                     title: '저장되지 않은 변경사항',
-                    body: `<strong>${state.loadedListName || '현재'}</strong> 목록에 저장되지 않은 변경사항이 있습니다. 어떻게 하시겠습니까?`,
+                    body: `<strong>${safeListName}</strong> 목록에 저장되지 않은 변경사항이 있습니다. 어떻게 하시겠습니까?`,
                     buttons: [
                         { text: '취소', value: 'cancel', isDefaultCancel: true },
                         { text: '변경사항 버리고 새로 작성', value: 'discard', isDanger: true },
@@ -713,9 +730,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const lists = await getSavedLists();
             if (lists[listName] && listName !== state.loadedListName) {
+                const safeListName = escapeHtml(listName);
                 const overwrite = await Modal.show({
                     title: '덮어쓰기 확인',
-                    body: `<strong>'${listName}'</strong> 목록이 이미 있습니다. 덮어쓰시겠습니까?`,
+                    body: `<strong>'${safeListName}'</strong> 목록이 이미 있습니다. 덮어쓰시겠습니까?`,
                     danger: true,
                     confirmText: '덮어쓰기'
                 });
@@ -742,13 +760,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const listNameToLoad = UI.savedListsDropdown ? UI.savedListsDropdown.value : null;
 
             if (state.isDirty && ( (state.loadedListName && state.loadedListName !== listNameToLoad) || (!state.loadedListName && listNameToLoad !== '') || (listNameToLoad === '' && state.loadedListName) ) ) {
-                let modalMessage = `<strong>${state.loadedListName || '현재 편집 중인'}</strong> 목록에 저장되지 않은 변경사항이 있습니다. `;
+                const safeCurrentName = escapeHtml(state.loadedListName || '현재 편집 중인');
+                const safeTargetName = escapeHtml(listNameToLoad || '');
+                let modalMessage = `<strong>${safeCurrentName}</strong> 목록에 저장되지 않은 변경사항이 있습니다. `;
                 if (listNameToLoad && listNameToLoad !== state.loadedListName) {
-                    modalMessage += `정말 <strong>'${listNameToLoad}'</strong> 목록을 불러오시겠습니까? (변경사항은 사라집니다)`;
+                    modalMessage += `정말 <strong>'${safeTargetName}'</strong> 목록을 불러오시겠습니까? (변경사항은 사라집니다)`;
                 } else if (listNameToLoad === '' && state.loadedListName) {
                     modalMessage += `선택을 해제하고 새 목록 상태로 전환하시겠습니까? (변경사항은 사라집니다)`;
                 } else if (!state.loadedListName && listNameToLoad !== '') {
-                     modalMessage += `정말 <strong>'${listNameToLoad}'</strong> 목록을 불러오시겠습니까? (현재 입력한 내용은 사라집니다)`;
+                     modalMessage += `정말 <strong>'${safeTargetName}'</strong> 목록을 불러오시겠습니까? (현재 입력한 내용은 사라집니다)`;
                 }
 
 
@@ -796,10 +816,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const handleDeleteList = async () => {
             const listName = UI.savedListsDropdown ? UI.savedListsDropdown.value : null;
             if (!listName) return;
+            const safeListName = escapeHtml(listName);
 
             const confirmed = await Modal.show({
                 title: '목록 삭제 확인',
-                body: `<strong>'${listName}'</strong> 목록을 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
+                body: `<strong>'${safeListName}'</strong> 목록을 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
                 danger: true,
                 confirmText: '삭제'
             });
@@ -830,7 +851,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const result = await Modal.show({
                 title: '이름 변경',
-                body: `<input type="text" id="modal-input" value="${oldName}" />`,
+                body: `<input type="text" id="modal-input" value="${escapeHtml(oldName)}" />`,
                 confirmText: '변경'
             });
             const rawNewName = document.getElementById('modal-input')?.value;
@@ -993,9 +1014,10 @@ document.addEventListener('DOMContentLoaded', function() {
             let newListsData = { ...currentLists };
 
             if (conflicts.length > 0) {
+                const safeConflicts = conflicts.map(name => escapeHtml(name)).join(', ');
                 const choice = await Modal.show({
                     title: '목록 충돌 발생',
-                    body: `다음 목록이 이미 존재합니다: <strong>${conflicts.join(', ')}</strong>.<br>충돌하는 목록을 덮어쓰시겠습니까, 건너뛰시겠습니까? (충돌하지 않는 목록은 항상 추가됩니다)`,
+                    body: `다음 목록이 이미 존재합니다: <strong>${safeConflicts}</strong>.<br>충돌하는 목록을 덮어쓰시겠습니까, 건너뛰시겠습니까? (충돌하지 않는 목록은 항상 추가됩니다)`,
                     buttons: [
                         { text: '가져오기 취소', value: 'cancel_import', isDefaultCancel: true },
                         { text: '모두 건너뛰기', value: 'skip_all_conflicts' },
@@ -1148,10 +1170,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        const processNextUrl = async () => {
+        const processNextUrl = async (runId) => {
+            if (runId !== state.currentRunId) {
+                return;
+            }
+
             if (state.isPaused || state.currentUrlIndex >= state.urlsToProcess.length) {
                 if (state.currentUrlIndex >= state.urlsToProcess.length && state.urlsToProcess.length > 0) {
-                    setTimeout(handleCompletion, 400);
+                    setTimeout(() => {
+                        if (runId === state.currentRunId) handleCompletion();
+                    }, 400);
                 }
                 return;
             }
@@ -1189,11 +1217,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     currentSpan.title = `오류: ${e.message}`;
                 }
             }
+
+            if (runId !== state.currentRunId) {
+                return;
+            }
+
             state.currentUrlIndex++;
 
             const value = UI.intervalInput ? parseFloat(UI.intervalInput.value) : CONFIG.DEFAULT_OPTIONS.interval;
             const intervalSeconds = !isNaN(value) && value >= 0.1 ? value : 0.1;
-            state.intervalId = setTimeout(processNextUrl, intervalSeconds * 1000);
+            state.intervalId = setTimeout(() => processNextUrl(runId), intervalSeconds * 1000);
         };
 
         const startProcess = () => {
@@ -1216,6 +1249,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             Object.assign(state, { currentUrlIndex: 0, isPaused: false, errorCount: 0 });
+            state.currentRunId += 1;
+            const runId = state.currentRunId;
 
             if (UI.urlQueue) {
                 const fragment = document.createDocumentFragment();
@@ -1231,7 +1266,7 @@ document.addEventListener('DOMContentLoaded', function() {
             setView('running');
             setControlsEnabled(false);
             updateProgress();
-            processNextUrl();
+            processNextUrl(runId);
         };
 
         const togglePause = () => {
@@ -1242,7 +1277,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (state.isPaused) {
                 clearTimeout(state.intervalId);
             } else {
-                processNextUrl();
+                processNextUrl(state.currentRunId);
             }
         };
 
@@ -1611,13 +1646,6 @@ document.addEventListener('DOMContentLoaded', function() {
         },
       };
 
-      chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local' && changes[CONSTANTS.STORAGE_KEYS.SESSIONS]) {
-          allSessions = changes[CONSTANTS.STORAGE_KEYS.SESSIONS].newValue || [];
-          renderSessions();
-        }
-      });
-
       const formatDate = (timestamp) => {
         const d = new Date(timestamp);
         const datePart = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
@@ -1684,6 +1712,18 @@ document.addEventListener('DOMContentLoaded', function() {
           session.tabs.length > 0 &&
           session.tabs.every(isValidTab);
       };
+
+      const normalizeSessions = (value) => {
+        if (!Array.isArray(value)) return [];
+        return value.filter(isValidSession);
+      };
+
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes[CONSTANTS.STORAGE_KEYS.SESSIONS]) {
+          allSessions = normalizeSessions(changes[CONSTANTS.STORAGE_KEYS.SESSIONS].newValue);
+          renderSessions();
+        }
+      });
 
       const isDuplicateSessionName = (name, excludeId = null) => allSessions.some(s => String(s.id) !== String(excludeId) && s.name === name);
 	  const generateUniqueId = () => `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
@@ -1894,34 +1934,42 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        await updateAndSaveSessions(
-            async () => {
-                let name = sessionInput.value.trim();
-                if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`;
-                name = generateUniqueSessionName(name);
-                
-                allSessions.push({ id: generateUniqueId(), name, tabs: tabsForSession, isPinned: false });
-                sessionInput.value = '';
+        let name = sessionInput.value.trim();
+        if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`;
+        name = generateUniqueSessionName(name);
 
-                try {
-                    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-                    const allTabs = await chrome.tabs.query({});
-                    const tabIdsToClose = allTabs
-                        .filter(t => t.id !== activeTab?.id && t.url && isValidUrl(t.url))
-                        .map(t => t.id);
+        const originalInputValue = sessionInput.value;
+        const originalSessions = [...allSessions];
+        const nextSessions = [...allSessions, { id: generateUniqueId(), name, tabs: tabsForSession, isPinned: false }];
 
-                    if (tabIdsToClose.length > 0) {
-                        await chrome.tabs.remove(tabIdsToClose);
-                    }
-                    return CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, tabIdsToClose.length);
-                } catch (closeError) {
-                    console.error("Error closing tabs:", closeError);
-                    showToast(CONSTANTS.MESSAGES.SESSION_SAVED_TABS_CLOSE_FAILED(name), CONSTANTS.UI.TOAST_DURATION * 1.5);
-                    return CONSTANTS.MESSAGES.createSessionSavedMessage(name);
-                }
-            },
-            { errorMessagePrefix: CONSTANTS.MESSAGES.SESSION_SAVE_FAILED }
-        );
+        try {
+            allSessions = nextSessions;
+            await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, allSessions);
+            renderSessions();
+            sessionInput.value = '';
+        } catch (saveError) {
+            allSessions = originalSessions;
+            renderSessions();
+            sessionInput.value = originalInputValue;
+            showToast(`❌ ${CONSTANTS.MESSAGES.SESSION_SAVE_FAILED}: ${escapeHtml(saveError.message)}`);
+            return;
+        }
+
+        try {
+            const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            const allTabs = await chrome.tabs.query({});
+            const tabIdsToClose = allTabs
+                .filter(t => t.id !== activeTab?.id && t.url && isValidUrl(t.url))
+                .map(t => t.id);
+
+            if (tabIdsToClose.length > 0) {
+                await chrome.tabs.remove(tabIdsToClose);
+            }
+            showToast(CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, tabIdsToClose.length));
+        } catch (closeError) {
+            console.error("Error closing tabs:", closeError);
+            showToast(CONSTANTS.MESSAGES.SESSION_SAVED_TABS_CLOSE_FAILED(name), CONSTANTS.UI.TOAST_DURATION * 1.5);
+        }
       };
       
       const handleRestoreSession = async (sessionId) => {
@@ -2148,7 +2196,7 @@ document.addEventListener('DOMContentLoaded', function() {
         sessionInput.maxLength = CONSTANTS.UI.SESSION_NAME_MAX_LENGTH;
 
         const sessions = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
-        allSessions = sessions;
+        allSessions = normalizeSessions(sessions);
         
         renderSessions();
         

@@ -384,38 +384,70 @@ class TabManager {
 
       const tabsToMoveDetails = allWindows.flatMap(win =>
         (win.id !== targetWindowId && win.tabs)
-          ? win.tabs.filter(tab => !tab.pinned).map(tab => ({ id: tab.id, windowId: win.id }))
+          ? win.tabs
+              .filter(tab => typeof tab.id === 'number')
+              .map(tab => ({
+                id: tab.id,
+                windowId: win.id,
+                pinned: !!tab.pinned,
+                index: typeof tab.index === 'number' ? tab.index : 0
+              }))
           : []
       );
       console.log("mergeAllWindows_Debug: Tabs to move count:", tabsToMoveDetails.length);
       
       if (tabsToMoveDetails.length > 0) {
-          const movePromises = tabsToMoveDetails.map(tabDetail =>
-            chrome.tabs.move(tabDetail.id, { windowId: targetWindowId, index: -1 })
-              .then(movedTab => {
-                  if (movedTab && this._isValidTabForProcessing(movedTab)) {
-                      const urlString = this._getTabUrlString(movedTab);
-                      const parsedUrl = this._tryParseUrl(urlString);
-                      if (parsedUrl) {
-                          const oldCacheEntry = this.urlCache.get(movedTab.id);
-                          if(oldCacheEntry) this._removeUrlFromCache(movedTab.id, oldCacheEntry.url);
-                          this._addUrlToCache(movedTab.id, parsedUrl, movedTab.windowId);
-                      }
+          const processMovedTabForCache = (movedTab) => {
+              if (movedTab && this._isValidTabForProcessing(movedTab)) {
+                  const urlString = this._getTabUrlString(movedTab);
+                  const parsedUrl = this._tryParseUrl(urlString);
+                  if (parsedUrl) {
+                      const oldCacheEntry = this.urlCache.get(movedTab.id);
+                      if (oldCacheEntry) this._removeUrlFromCache(movedTab.id, oldCacheEntry.url);
+                      this._addUrlToCache(movedTab.id, parsedUrl, movedTab.windowId);
                   }
-              })
-              .catch(err => {
-                const cachedInfo = this.urlCache.get(tabDetail.id);
-                if(cachedInfo) this._removeUrlFromCache(tabDetail.id, cachedInfo.url);
-              })
-          );
-          await Promise.all(movePromises);
+              }
+          };
+
+          const sortBySourceWindowAndIndex = (a, b) => {
+              if (a.windowId !== b.windowId) return a.windowId - b.windowId;
+              return a.index - b.index;
+          };
+
+          const pinnedTabsToMove = tabsToMoveDetails.filter(tab => tab.pinned).sort(sortBySourceWindowAndIndex);
+          const unpinnedTabsToMove = tabsToMoveDetails.filter(tab => !tab.pinned).sort(sortBySourceWindowAndIndex);
+
+          const targetTabsBeforeMove = await chrome.tabs.query({ windowId: targetWindowId });
+          let nextPinnedInsertIndex = targetTabsBeforeMove.filter(tab => tab.pinned).length;
+
+          for (const tabDetail of pinnedTabsToMove) {
+              try {
+                  const movedTab = await chrome.tabs.move(tabDetail.id, { windowId: targetWindowId, index: nextPinnedInsertIndex });
+                  nextPinnedInsertIndex += 1;
+                  processMovedTabForCache(movedTab);
+              } catch (err) {
+                  const cachedInfo = this.urlCache.get(tabDetail.id);
+                  if (cachedInfo) this._removeUrlFromCache(tabDetail.id, cachedInfo.url);
+              }
+          }
+
+          for (const tabDetail of unpinnedTabsToMove) {
+              try {
+                  const movedTab = await chrome.tabs.move(tabDetail.id, { windowId: targetWindowId, index: -1 });
+                  processMovedTabForCache(movedTab);
+              } catch (err) {
+                  const cachedInfo = this.urlCache.get(tabDetail.id);
+                  if (cachedInfo) this._removeUrlFromCache(tabDetail.id, cachedInfo.url);
+              }
+          }
+
           console.log("mergeAllWindows_Debug: Tab move promises resolved.");
       }
 
       const remainingWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
       const windowsToClose = remainingWindows.filter(win => {
         if (win.id === targetWindowId) return false;
-        return !win.tabs || win.tabs.length === 0 || win.tabs.every(tab => tab.pinned);
+        return !win.tabs || win.tabs.length === 0;
       });
       console.log("mergeAllWindows_Debug: Windows to close count:", windowsToClose.length);
 

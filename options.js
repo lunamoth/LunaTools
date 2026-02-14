@@ -80,6 +80,40 @@ document.addEventListener('DOMContentLoaded', () => {
         return textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
     };
 
+    const normalizeStringArray = (value) => {
+        if (!Array.isArray(value)) return [];
+        return value
+            .filter(item => typeof item === 'string')
+            .map(item => item.trim())
+            .filter(Boolean);
+    };
+
+    const normalizeBackupData = (rawBackupData) => {
+        if (!rawBackupData || typeof rawBackupData !== 'object') {
+            throw new Error('유효하지 않은 백업 파일 형식입니다.');
+        }
+
+        const syncRaw = rawBackupData.sync;
+        const localRaw = rawBackupData.local;
+
+        if (!syncRaw || typeof syncRaw !== 'object' || Array.isArray(syncRaw)) {
+            throw new Error('유효하지 않은 백업 파일 형식입니다.');
+        }
+        if (!localRaw || typeof localRaw !== 'object' || Array.isArray(localRaw)) {
+            throw new Error('유효하지 않은 백업 파일 형식입니다.');
+        }
+
+        const normalizedSync = { ...syncRaw };
+        normalizedSync[STORAGE_KEYS.LOCKED] = normalizeStringArray(syncRaw[STORAGE_KEYS.LOCKED]);
+        normalizedSync[STORAGE_KEYS.BLOCKED] = normalizeStringArray(syncRaw[STORAGE_KEYS.BLOCKED]);
+        normalizedSync[STORAGE_KEYS.DISABLED_DRAG] = normalizeStringArray(syncRaw[STORAGE_KEYS.DISABLED_DRAG]);
+
+        return {
+            sync: normalizedSync,
+            local: { ...localRaw }
+        };
+    };
+
     // --- Actions ---
 
     const saveOptions = () => {
@@ -167,11 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
-                const backupData = JSON.parse(e.target.result);
-
-                if (!backupData || typeof backupData.sync !== 'object' || typeof backupData.local !== 'object') {
-                    throw new Error('유효하지 않은 백업 파일 형식입니다.');
-                }
+                const backupData = normalizeBackupData(JSON.parse(e.target.result));
                 
                 // 경고 후 진행
                 if (!confirm('경고: 현재 모든 설정과 데이터(URL 목록, 세션 포함)가 백업 파일의 내용으로 대체됩니다. 계속하시겠습니까?')) {
@@ -179,11 +209,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
-                await chrome.storage.sync.clear();
-                await chrome.storage.local.clear();
+                // clear()를 먼저 호출하지 않고, 새 데이터 반영 후 남은 키를 정리한다.
+                const existingSync = await chrome.storage.sync.get(null);
+                const existingLocal = await chrome.storage.local.get(null);
+                const syncKeysToRemove = Object.keys(existingSync).filter(key => !(key in backupData.sync));
+                const localKeysToRemove = Object.keys(existingLocal).filter(key => !(key in backupData.local));
 
                 await chrome.storage.sync.set(backupData.sync);
                 await chrome.storage.local.set(backupData.local);
+                if (syncKeysToRemove.length > 0) {
+                    await chrome.storage.sync.remove(syncKeysToRemove);
+                }
+                if (localKeysToRemove.length > 0) {
+                    await chrome.storage.local.remove(localKeysToRemove);
+                }
                 
                 showStatus('데이터를 성공적으로 복원했습니다. 페이지가 새로고침됩니다.');
                 

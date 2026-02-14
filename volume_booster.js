@@ -46,7 +46,9 @@
             this.#indicatorElement = document.createElement('div');
             this.#indicatorElement.id = this.#indicatorId;
             this.#indicatorElement.textContent = '🔊';
-            document.body.appendChild(this.#indicatorElement);
+            const uiHost = document.body || document.documentElement;
+            if (!uiHost) return;
+            uiHost.appendChild(this.#indicatorElement);
 
             this.#injectStyles();
             this.#indicatorElement.addEventListener('click', (e) => {

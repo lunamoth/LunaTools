@@ -42,6 +42,7 @@
         #indicatorLabel = null;
         #allLinksOnPageCached = null;
         #domMutationObserver = null;
+        #isTrustedSequence = false;
 
         #listenerOptions = { capture: true, passive: false };
 
@@ -57,7 +58,10 @@
             this.#domMutationObserver = new MutationObserver(() => {
                 this.#allLinksOnPageCached = null;
             });
-            this.#domMutationObserver.observe(document.body, { childList: true, subtree: true });
+            const observerTarget = document.body || document.documentElement;
+            if (observerTarget) {
+                this.#domMutationObserver.observe(observerTarget, { childList: true, subtree: true });
+            }
         }
 
         destroy() {
@@ -117,7 +121,9 @@
                 .${C.CSS_CLASSES.ACTION_INDICATOR} > span:first-child { font-size: ${C.STYLE.EMOJI_FONT_SIZE_PX}px; }
                 .${C.CSS_CLASSES.INDICATOR_LABEL} { font-size: ${C.STYLE.LABEL_FONT_SIZE_PX}px; font-weight: 600; font-family: ${C.STYLE.LABEL_FONT_FAMILY}; }
             `;
-            document.head.appendChild(style);
+            const styleHost = document.head || document.documentElement;
+            if (!styleHost) return;
+            styleHost.appendChild(style);
         }
 
         #getModifier(e) { return e.altKey ? 'alt' : e.ctrlKey ? 'ctrl' : e.shiftKey ? 'shift' : null; }
@@ -302,9 +308,11 @@
             this.#animationFrameId = null;
             this.#lastMouseEvent = null;
             this.#indicatorLabel = null;
+            this.#isTrustedSequence = false;
         }
         
         #handleMouseDown(e) {
+            if (!e.isTrusted) return;
             if (e.button !== 0) return;
             
             const modifier = this.#getModifier(e);
@@ -315,11 +323,13 @@
             if (isEditable) return;
             
             this.#modifier = modifier;
+            this.#isTrustedSequence = true;
             this.#startPos = { x: e.clientX, y: e.clientY };
             this.#lastMouseEvent = e;
         }
 
         #handleMouseMove(e) {
+            if (!e.isTrusted || !this.#isTrustedSequence) return;
             if (!this.#modifier) return;
 
             this.#lastMouseEvent = e;
@@ -340,6 +350,7 @@
         }
 
         #handleMouseUp(e) {
+            if (!e.isTrusted || !this.#isTrustedSequence) return;
             if (e.button !== 0) return;
 
             if (this.#isDragging) {
@@ -384,7 +395,8 @@
             }
 
             const currentHostname = window.location.hostname;
-            const isDragDisabled = disabledDragSites.some(site => site && (currentHostname === site || currentHostname.endsWith('.' + site)));
+            const disabledSites = Array.isArray(disabledDragSites) ? disabledDragSites : [];
+            const isDragDisabled = disabledSites.some(site => site && (currentHostname === site || currentHostname.endsWith('.' + site)));
 
             if (!isDragDisabled) {
                 initializeDragSelector();

@@ -54,6 +54,7 @@
       this.startX = 0;
       this.startY = 0;
       this.didMove = false;
+      this.isTrustedSequence = false;
 
       this._bindEventHandlers();
       this._initializeEventListeners();
@@ -82,18 +83,22 @@
     _resetState() {
       this.isMouseDown = false;
       this.didMove = false;
+      this.isTrustedSequence = false;
     }
 
     handleMouseDown(event) {
+      if (!event.isTrusted) return;
       if (event.button !== MouseGestureHandler.RIGHT_MOUSE_BUTTON) return;
 
       this.isMouseDown = true;
+      this.isTrustedSequence = true;
       this.startX = event.clientX;
       this.startY = event.clientY;
       this.didMove = false;
     }
 
     handleMouseMove(event) {
+      if (!event.isTrusted || !this.isTrustedSequence) return;
       if (!this.isMouseDown || this.didMove) return;
 
       const deltaX = event.clientX - this.startX;
@@ -104,6 +109,7 @@
     }
 
     handleMouseUp(event) {
+      if (!event.isTrusted || !this.isTrustedSequence) return;
       if (!this.isMouseDown) return;
       if (event.button !== MouseGestureHandler.RIGHT_MOUSE_BUTTON) {
         this._resetState();
@@ -140,13 +146,15 @@
     }
 
     handleContextMenu(event) {
+      if (!event.isTrusted) return;
       if (this.didMove) {
         event.preventDefault();
       }
       this._resetState();
     }
 
-    handleBlur() {
+    handleBlur(event) {
+      if (!event.isTrusted) return;
       if (this.isMouseDown) {
         this._resetState();
       }
@@ -478,9 +486,17 @@
       _handleKeyDown(event) {
         if (!KeyboardPageNavigator.NAV_KEYS_SET.has(event.key)) return;
         if (this._shouldIgnoreKeyEvent(event)) return;
+        const direction = event.key === KeyboardPageNavigator.KEY_ARROW_RIGHT ? 1 : -1;
+
+        const currentUrl = window.location.href;
+        if (this.urlPageFinder.shouldIgnoreUrl(currentUrl)) return;
+
+        const targetUrl = this._determineTargetUrl(currentUrl, direction);
+        if (!targetUrl || targetUrl === currentUrl) return;
+        if (targetUrl.toLowerCase().startsWith('javascript:')) return;
+
         event.preventDefault();
         event.stopPropagation();
-        const direction = event.key === KeyboardPageNavigator.KEY_ARROW_RIGHT ? 1 : -1;
         this._debouncedProcessKey(direction);
       }
       _shouldIgnoreKeyEvent(event) {
@@ -1899,6 +1915,7 @@
                         const copyBtn = document.createElement('button'); copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.className = 'smart-converter-copy-btn'; copyBtn.title = UI_STRINGS.COPY_BUTTON_TITLE;
                         
                         copyBtn.addEventListener('click', (e) => {
+                            if (!e.isTrusted) return;
                             e.stopPropagation();
                             navigator.clipboard.writeText(msgData.copyText)
                                 .then(() => { copyBtn.textContent = UI_STRINGS.COPY_SUCCESS_TEXT; copyBtn.classList.add('success'); setTimeout(() => { copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.classList.remove('success'); }, 1500); })
@@ -1956,6 +1973,7 @@
             document.addEventListener('contextmenu', (e) => EventHandlers.updateMousePositionAndSelectionRect(e), true);
             document.addEventListener('selectionchange', Utils.debounce(EventHandlers.handleSelectionChange, 250));
             document.addEventListener('keydown', function(event) {
+                if (!event.isTrusted) return;
                 if (event.altKey && (event.key === 'z' || event.key === 'Z' || event.code === 'KeyZ')) { event.preventDefault(); event.stopPropagation(); EventHandlers.handleUnifiedConvertAction(); }
                 if (event.key === 'Escape' || event.code === 'Escape') { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') PopupUI.close(); }
             });
