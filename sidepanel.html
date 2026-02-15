@@ -407,6 +407,41 @@
         #multi-url-opener-pane .toast.success { background-color: rgba(var(--success-color-rgb), 0.85); }
         #multi-url-opener-pane .toast.error { background-color: rgba(var(--danger-color-rgb), 0.85); }
         #multi-url-opener-pane .toast.info { background-color: rgba(var(--accent-color-rgb), 0.85); }
+
+        /* --- Narrow width layout adjustment for list controls --- */
+        @media (max-width: 500px) {
+            #multi-url-opener-pane .list-controls-main {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: var(--spacing-xs);
+                align-items: stretch;
+            }
+
+            #multi-url-opener-pane #newListButton,
+            #multi-url-opener-pane #savedListsDropdown {
+                grid-column: 1 / -1;
+                width: 100%;
+                min-width: 0;
+            }
+
+            #multi-url-opener-pane #newListButton {
+                height: 36px;
+                line-height: 34px;
+                padding: 0 var(--spacing-sm);
+                justify-self: stretch;
+            }
+
+            #multi-url-opener-pane #saveListButton,
+            #multi-url-opener-pane #renameListButton,
+            #multi-url-opener-pane #deleteListButton {
+                width: 100%;
+                min-width: 0;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+        }
         
         /* --- Styles for "세션 매니저" (Scoped from TabHaiku) --- */
 		#session-manager-pane {
