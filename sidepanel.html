@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -364,7 +364,7 @@
         #multi-url-opener-pane #urlQueue span { padding: var(--spacing-xs); border-radius: var(--radius-xs); transition: all var(--transition-duration-emphasis) var(--transition-timing-spring); }
         #multi-url-opener-pane #urlQueue span.processing { background-color: var(--accent-glow); color: var(--text-primary); font-weight: 600; box-shadow: var(--shadow-sm); }
         #multi-url-opener-pane #urlQueue span.removing { opacity: 0; max-height: 0; margin: 0; padding-top: 0; padding-bottom: 0; transform: scale(0.9); }
-        #multi-url-opener-pane #urlQueue span.error { color: var(--danger-color); text-decoration: line-through; opacity: 0.6; }
+        #multi-url-opener-pane #urlQueue span.error { color: var(--danger-color); background-color: rgba(var(--danger-color-rgb), 0.08); font-weight: 600; }
         #multi-url-opener-pane #startRunButton, #multi-url-opener-pane #pauseResumeButton, #multi-url-opener-pane #stopProcessButton { padding: var(--spacing-md) var(--spacing-xl); font-size: var(--font-size-title2); font-weight: 600; color: white; border: none; border-radius: var(--radius-sm); cursor: pointer; transition: all var(--transition-duration-base) var(--transition-timing-spring); box-shadow: 0 1px 2px rgba(var(--shadow-color-rgb), 0.1), inset 0 1px 0px rgba(255,255,255,0.1); text-shadow: 0 1px 1px rgba(0,0,0,0.2); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
         #multi-url-opener-pane #startRunButton, #multi-url-opener-pane #pauseResumeButton { flex-grow: 1; background-color: var(--accent-color-transparent); }
         #multi-url-opener-pane #startRunButton:hover, #multi-url-opener-pane #pauseResumeButton:hover { background-color: rgba(var(--accent-color-rgb), 0.95); box-shadow: 0 3px 8px -1px rgba(var(--accent-color-rgb), 0.4), inset 0 1px 1px rgba(255,255,255,0.15), var(--shadow-sm); transform: translateY(-1px); }
@@ -705,3 +705,4 @@
     <script src="sidepanel.js"></script>
 </body>
 </html>
+

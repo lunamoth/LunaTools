@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', function() {
+﻿document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
     // --- Tab UI Control ---
@@ -1170,6 +1170,15 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        const finalizeProcessedQueueItem = (span) => {
+            if (!span) return;
+
+            span.classList.remove(CONFIG.CSS.PROCESSING_CLASS);
+            if (!span.classList.contains(CONFIG.CSS.ERROR_CLASS)) {
+                span.classList.add(CONFIG.CSS.REMOVING_CLASS);
+            }
+        };
+
         const processNextUrl = async (runId) => {
             if (runId !== state.currentRunId) {
                 return;
@@ -1187,10 +1196,7 @@ document.addEventListener('DOMContentLoaded', function() {
             updateProgress();
 
             const previousSpan = UI.urlQueue ? UI.urlQueue.querySelector(`.${CONFIG.CSS.PROCESSING_CLASS}`) : null;
-            if (previousSpan) {
-                previousSpan.classList.remove(CONFIG.CSS.PROCESSING_CLASS);
-                previousSpan.classList.add(CONFIG.CSS.REMOVING_CLASS);
-            }
+            finalizeProcessedQueueItem(previousSpan);
 
             const url = state.urlsToProcess[state.currentUrlIndex];
             const fullUrl = (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://')) ? url : 'https://' + url;
@@ -1212,6 +1218,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error(`Error processing URL ${url}:`, e);
                 state.errorCount++;
                 if (currentSpan) {
+                    currentSpan.classList.remove(CONFIG.CSS.PROCESSING_CLASS);
                     currentSpan.classList.add(CONFIG.CSS.ERROR_CLASS);
                     currentSpan.textContent = `⚠️ ${url}`;
                     currentSpan.title = `오류: ${e.message}`;
@@ -1284,12 +1291,16 @@ document.addEventListener('DOMContentLoaded', function() {
         const handleCompletion = () => {
             const total = state.urlsToProcess.length;
             const success = total - state.errorCount;
+            const activeProcessingSpan = UI.urlQueue ? UI.urlQueue.querySelector(`.${CONFIG.CSS.PROCESSING_CLASS}`) : null;
+
+            finalizeProcessedQueueItem(activeProcessingSpan);
+
             if (UI.progressStats) {
                 UI.progressStats.textContent = CONFIG.TEXT.PROCESS_COMPLETE(total, success, state.errorCount);
-                UI.progressStats.className = CONFIG.CSS.COMPLETE_CLASS;
+                UI.progressStats.className = state.errorCount > 0 ? CONFIG.CSS.ERROR_CLASS : CONFIG.CSS.COMPLETE_CLASS;
             }
             if (UI.progressBar) UI.progressBar.value = 100;
-            if (UI.urlQueue) UI.urlQueue.innerHTML = '';
+            if (UI.urlQueue && state.errorCount === 0) UI.urlQueue.innerHTML = '';
             
             if (UI.playSoundCheckbox && UI.playSoundCheckbox.checked) {
                 SoundEffect.playSuccess();
@@ -2242,3 +2253,4 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeApp(lunaToolsApp, 'multi-url-opener-pane');
     initializeApp(tabHaikuApp, 'session-manager-pane');
 });
+
