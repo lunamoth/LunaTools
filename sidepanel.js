@@ -218,54 +218,338 @@
         };
 
 		const SoundEffect = {
-            playSuccess() {
+            _currentContext: null,
+            _stopTimer: null,
+
+            async _stopCurrentContext() {
+                if (this._stopTimer) {
+                    clearTimeout(this._stopTimer);
+                    this._stopTimer = null;
+                }
+                if (this._currentContext) {
+                    try { await this._currentContext.close(); } catch (error) {}
+                    this._currentContext = null;
+                }
+            },
+
+            async playSuccess() {
+                const TOTAL_SECONDS = 5.0;
+
                 try {
                     const AudioContext = window.AudioContext || window.webkitAudioContext;
                     if (!AudioContext) return;
-                    
-                    const ctx = new AudioContext();
-                    const now = ctx.currentTime;
 
-                    // 노트 재생 헬퍼 함수 (샘플 파일의 로직 적용)
-                    const playNote = (freq, time, duration, vol = 0.1, type = 'sine') => {
-                        const osc = ctx.createOscillator();
-                        const gain = ctx.createGain();
-                        
-                        osc.type = type;
-                        osc.frequency.value = freq;
-                        
-                        osc.connect(gain);
-                        gain.connect(ctx.destination);
-                        
-                        gain.gain.setValueAtTime(0, time);
-                        gain.gain.linearRampToValueAtTime(vol, time + 0.1); // Attack
-                        gain.gain.exponentialRampToValueAtTime(0.001, time + duration); // Release
-                        
-                        osc.start(time);
-                        osc.stop(time + duration);
+                    await this._stopCurrentContext();
+
+                    const ctx = new AudioContext();
+                    this._currentContext = ctx;
+                    if (ctx.state === 'suspended') await ctx.resume();
+
+                    const midiToHz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
+                    const cents = (value) => Math.pow(2, value / 1200);
+
+                    const createImpulseResponse = (seconds = 2.85, decay = 4.2) => {
+                        const length = Math.floor(ctx.sampleRate * seconds);
+                        const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+                        for (let channel = 0; channel < 2; channel += 1) {
+                            const data = impulse.getChannelData(channel);
+                            for (let i = 0; i < length; i += 1) {
+                                const x = i / length;
+                                const early = Math.exp(-x * decay);
+                                const late = Math.exp(-x * (decay * 0.62));
+                                const shimmer = Math.sin(i * 0.017 + channel) * 0.14 + Math.sin(i * 0.041) * 0.06;
+                                data[i] = (Math.random() * 2 - 1) * (early * 0.68 + late * 0.22) * (0.82 + shimmer);
+                            }
+                        }
+                        return impulse;
                     };
 
-                    // --- Finale 사운드 데이터 ---
-                    const C4=261.63, E4=329.63, G4=392.00;
-                    const C5=523.25, E5=659.25, G5=783.99;
-                    const C6=1046.50;
+                    const envelope = (gainParam, time, attack, peak, decayTime, sustainLevel, releaseStart, releaseEnd) => {
+                        gainParam.cancelScheduledValues(time);
+                        gainParam.setValueAtTime(0.0001, time);
+                        gainParam.exponentialRampToValueAtTime(Math.max(peak, 0.0001), time + attack);
+                        gainParam.exponentialRampToValueAtTime(Math.max(sustainLevel, 0.0001), time + attack + decayTime);
+                        gainParam.setValueAtTime(Math.max(sustainLevel, 0.0001), releaseStart);
+                        gainParam.exponentialRampToValueAtTime(0.0001, releaseEnd);
+                    };
 
-                    // 1. 웅장한 베이스 (Triangle 파형 사용)
-                    playNote(C4/2, now, 4.0, 0.2, 'triangle'); // C3
-                    playNote(G4/2, now, 4.0, 0.15, 'triangle'); // G3
-                    
-                    // 2. 화려한 고음 아르페지오 (Sine 파형 사용)
-                    const grandArp = [C4, E4, G4, C5, E5, G5, C6];
-                    grandArp.forEach((note, i) => {
-                        // 0.1초 간격으로 펼쳐짐
-                        playNote(note, now + 0.1 + (i * 0.1), 3.0, 0.1, 'sine');
-                    });
+                    const createAudioGraph = (startTime) => {
+                        const master = ctx.createGain();
+                        const dry = ctx.createGain();
+                        const reverbSend = ctx.createGain();
+                        const reverb = ctx.createConvolver();
+                        const reverbTone = ctx.createBiquadFilter();
+                        const wet = ctx.createGain();
+                        const highpass = ctx.createBiquadFilter();
+                        const safety = ctx.createDynamicsCompressor();
 
+                        reverb.buffer = createImpulseResponse();
+                        reverbTone.type = 'lowpass';
+                        reverbTone.frequency.value = 6900;
+                        reverbTone.Q.value = 0.35;
+
+                        highpass.type = 'highpass';
+                        highpass.frequency.value = 120;
+                        highpass.Q.value = 0.55;
+
+                        safety.threshold.value = -9;
+                        safety.knee.value = 18;
+                        safety.ratio.value = 8.5;
+                        safety.attack.value = 0.004;
+                        safety.release.value = 0.18;
+
+                        dry.gain.value = 0.98;
+                        reverbSend.gain.value = 0.44;
+                        wet.gain.value = 0.34;
+
+                        const volumeGain = 0.88;
+                        master.gain.setValueAtTime(0.0001, startTime);
+                        master.gain.exponentialRampToValueAtTime(0.86 * volumeGain + 0.0001, startTime + 0.035);
+                        master.gain.setValueAtTime(0.86 * volumeGain + 0.0001, startTime + 4.22);
+                        master.gain.exponentialRampToValueAtTime(0.0001, startTime + TOTAL_SECONDS);
+
+                        dry.connect(master);
+                        reverbSend.connect(reverb);
+                        reverb.connect(reverbTone);
+                        reverbTone.connect(wet);
+                        wet.connect(master);
+                        master.connect(highpass);
+                        highpass.connect(safety);
+                        safety.connect(ctx.destination);
+
+                        return {
+                            route(node, dryLevel = 1, wetLevel = 1) {
+                                const dryGain = ctx.createGain();
+                                const wetGain = ctx.createGain();
+                                dryGain.gain.value = dryLevel;
+                                wetGain.gain.value = wetLevel;
+                                node.connect(dryGain);
+                                node.connect(wetGain);
+                                dryGain.connect(dry);
+                                wetGain.connect(reverbSend);
+                            }
+                        };
+                    };
+
+                    const playBell = (graph, options) => {
+                        const {
+                            midi,
+                            time,
+                            duration = 1.25,
+                            gain = 0.22,
+                            pan = 0,
+                            detuneCents = 0,
+                            bright = 1
+                        } = options;
+
+                        const out = ctx.createGain();
+                        const tone = ctx.createBiquadFilter();
+                        const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+                        tone.type = 'highpass';
+                        tone.frequency.value = 360;
+                        tone.Q.value = 0.35;
+                        out.connect(tone);
+
+                        if (panner) {
+                            tone.connect(panner);
+                            panner.pan.setValueAtTime(pan, time);
+                            graph.route(panner, 1, 0.95);
+                        } else {
+                            graph.route(tone, 1, 0.95);
+                        }
+
+                        const base = midiToHz(midi) * cents(detuneCents);
+                        const partials = [
+                            { ratio: 1.000, amp: 1.00 },
+                            { ratio: 2.002, amp: 0.30 * bright },
+                            { ratio: 3.006, amp: 0.105 * bright },
+                            { ratio: 4.018, amp: 0.035 * bright }
+                        ];
+
+                        partials.forEach((partial, index) => {
+                            const osc = ctx.createOscillator();
+                            const g = ctx.createGain();
+                            osc.type = index === 0 ? 'sine' : 'triangle';
+                            osc.frequency.setValueAtTime(base * partial.ratio, time);
+                            envelope(
+                                g.gain,
+                                time,
+                                0.006 + index * 0.002,
+                                gain * partial.amp,
+                                0.16 + index * 0.08,
+                                gain * partial.amp * 0.10,
+                                time + duration * (0.48 + index * 0.03),
+                                time + duration
+                            );
+                            osc.connect(g);
+                            g.connect(out);
+                            osc.start(time);
+                            osc.stop(time + duration + 0.08);
+                        });
+                    };
+
+                    const playCelesteChord = (graph, time, notes, baseGain = 0.10) => {
+                        notes.forEach((note) => {
+                            playBell(graph, {
+                                midi: note.midi,
+                                time: time + note.delay,
+                                duration: note.duration || 2.65,
+                                gain: baseGain * (note.weight || 1),
+                                pan: note.pan || 0,
+                                detuneCents: note.detune || 0,
+                                bright: note.bright || 0.9
+                            });
+                        });
+                    };
+
+                    const playSoftPad = (graph, midi, time, duration, gain, pan, detune = 0) => {
+                        const out = ctx.createGain();
+                        const filter = ctx.createBiquadFilter();
+                        const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+                        const oscA = ctx.createOscillator();
+                        const oscB = ctx.createOscillator();
+                        const gA = ctx.createGain();
+                        const gB = ctx.createGain();
+
+                        oscA.type = 'triangle';
+                        oscB.type = 'sine';
+                        oscA.frequency.setValueAtTime(midiToHz(midi) * cents(detune), time);
+                        oscB.frequency.setValueAtTime(midiToHz(midi + 12) * cents(detune - 4), time);
+                        gA.gain.value = 0.70;
+                        gB.gain.value = 0.22;
+
+                        filter.type = 'lowpass';
+                        filter.frequency.setValueAtTime(760, time);
+                        filter.frequency.exponentialRampToValueAtTime(1850, time + 1.35);
+                        filter.frequency.exponentialRampToValueAtTime(980, time + duration);
+                        filter.Q.value = 0.48;
+
+                        envelope(out.gain, time, 0.38, gain, 0.75, gain * 0.56, time + duration - 1.65, time + duration);
+
+                        oscA.connect(gA); gA.connect(filter);
+                        oscB.connect(gB); gB.connect(filter);
+                        filter.connect(out);
+
+                        if (panner) {
+                            out.connect(panner);
+                            panner.pan.setValueAtTime(pan, time);
+                            graph.route(panner, 0.72, 1.05);
+                        } else {
+                            graph.route(out, 0.72, 1.05);
+                        }
+
+                        oscA.start(time);
+                        oscB.start(time);
+                        oscA.stop(time + duration + 0.08);
+                        oscB.stop(time + duration + 0.08);
+                    };
+
+                    const playAirLift = (graph, time, duration, gain) => {
+                        const length = Math.floor(ctx.sampleRate * duration);
+                        const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+                        const data = buffer.getChannelData(0);
+                        for (let i = 0; i < length; i += 1) {
+                            const x = i / length;
+                            const fadeIn = Math.min(1, x / 0.08);
+                            const fadeOut = Math.pow(1 - x, 1.9);
+                            data[i] = (Math.random() * 2 - 1) * fadeIn * fadeOut;
+                        }
+
+                        const source = ctx.createBufferSource();
+                        const band = ctx.createBiquadFilter();
+                        const high = ctx.createBiquadFilter();
+                        const g = ctx.createGain();
+                        source.buffer = buffer;
+                        band.type = 'bandpass';
+                        band.frequency.setValueAtTime(4800, time);
+                        band.frequency.exponentialRampToValueAtTime(7600, time + duration * 0.42);
+                        band.Q.value = 0.7;
+                        high.type = 'highpass';
+                        high.frequency.value = 2300;
+                        g.gain.setValueAtTime(0.0001, time);
+                        g.gain.exponentialRampToValueAtTime(gain, time + 0.055);
+                        g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+                        source.connect(band);
+                        band.connect(high);
+                        high.connect(g);
+                        graph.route(g, 0.42, 1.35);
+                        source.start(time);
+                    };
+
+                    const playGentleAccent = (graph, time) => {
+                        const out = ctx.createGain();
+                        const filter = ctx.createBiquadFilter();
+                        const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+                        filter.type = 'bandpass';
+                        filter.frequency.value = 760;
+                        filter.Q.value = 0.88;
+                        out.connect(filter);
+
+                        if (panner) {
+                            filter.connect(panner);
+                            panner.pan.value = 0;
+                            graph.route(panner, 0.64, 0.62);
+                        } else {
+                            graph.route(filter, 0.64, 0.62);
+                        }
+
+                        [60, 67, 72].forEach((midi, index) => {
+                            const osc = ctx.createOscillator();
+                            const g = ctx.createGain();
+                            osc.type = 'sine';
+                            osc.frequency.setValueAtTime(midiToHz(midi), time);
+                            envelope(g.gain, time, 0.012, [0.040, 0.034, 0.030][index], 0.09, 0.006, time + 0.24, time + 0.50);
+                            osc.connect(g);
+                            g.connect(out);
+                            osc.start(time);
+                            osc.stop(time + 0.62);
+                        });
+                    };
+
+                    const start = ctx.currentTime + 0.055;
+                    const graph = createAudioGraph(start);
+
+                    // 정석적인 완료 인지감: E → G → C로 올라가는 맑은 3음 상승 차임.
+                    playBell(graph, { midi: 76, time: start + 0.00, duration: 0.92, gain: 0.235, pan: -0.08, bright: 1.05 });
+                    playBell(graph, { midi: 79, time: start + 0.18, duration: 1.06, gain: 0.255, pan:  0.08, bright: 1.00 });
+                    playBell(graph, { midi: 84, time: start + 0.43, duration: 1.86, gain: 0.315, pan:  0.00, bright: 0.93 });
+
+                    // 완료 확정감은 살리되, 뭉툭한 저음 임팩트는 쓰지 않는 짧은 중역 어택.
+                    playGentleAccent(graph, start + 0.43);
+
+                    // 예술적 업그레이드: C major 9 / 6 색채의 투명한 화성.
+                    playCelesteChord(graph, start + 0.69, [
+                        { midi: 72, delay: 0.000, weight: 0.98, pan: -0.28, duration: 2.65, bright: 0.74 },
+                        { midi: 76, delay: 0.025, weight: 0.74, pan: -0.08, duration: 2.48, bright: 0.72 },
+                        { midi: 79, delay: 0.050, weight: 0.70, pan:  0.12, duration: 2.54, bright: 0.72 },
+                        { midi: 83, delay: 0.072, weight: 0.46, pan:  0.28, duration: 2.35, bright: 0.65 },
+                        { midi: 86, delay: 0.096, weight: 0.40, pan:  0.02, duration: 2.22, bright: 0.60 },
+                        { midi: 81, delay: 0.122, weight: 0.28, pan: -0.20, duration: 2.10, bright: 0.58 }
+                    ], 0.112);
+
+                    // 짧고 따뜻한 현악/합창 질감의 잔향 배경.
+                    const padStart = start + 0.18;
+                    const padDur = 4.45;
+                    playSoftPad(graph, 60, padStart,        padDur,        0.052, -0.38, -5);
+                    playSoftPad(graph, 64, padStart + 0.04, padDur - 0.06, 0.046,  0.34,  4);
+                    playSoftPad(graph, 67, padStart + 0.08, padDur - 0.10, 0.044, -0.10, -2);
+                    playSoftPad(graph, 71, padStart + 0.16, padDur - 0.18, 0.032,  0.22,  3);
+                    playSoftPad(graph, 74, padStart + 0.24, padDur - 0.25, 0.027, -0.18, -4);
+
+                    // 맑고 고급스러운 공기감.
+                    playAirLift(graph, start + 0.36, 2.90, 0.018);
+
+                    this._stopTimer = window.setTimeout(async () => {
+                        if (this._currentContext === ctx) {
+                            await this._stopCurrentContext();
+                        }
+                    }, TOTAL_SECONDS * 1000 + 650);
                 } catch (e) {
-                    console.error("Audio playback failed", e);
+                    console.error('Audio playback failed', e);
                 }
             }
         };
+
 				
         const getElementHeightWithMargins = (element) => {
             if (!element || getComputedStyle(element).display === 'none') return 0;
