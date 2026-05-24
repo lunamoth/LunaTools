@@ -156,7 +156,7 @@
                 links.push(...node.querySelectorAll('a[href]'));
                 for (const el of node.querySelectorAll('*')) { if (el.shadowRoot) queue.push(el.shadowRoot); }
             }
-            return links.filter(link => this.#isElementVisible(link) && link.href && !link.href.startsWith(window.location.href + '#') && link.protocol.startsWith('http'));
+            return links.filter(link => this.#isElementVisible(link) && link.href && !link.href.startsWith(window.location.href + '#') && ['http:', 'https:'].includes(link.protocol));
         }
 
         #getLinksFromCacheOrFind() {
@@ -265,19 +265,56 @@
             }
         }
 
+        async #copyTextToClipboard(text) {
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch (_) {
+            }
+
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.setAttribute('readonly', '');
+            textArea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+            document.documentElement.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                return document.execCommand('copy');
+            } catch (_) {
+                return false;
+            } finally {
+                textArea.remove();
+            }
+        }
+
+        #sendOpenTabsMessage(urls) {
+            try {
+                chrome.runtime.sendMessage({ action: 'openTabsInNewTab', urls }, () => {
+                    if (chrome.runtime.lastError) {
+                        console.warn('LunaTools: 탭 열기 메시지 전송 실패', chrome.runtime.lastError.message);
+                    }
+                });
+            } catch (error) {
+                console.warn('LunaTools: 탭 열기 메시지 전송 실패', error);
+            }
+        }
+
         async #performAction(links) {
             if (links.size === 0) return;
             const urls = Array.from(links, a => a.href);
 
             if (this.#modifier === 'ctrl') {
-                navigator.clipboard.writeText(urls.join('\n'))
-                    .catch(() => console.warn('LunaTools: 클립보드 복사 실패'));
+                const copied = await this.#copyTextToClipboard(urls.join('\n'));
+                if (!copied) console.warn('LunaTools: 클립보드 복사 실패');
             } else if (this.#modifier === 'shift') {
-                chrome.runtime.sendMessage({ action: 'openTabsInNewTab', urls });
+                this.#sendOpenTabsMessage(urls);
             } else if (this.#modifier === 'alt') {
                 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
                 for (const url of urls) {
-                    chrome.runtime.sendMessage({ action: 'openTabsInNewTab', urls: [url] });
+                    this.#sendOpenTabsMessage([url]);
                     await sleep(2000);
                 }
             }
@@ -365,6 +402,7 @@
         }
 
         #handleKeyDown(e) {
+            if (!e.isTrusted) return;
             if (e.key === 'Escape' && this.#isDragging) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -373,6 +411,7 @@
         }
 
         #handleKeyUp(e) {
+            if (!e.isTrusted) return;
             if (this.#isDragging && !e.altKey && !e.ctrlKey && !e.shiftKey) {
                 this.#resetState();
             } else if (!this.#isDragging && this.#modifier && !this.#getModifier(e)) {

@@ -205,7 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // 경고 후 진행
                 if (!confirm('경고: 현재 모든 설정과 데이터(URL 목록, 세션 포함)가 백업 파일의 내용으로 대체됩니다. 계속하시겠습니까?')) {
-                    restoreFileInput.value = ''; // Reset file input
+                    if (restoreFileInput) restoreFileInput.value = ''; // Reset file input
                     return;
                 }
 
@@ -235,7 +235,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error('Restore failed:', error);
                 showStatus(`복원 실패: ${error.message}`, true);
             } finally {
-                restoreFileInput.value = ''; // Reset file input for next use
+                if (restoreFileInput) restoreFileInput.value = ''; // Reset file input for next use
             }
         };
         reader.readAsText(file);
@@ -249,7 +249,9 @@ document.addEventListener('DOMContentLoaded', () => {
             backupButton.addEventListener('click', handleBackup);
         }
         if (restoreButton) {
-            restoreButton.addEventListener('click', () => restoreFileInput.click());
+            restoreButton.addEventListener('click', () => {
+                if (restoreFileInput) restoreFileInput.click();
+            });
         }
         if (restoreFileInput) {
             restoreFileInput.addEventListener('change', handleRestoreFileSelect);

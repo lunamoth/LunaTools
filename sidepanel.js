@@ -123,12 +123,100 @@
             '`': '&#96;'
         }[ch]));
 
+        const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+        const isReservedObjectKey = (key) => RESERVED_OBJECT_KEYS.has(String(key));
+
+        const toSafeListMap = (value) => {
+            const safeMap = Object.create(null);
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return safeMap;
+
+            for (const [key, list] of Object.entries(value)) {
+                if (isReservedObjectKey(key)) continue;
+                if (!list || typeof list !== 'object' || Array.isArray(list) || typeof list.urls !== 'string') continue;
+                safeMap[key] = {
+                    urls: list.urls,
+                    createdAt: typeof list.createdAt === 'string' ? list.createdAt : new Date().toISOString()
+                };
+            }
+            return safeMap;
+        };
+
+        const assertSafeListName = (name) => {
+            if (isReservedObjectKey(name)) {
+                Toast.show('사용할 수 없는 목록 이름입니다. 다른 이름을 입력해주세요.', 'error');
+                return false;
+            }
+            return true;
+        };
+
+        const createSafeModalFragment = (html) => {
+            const fragment = document.createDocumentFragment();
+            const template = document.createElement('template');
+            template.innerHTML = String(html ?? '');
+
+            const allowedTags = new Set(['STRONG', 'BR', 'INPUT']);
+            const allowedInputAttributes = new Set(['id', 'value', 'placeholder', 'maxlength', 'min', 'max', 'step', 'class', 'autocomplete']);
+            const allowedInputTypes = new Set(['text', 'search', 'number']);
+
+            const sanitizeNode = (node) => {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    return document.createTextNode(node.textContent || '');
+                }
+                if (node.nodeType !== Node.ELEMENT_NODE) {
+                    return document.createDocumentFragment();
+                }
+
+                const tagName = node.tagName;
+                if (!allowedTags.has(tagName)) {
+                    const childFragment = document.createDocumentFragment();
+                    Array.from(node.childNodes).forEach(child => {
+                        const safeChild = sanitizeNode(child);
+                        if (safeChild) childFragment.appendChild(safeChild);
+                    });
+                    return childFragment;
+                }
+
+                if (tagName === 'BR') {
+                    return document.createElement('br');
+                }
+
+                if (tagName === 'INPUT') {
+                    const input = document.createElement('input');
+                    const requestedType = String(node.getAttribute('type') || 'text').toLowerCase();
+                    input.type = allowedInputTypes.has(requestedType) ? requestedType : 'text';
+                    for (const attr of allowedInputAttributes) {
+                        const value = node.getAttribute(attr);
+                        if (value !== null) input.setAttribute(attr, value);
+                    }
+                    return input;
+                }
+
+                const clone = document.createElement('strong');
+                Array.from(node.childNodes).forEach(child => {
+                    const safeChild = sanitizeNode(child);
+                    if (safeChild) clone.appendChild(safeChild);
+                });
+                return clone;
+            };
+
+            Array.from(template.content.childNodes).forEach(child => {
+                const safeChild = sanitizeNode(child);
+                if (safeChild) fragment.appendChild(safeChild);
+            });
+            return fragment;
+        };
+
+        const setSafeModalBody = (element, html) => {
+            if (!element) return;
+            element.replaceChildren(createSafeModalFragment(html));
+        };
+
         const Modal = {
             resolve: null,
             _keydownListener: null,
             show(config) {
                 UI.modalHeader.textContent = config.title;
-                UI.modalBody.innerHTML = config.body;
+                setSafeModalBody(UI.modalBody, config.body);
                 UI.modalConfirmBtn.textContent = config.confirmText || '확인';
                 UI.modalCancelBtn.textContent = config.cancelText || '취소';
                 UI.modalConfirmBtn.className = 'modal-confirm-btn' + (config.danger ? ' danger' : '');
@@ -830,17 +918,18 @@
         const getSavedLists = async () => {
             try {
                 const data = await chrome.storage.local.get(CONFIG.URL_LISTS_KEY);
-                return data[CONFIG.URL_LISTS_KEY] || {};
+                return toSafeListMap(data[CONFIG.URL_LISTS_KEY]);
             } catch (e) {
                 console.error('Error getting saved lists:', e);
                 Toast.show('저장된 목록을 불러오는데 실패했습니다.', 'error');
-                return {};
+                return Object.create(null);
             }
         };
 
         const saveLists = async (lists) => {
             try {
-                await chrome.storage.local.set({ [CONFIG.URL_LISTS_KEY]: lists });
+                const safeLists = Object.fromEntries(Object.entries(toSafeListMap(lists)));
+                await chrome.storage.local.set({ [CONFIG.URL_LISTS_KEY]: safeLists });
                 return true;
             } catch (e) {
                 console.error('Error saving lists:', e);
@@ -939,6 +1028,8 @@
                             const listName = rawListName.trim().replace(/\s+/g, ' ');
                             if (!listName) {
                                 Toast.show('목록 이름은 비워둘 수 없습니다. 새 목록 작성을 계속합니다.', 'error');
+                            } else if (!assertSafeListName(listName)) {
+                                return;
                             } else {
                                 const lists = await getSavedLists();
                                 if (lists[listName]) {
@@ -1009,6 +1100,9 @@
             const listName = rawListName.trim().replace(/\s+/g, ' ');
             if (!listName) {
                 Toast.show('목록 이름은 비워둘 수 없습니다.', 'error');
+                return false;
+            }
+            if (!assertSafeListName(listName)) {
                 return false;
             }
 
@@ -1146,6 +1240,7 @@
                 Toast.show('목록 이름은 비워둘 수 없습니다.', 'error');
                 return;
             }
+            if (!assertSafeListName(newName)) return;
             if (newName === oldName) return;
 
             const lists = await getSavedLists();
@@ -1271,16 +1366,20 @@
                 return;
             }
 
-            const validImportedLists = {};
-            for (const key in importedJson) {
-                if (Object.prototype.hasOwnProperty.call(importedJson, key) &&
-                    typeof importedJson[key] === 'object' &&
-                    importedJson[key] !== null &&
-                    'urls' in importedJson[key] &&
-                    typeof importedJson[key].urls === 'string') {
+            const validImportedLists = Object.create(null);
+            for (const [key, importedList] of Object.entries(importedJson)) {
+                if (isReservedObjectKey(key)) {
+                    console.warn(`Skipping unsafe list name during import: ${key}`);
+                    continue;
+                }
+                if (typeof importedList === 'object' &&
+                    importedList !== null &&
+                    !Array.isArray(importedList) &&
+                    'urls' in importedList &&
+                    typeof importedList.urls === 'string') {
                     validImportedLists[key] = {
-                        urls: importedJson[key].urls,
-                        createdAt: importedJson[key].createdAt || new Date().toISOString()
+                        urls: importedList.urls,
+                        createdAt: typeof importedList.createdAt === 'string' ? importedList.createdAt : new Date().toISOString()
                     };
                 } else {
                     console.warn(`Skipping invalid list structure for key: ${key} during import.`);
@@ -1413,8 +1512,13 @@
             let newTab;
             const tabToWatch = { id: null };
             let updateListener, removeListener;
+            let cleanupTimer = null;
 
             const cleanup = () => {
+                if (cleanupTimer) {
+                    clearTimeout(cleanupTimer);
+                    cleanupTimer = null;
+                }
                 if (updateListener) chrome.tabs.onUpdated.removeListener(updateListener);
                 if (removeListener) chrome.tabs.onRemoved.removeListener(removeListener);
             };
@@ -1440,6 +1544,7 @@
 
                 chrome.tabs.onUpdated.addListener(updateListener);
                 chrome.tabs.onRemoved.addListener(removeListener);
+                cleanupTimer = setTimeout(cleanup, 15000);
 
                 await chrome.tabs.update(newTab.id, { url });
             } catch (error) {
@@ -1942,10 +2047,17 @@
       };
 
       const formatDate = (timestamp) => {
-        const d = new Date(timestamp);
+        const numericTimestamp = Number(timestamp);
+        if (!Number.isFinite(numericTimestamp) || numericTimestamp <= 0) {
+          return '날짜 없음';
+        }
+        const d = new Date(numericTimestamp);
+        if (Number.isNaN(d.getTime())) {
+          return '날짜 없음';
+        }
         const datePart = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
         let hours = d.getHours();
-        const minutes = d.getMinutes();
+        const minutes = String(d.getMinutes()).padStart(2, '0');
         const ampm = hours >= 12 ? '오후' : '오전';
         hours %= 12;
         if (hours === 0) hours = 12;
@@ -1980,6 +2092,31 @@
       };
       
       const escapeHtml = (str) => String(str).replace(/[&<>"'\/]/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;', '/': '&#x2F;' }[s]));
+      
+      const writeTextToClipboard = async (text) => {
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(String(text));
+            return true;
+          }
+        } catch (_) {
+        }
+
+        const textArea = document.createElement('textarea');
+        textArea.value = String(text);
+        textArea.setAttribute('readonly', '');
+        textArea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+        (document.body || document.documentElement).appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+          return document.execCommand('copy');
+        } catch (_) {
+          return false;
+        } finally {
+          textArea.remove();
+        }
+      };
       
       const isValidUrl = (url) => {
         if (!url || typeof url !== 'string') return false;
@@ -2034,8 +2171,10 @@
         return { session: allSessions[index], index };
       };
       const getSessionTimestamp = (session) => {
-        const id = session.id;
-        return typeof id === 'string' ? parseInt(id.split('-')[0], 10) : id;
+        const id = session?.id;
+        const rawTimestamp = typeof id === 'string' ? id.split('-')[0] : id;
+        const timestamp = Number(rawTimestamp);
+        return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
       };
 
       const createActionButton = (action, title, icon) => {
@@ -2101,7 +2240,7 @@
         const item = sessionItemTemplate.content.cloneNode(true).firstElementChild;
         item.dataset.sessionId = session.id;
         if (session.isPinned) item.classList.add('pinned');
-        const groupCount = new Set(session.tabs.map(t => t.groupId).filter(Boolean)).size;
+        const groupCount = new Set(session.tabs.map(t => t.groupId).filter(id => Number.isInteger(id) && id >= 0)).size;
         const sessionIdNum = getSessionTimestamp(session);
         const dateMeta = formatDate(sessionIdNum);
         const countMeta = `탭: ${session.tabs.length}${groupCount > 0 ? `, 그룹: ${groupCount}` : ''}`;
@@ -2380,8 +2519,8 @@
             return;
         }
         try {
-            await navigator.clipboard.writeText(urlsToCopy);
-            showToast(CONSTANTS.MESSAGES.URLS_COPIED);
+            const copied = await writeTextToClipboard(urlsToCopy);
+            showToast(copied ? CONSTANTS.MESSAGES.URLS_COPIED : CONSTANTS.MESSAGES.COPY_FAILED);
         } catch (err) {
             showToast(CONSTANTS.MESSAGES.COPY_FAILED);
         }

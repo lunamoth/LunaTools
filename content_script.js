@@ -636,7 +636,10 @@
       if (!videoElement) {
         return;
       }
-      if (videoElement.readyState < 3) {
+      if (videoElement.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        return;
+      }
+      if (videoElement.readyState < HTMLMediaElement.HAVE_METADATA) {
         try {
           await new Promise((resolve, reject) => {
             let timeoutId = null;
@@ -944,6 +947,78 @@
             const div = document.createElement('div');
             div.textContent = str;
             return div.innerHTML;
+        },
+        createSafeHtmlFragment: function(html) {
+            const fragment = document.createDocumentFragment();
+            const template = document.createElement('template');
+            template.innerHTML = String(html ?? '');
+
+            const allowedTags = new Set(['DIV', 'SPAN', 'B', 'BR', 'SMALL']);
+            const allowedClasses = new Set(['converted-value', 'original-value', 'category-icon', 'title-suffix']);
+
+            const sanitizeNode = (node) => {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    return document.createTextNode(node.textContent || '');
+                }
+                if (node.nodeType !== Node.ELEMENT_NODE) {
+                    return document.createDocumentFragment();
+                }
+
+                const tagName = node.tagName;
+                const childFragment = document.createDocumentFragment();
+                Array.from(node.childNodes).forEach(child => {
+                    const safeChild = sanitizeNode(child);
+                    if (safeChild) childFragment.appendChild(safeChild);
+                });
+
+                if (!allowedTags.has(tagName)) {
+                    return childFragment;
+                }
+
+                const clone = document.createElement(tagName.toLowerCase());
+                if (node.classList) {
+                    const safeClasses = Array.from(node.classList).filter(className => allowedClasses.has(className));
+                    if (safeClasses.length > 0) clone.className = safeClasses.join(' ');
+                }
+                if (tagName === 'SMALL') {
+                    const color = node.style?.color;
+                    if (color && /^#[0-9a-f]{3,8}$/i.test(color.trim())) {
+                        clone.style.color = color.trim();
+                    }
+                }
+                clone.appendChild(childFragment);
+                return clone;
+            };
+
+            Array.from(template.content.childNodes).forEach(child => {
+                const safeChild = sanitizeNode(child);
+                if (safeChild) fragment.appendChild(safeChild);
+            });
+            return fragment;
+        },
+        writeTextToClipboard: async function(text) {
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(String(text));
+                    return true;
+                }
+            } catch (_) {
+            }
+
+            const textArea = document.createElement('textarea');
+            textArea.value = String(text);
+            textArea.setAttribute('readonly', '');
+            textArea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+            document.documentElement.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                return document.execCommand('copy');
+            } catch (_) {
+                return false;
+            } finally {
+                textArea.remove();
+            }
         },
         parseFloatLenient: function(inputStr) {
             if (inputStr === null || typeof inputStr === 'undefined') return null;
@@ -1546,8 +1621,14 @@
 
     const ApiService = {
         fetchExchangeRate: async function(fromCurrency, toCurrency = Config.DEFAULT_TARGET_CURRENCY) {
-            if (Utils.isInvalidString(fromCurrency)) {
+            fromCurrency = String(fromCurrency || '').trim().toUpperCase();
+            toCurrency = String(toCurrency || Config.DEFAULT_TARGET_CURRENCY).trim().toUpperCase();
+
+            if (!/^[A-Z]{3}$/.test(fromCurrency)) {
                 return Promise.reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_INVALID_CURRENCY(fromCurrency)));
+            }
+            if (!/^[A-Z]{3}$/.test(toCurrency)) {
+                return Promise.reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_INVALID_CURRENCY(toCurrency)));
             }
             if (fromCurrency === toCurrency) {
                 return { rate: 1, date: new Date().toISOString().split('T')[0] };
@@ -1908,8 +1989,8 @@
                 const itemDiv = document.createElement('div'); itemDiv.className = 'smart-converter-item';
                 const textContentDiv = document.createElement('div'); textContentDiv.className = 'smart-converter-item-text-content';
                 if (typeof msgData === 'object' && msgData !== null) {
-                    if (msgData.titleHtml) { const titleEl = document.createElement('div'); titleEl.innerHTML = msgData.titleHtml; textContentDiv.appendChild(titleEl); }
-                    if (msgData.contentHtml) { const contentEl = document.createElement('div'); contentEl.innerHTML = msgData.contentHtml; if (msgData.titleHtml && contentEl.childNodes.length > 0) contentEl.style.marginTop = '4px'; textContentDiv.appendChild(contentEl); }
+                    if (msgData.titleHtml) { const titleEl = document.createElement('div'); titleEl.appendChild(Utils.createSafeHtmlFragment(msgData.titleHtml)); textContentDiv.appendChild(titleEl); }
+                    if (msgData.contentHtml) { const contentEl = document.createElement('div'); contentEl.appendChild(Utils.createSafeHtmlFragment(msgData.contentHtml)); if (msgData.titleHtml && contentEl.childNodes.length > 0) contentEl.style.marginTop = '4px'; textContentDiv.appendChild(contentEl); }
                     itemDiv.appendChild(textContentDiv);
                     if (!isLoadingState && !isErrorState && !Utils.isInvalidString(msgData.copyText) && !msgData.isError) {
                         const copyBtn = document.createElement('button'); copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.className = 'smart-converter-copy-btn'; copyBtn.title = UI_STRINGS.COPY_BUTTON_TITLE;
@@ -1917,8 +1998,11 @@
                         copyBtn.addEventListener('click', (e) => {
                             if (!e.isTrusted) return;
                             e.stopPropagation();
-                            navigator.clipboard.writeText(msgData.copyText)
-                                .then(() => { copyBtn.textContent = UI_STRINGS.COPY_SUCCESS_TEXT; copyBtn.classList.add('success'); setTimeout(() => { copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.classList.remove('success'); }, 1500); })
+                            Utils.writeTextToClipboard(msgData.copyText)
+                                .then((copied) => {
+                                    if (!copied) throw new Error('clipboard_copy_failed');
+                                    copyBtn.textContent = UI_STRINGS.COPY_SUCCESS_TEXT; copyBtn.classList.add('success'); setTimeout(() => { copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.classList.remove('success'); }, 1500);
+                                })
                                 .catch(() => { copyBtn.textContent = UI_STRINGS.COPY_FAIL_TEXT; copyBtn.classList.add('fail'); setTimeout(() => { copyBtn.textContent = UI_STRINGS.COPY_BUTTON_TEXT; copyBtn.classList.remove('fail'); }, 1500); });
                         });
 

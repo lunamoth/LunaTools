@@ -52,6 +52,7 @@
 
             this.#injectStyles();
             this.#indicatorElement.addEventListener('click', (e) => {
+                if (!e.isTrusted) return;
                 e.stopPropagation();
                 this.#toggleCallback();
             });
@@ -266,6 +267,7 @@
         }
 
         #handleKeyDown(e) {
+            if (!e.isTrusted) return;
             const activeEl = document.activeElement;
             const isInput = activeEl && (CONFIG.UI.IGNORED_TAGS.has(activeEl.tagName) || activeEl.isContentEditable);
             if (isInput || !e.altKey || e.key.toLowerCase() !== CONFIG.ACTIVATION_KEY) return;

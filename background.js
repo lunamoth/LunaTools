@@ -3,35 +3,48 @@ const PERFORM_GESTURE_ACTION = 'perform-gesture';
 const FETCH_EXCHANGE_RATE_ACTION = "fetchLunaToolsExchangeRate";
 const API_TIMEOUT_MS_EXCHANGE_RATE = 7000;
 const CONTEXT_MENU_ID_MERGE_TABS = "lunaToolsMergeTabsContextMenu";
+const BADGE_ALERT_THRESHOLD = 100;
+const CURRENCY_CODE_REGEX = /^[A-Z]{3}$/;
 
 async function updateTabCountBadge() {
   try {
     const allTabs = await chrome.tabs.query({});
     const tabCount = allTabs.length;
+    const isAlertState = tabCount >= BADGE_ALERT_THRESHOLD;
 
-    await chrome.action.setBadgeText({
-      text: tabCount.toString()
-    });
+    await chrome.action.setBadgeText({ text: String(tabCount) });
+    await chrome.action.setBadgeBackgroundColor({ color: isAlertState ? '#EB4D3D' : '#FFCB00' });
 
-    if (tabCount >= 100) {
-      await chrome.action.setBadgeBackgroundColor({
-        color: '#EB4D3D'
-      });
-      await chrome.action.setBadgeTextColor({
-        color: '#FFFFFF'
-      });
-    } else {
-      await chrome.action.setBadgeBackgroundColor({
-        color: '#FFCB00'
-      });
-      await chrome.action.setBadgeTextColor({
-        color: '#000000'
-      });
+    if (typeof chrome.action.setBadgeTextColor === 'function') {
+      await chrome.action.setBadgeTextColor({ color: isAlertState ? '#FFFFFF' : '#000000' });
     }
-
   } catch (error) {
     console.error("LunaTools: 탭 개수 배지 업데이트 중 오류 발생.", error);
-    await chrome.action.setBadgeText({ text: '' });
+    try {
+      await chrome.action.setBadgeText({ text: '' });
+    } catch (_) {
+      // 배지 초기화 자체가 실패해도 확장 프로그램의 다른 기능은 계속 동작해야 합니다.
+    }
+  }
+}
+
+function ensureMergeTabsContextMenu() {
+  try {
+    chrome.contextMenus.remove(CONTEXT_MENU_ID_MERGE_TABS, () => {
+      // remove()는 기존 메뉴가 없으면 lastError를 설정합니다. 정상적인 초기화 흐름이므로 무시합니다.
+      void chrome.runtime.lastError;
+      chrome.contextMenus.create({
+        id: CONTEXT_MENU_ID_MERGE_TABS,
+        title: "모든 탭을 하나의 창으로 합치기",
+        contexts: ["action"]
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.warn("LunaTools: 컨텍스트 메뉴 생성 실패", chrome.runtime.lastError.message);
+        }
+      });
+    });
+  } catch (error) {
+    console.warn("LunaTools: 컨텍스트 메뉴 초기화 실패", error);
   }
 }
 
@@ -44,17 +57,20 @@ try {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: CONTEXT_MENU_ID_MERGE_TABS,
-    title: "모든 탭을 하나의 창으로 합치기",
-    contexts: ["action"]
-  });
+  ensureMergeTabsContextMenu();
   updateTabCountBadge();
 });
 
+if (chrome.runtime.onStartup) {
+  chrome.runtime.onStartup.addListener(() => {
+    ensureMergeTabsContextMenu();
+    updateTabCountBadge();
+  });
+}
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === CONTEXT_MENU_ID_MERGE_TABS) {
-    await tabManager.mergeAllWindows();
+    await tabManager.mergeAllWindows(tab?.windowId);
   }
 });
 
@@ -204,12 +220,12 @@ class TabManager {
     }
   }
 
-  async sortTabsInCurrentWindow() {
+  async sortTabsInCurrentWindow(preferredWindowId = null) {
     try {
-      const currentWindow = await chrome.windows.getCurrent({ populate: false, windowTypes: ['normal'] });
-      if (!currentWindow?.id) return;
-      
-      await this._sortAndMoveTabsInWindow(currentWindow.id);
+      const targetWindowId = await this._resolveTargetWindowId(preferredWindowId);
+      if (targetWindowId == null) return;
+
+      await this._sortAndMoveTabsInWindow(targetWindowId);
     } catch (error) {
     }
   }
@@ -287,6 +303,9 @@ class TabManager {
 
     const cachedInfo = this.urlCache.get(tab.id);
     if (!cachedInfo || cachedInfo.url.href !== parsedUrl.href || cachedInfo.windowId !== tab.windowId) {
+      if (cachedInfo?.url) {
+        this._removeUrlFromCache(tab.id, cachedInfo.url);
+      }
       this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
     }
 
@@ -362,25 +381,50 @@ class TabManager {
     }
   }
 
-  async mergeAllWindows() {
-    console.log("mergeAllWindows_Debug: Function called by context menu or other means");
+  async _resolveTargetWindowId(preferredWindowId = null) {
+    if (typeof preferredWindowId === 'number') {
+      try {
+        const preferredWindow = await chrome.windows.get(preferredWindowId, { populate: false });
+        if (preferredWindow?.id != null && preferredWindow.type === 'normal') {
+          return preferredWindow.id;
+        }
+      } catch (error) {
+        if (!isWindowAccessError(error)) {
+          console.warn("LunaTools: 대상 창 확인 중 오류 발생", error);
+        }
+      }
+    }
+
+    try {
+      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (typeof activeTab?.windowId === 'number') {
+        return activeTab.windowId;
+      }
+    } catch (error) {
+    }
+
+    try {
+      const [firstWindow] = await chrome.windows.getAll({ populate: false, windowTypes: ['normal'] });
+      return typeof firstWindow?.id === 'number' ? firstWindow.id : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async mergeAllWindows(preferredTargetWindowId = null) {
     try {
       const allWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-      console.log("mergeAllWindows_Debug: allWindows count:", allWindows.length);
       if (allWindows.length <= 1) {
-        if (allWindows.length === 1) await this._sortAndMoveTabsInWindow(allWindows[0].id);
-        console.log("mergeAllWindows_Debug: Not enough windows to merge or sort.");
+        if (allWindows.length === 1 && typeof allWindows[0]?.id === 'number') {
+          await this._sortAndMoveTabsInWindow(allWindows[0].id);
+        }
         return;
       }
 
-      const targetWindow = await chrome.windows.getCurrent({ windowTypes: ['normal'] });
-      if (!targetWindow?.id) {
-          console.log("mergeAllWindows_Debug: No target window found.");
-          return;
+      const targetWindowId = await this._resolveTargetWindowId(preferredTargetWindowId);
+      if (targetWindowId == null) {
+        return;
       }
-      const targetWindowId = targetWindow.id;
-      console.log("mergeAllWindows_Debug: Target window ID:", targetWindowId);
-
 
       const tabsToMoveDetails = allWindows.flatMap(win =>
         (win.id !== targetWindowId && win.tabs)
@@ -394,7 +438,6 @@ class TabManager {
               }))
           : []
       );
-      console.log("mergeAllWindows_Debug: Tabs to move count:", tabsToMoveDetails.length);
       
       if (tabsToMoveDetails.length > 0) {
           const processMovedTabForCache = (movedTab) => {
@@ -440,8 +483,6 @@ class TabManager {
                   if (cachedInfo) this._removeUrlFromCache(tabDetail.id, cachedInfo.url);
               }
           }
-
-          console.log("mergeAllWindows_Debug: Tab move promises resolved.");
       }
 
       const remainingWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
@@ -449,27 +490,26 @@ class TabManager {
         if (win.id === targetWindowId) return false;
         return !win.tabs || win.tabs.length === 0;
       });
-      console.log("mergeAllWindows_Debug: Windows to close count:", windowsToClose.length);
-
 
       if (windowsToClose.length > 0) {
           const closePromises = windowsToClose.map(win =>
             chrome.windows.remove(win.id).catch(err => {
+              if (!isWindowAccessError(err)) {
+                console.warn("LunaTools: 빈 창 닫기 실패", err);
+              }
             })
           );
           await Promise.all(closePromises);
-          console.log("mergeAllWindows_Debug: Window close promises resolved.");
       }
 
       await this._focusWindow(targetWindowId);
       await this._sortAndMoveTabsInWindow(targetWindowId);
-      console.log("mergeAllWindows_Debug: Target window focused and tabs sorted.");
 
     } catch (error) {
-        console.error("mergeAllWindows_Debug: CRITICAL ERROR in mergeAllWindows:", error);
+        console.error("LunaTools: 창 병합 중 치명적 오류 발생", error);
     }
   }
-  
+
   async _focusWindow(windowId) {
     try {
       await chrome.windows.update(windowId, { focused: true });
@@ -529,19 +569,26 @@ const tabManager = new TabManager();
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command === "sort-tabs") {
-    await tabManager.sortTabsInCurrentWindow();
+    await tabManager.sortTabsInCurrentWindow(tab?.windowId);
   } else if (command === "toggle-mute-current") {
-    const currentTab = await chrome.tabs.query({active: true, currentWindow: true});
-    if (currentTab[0]) {
-      const isMuted = currentTab[0].mutedInfo.muted;
-      await chrome.tabs.update(currentTab[0].id, { muted: !isMuted });
+    const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (typeof currentTab?.id === 'number') {
+      const isMuted = !!currentTab.mutedInfo?.muted;
+      await chrome.tabs.update(currentTab.id, { muted: !isMuted });
     }
   } else if (command === "toggle-mute-all") {
     const allTabs = await chrome.tabs.query({});
-    const anyUnmuted = allTabs.some(t => !t.mutedInfo.muted);
+    const anyUnmuted = allTabs.some(t => !t.mutedInfo?.muted);
     const targetMuteState = anyUnmuted;
     for (const t of allTabs) {
-      await chrome.tabs.update(t.id, { muted: targetMuteState });
+      if (typeof t.id !== 'number') continue;
+      try {
+        await chrome.tabs.update(t.id, { muted: targetMuteState });
+      } catch (error) {
+        if (!isTabAccessError(error)) {
+          console.warn("LunaTools: 탭 음소거 상태 변경 실패", error);
+        }
+      }
     }
   }
 });
@@ -562,9 +609,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.action === FETCH_EXCHANGE_RATE_ACTION && message.from && message.to) {
-    const apiUrl = `https://api.frankfurter.app/latest?from=${encodeURIComponent(message.from)}&to=${encodeURIComponent(message.to)}`;
+    const fromCurrency = String(message.from).trim().toUpperCase();
+    const toCurrency = String(message.to).trim().toUpperCase();
+
+    if (!CURRENCY_CODE_REGEX.test(fromCurrency) || !CURRENCY_CODE_REGEX.test(toCurrency)) {
+      sendResponse({ error: 'Invalid currency code.' });
+      return false;
+    }
+
+    const apiUrl = `https://api.frankfurter.app/latest?from=${encodeURIComponent(fromCurrency)}&to=${encodeURIComponent(toCurrency)}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS_EXCHANGE_RATE);
     
-    fetch(apiUrl, { signal: AbortSignal.timeout(API_TIMEOUT_MS_EXCHANGE_RATE) })
+    fetch(apiUrl, { signal: controller.signal })
       .then(response => {
         if (!response.ok) {
           throw new Error(`Network error (status: ${response.status})`);
@@ -572,10 +629,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return response.json();
       })
       .then(data => {
-        if (data.rates && typeof data.rates[message.to] === 'number' && data.date) {
-          sendResponse({ data: { rate: data.rates[message.to], date: data.date } });
+        if (data.rates && typeof data.rates[toCurrency] === 'number' && data.date) {
+          sendResponse({ data: { rate: data.rates[toCurrency], date: data.date } });
         } else {
-          sendResponse({ error: `API response error: Could not find rate for ${message.to}` });
+          sendResponse({ error: `API response error: Could not find rate for ${toCurrency}` });
         }
       })
       .catch(error => {
@@ -588,9 +645,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             errorMessage = `API processing error: ${error.message}`;
         }
         sendResponse({ error: errorMessage });
-      });
+      })
+      .finally(() => clearTimeout(timeoutId));
     return true;
   }
+
   
   return false;
 });
@@ -630,6 +689,24 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await tabManager.handleTabUpdate(tabToProcess);
   }
 });
+
+if (chrome.tabs.onReplaced) {
+  chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+    const cachedInfo = tabManager.urlCache.get(removedTabId);
+    if (cachedInfo) {
+      tabManager._removeUrlFromCache(removedTabId, cachedInfo.url);
+    }
+
+    try {
+      const addedTab = await chrome.tabs.get(addedTabId);
+      await tabManager.handleTabUpdate(addedTab);
+    } catch (error) {
+      if (!tabManager._isTabNotFoundError(error)) {
+        console.warn("LunaTools: 교체된 탭 캐시 갱신 실패", error);
+      }
+    }
+  });
+}
 
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   updateTabCountBadge();
