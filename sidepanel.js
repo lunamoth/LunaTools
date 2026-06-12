@@ -114,6 +114,39 @@
             currentRunId: 0
         };
 
+        const canAutoFocusUrlInput = () => (
+            UI.urlInput &&
+            !UI.urlInput.disabled &&
+            state.currentView === 'input' &&
+            pane.classList.contains('active') &&
+            (!UI.modalOverlay || !UI.modalOverlay.classList.contains('visible')) &&
+            document.visibilityState !== 'hidden'
+        );
+
+        const focusUrlInput = () => {
+            if (!canAutoFocusUrlInput()) return;
+
+            try {
+                UI.urlInput.focus({ preventScroll: true });
+            } catch (_) {
+                UI.urlInput.focus();
+            }
+
+            const cursorPosition = UI.urlInput.value.length;
+            try {
+                UI.urlInput.setSelectionRange(cursorPosition, cursorPosition);
+            } catch (_) {
+                // 일부 브라우저/상태에서 selectionRange가 실패해도 포커스 자체는 유지합니다.
+            }
+        };
+
+        const focusUrlInputWhenPanelIsReady = () => {
+            requestAnimationFrame(focusUrlInput);
+            setTimeout(focusUrlInput, 80);
+            setTimeout(focusUrlInput, 250);
+            setTimeout(focusUrlInput, 600);
+        };
+
         const escapeHtml = (value) => String(value ?? '').replace(/[&<>"'`]/g, (ch) => ({
             '&': '&amp;',
             '<': '&lt;',
@@ -1949,8 +1982,21 @@
             window.addEventListener('resize', scheduleSetCardHeight);
             await resetToIdle();
             await Promise.all([loadOptions(), loadSavedLists()]);
+            focusUrlInputWhenPanelIsReady();
             requestAnimationFrame(() => {
                  scheduleSetCardHeight();
+            });
+
+            const multiUrlTabButton = document.querySelector('.tab-button[data-tab="multi-url-opener"]');
+            if (multiUrlTabButton) {
+                multiUrlTabButton.addEventListener('click', focusUrlInputWhenPanelIsReady);
+            }
+            window.addEventListener('focus', focusUrlInputWhenPanelIsReady);
+            window.addEventListener('pageshow', focusUrlInputWhenPanelIsReady);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    focusUrlInputWhenPanelIsReady();
+                }
             });
 
             // Expose a public method for TabHaiku integration
