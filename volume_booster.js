@@ -120,7 +120,7 @@
 
     class AudioProcessor {
         #audioContext = null;
-        #sourceNodeMap = new Map();
+        #sourceNodeMap = new WeakMap();
         #userHasInteracted = false; 
 
         setUserInteracted() {
@@ -154,7 +154,7 @@
 
         #applyVolume(mediaElements, volume, context) {
             for (const media of mediaElements) {
-                if (document.body.contains(media)) {
+                if (media.isConnected) {
                     this.#setup(media);
                     const audioComponents = this.#sourceNodeMap.get(media);
                     audioComponents?.gainNode?.gain.setTargetAtTime(volume, context.currentTime, 0.05);
@@ -181,16 +181,17 @@
         }
 
         cleanupRemovedNodes(nodeList) {
-            if (!this.#sourceNodeMap.size || !nodeList?.length) return;
+            if (!nodeList?.length) return;
 
             for (const media of this.#findMediaInNodes(nodeList)) {
-                if (this.#sourceNodeMap.has(media)) {
-                    const { source, gainNode } = this.#sourceNodeMap.get(media);
+                const audioComponents = this.#sourceNodeMap.get(media);
+                if (audioComponents && !media.isConnected && audioComponents.connected) {
+                    const { source, gainNode } = audioComponents;
                     try {
                         source.disconnect();
                         gainNode.disconnect();
                     } catch {}
-                    this.#sourceNodeMap.delete(media);
+                    audioComponents.connected = false;
                 }
             }
         }
@@ -206,12 +207,25 @@
         }
 
         #setup(mediaElement) {
-            if (!this.#audioContext || this.#sourceNodeMap.has(mediaElement)) return;
+            if (!this.#audioContext) return;
+
+            const existingComponents = this.#sourceNodeMap.get(mediaElement);
+            if (existingComponents) {
+                if (!existingComponents.connected) {
+                    try {
+                        existingComponents.source.connect(existingComponents.gainNode);
+                        existingComponents.gainNode.connect(this.#audioContext.destination);
+                        existingComponents.connected = true;
+                    } catch {}
+                }
+                return;
+            }
+
             try {
                 const source = this.#audioContext.createMediaElementSource(mediaElement);
                 const gainNode = this.#audioContext.createGain();
                 source.connect(gainNode).connect(this.#audioContext.destination);
-                this.#sourceNodeMap.set(mediaElement, { source, gainNode });
+                this.#sourceNodeMap.set(mediaElement, { source, gainNode, connected: true });
             } catch {}
         }
 

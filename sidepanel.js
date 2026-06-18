@@ -174,6 +174,25 @@
             return safeMap;
         };
 
+        const parseStoredListMap = (value) => {
+            const safeMap = Object.create(null);
+            if (value === undefined) return safeMap;
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                throw new Error('저장된 URL 목록 데이터의 형식이 올바르지 않습니다.');
+            }
+
+            for (const [key, list] of Object.entries(value)) {
+                if (isReservedObjectKey(key) || !list || typeof list !== 'object' || Array.isArray(list) || typeof list.urls !== 'string') {
+                    throw new Error(`저장된 URL 목록 '${key}'의 데이터가 손상되었습니다.`);
+                }
+                safeMap[key] = {
+                    urls: list.urls,
+                    createdAt: typeof list.createdAt === 'string' ? list.createdAt : new Date().toISOString()
+                };
+            }
+            return safeMap;
+        };
+
         const assertSafeListName = (name) => {
             if (isReservedObjectKey(name)) {
                 Toast.show('사용할 수 없는 목록 이름입니다. 다른 이름을 입력해주세요.', 'error');
@@ -818,8 +837,7 @@
         };
 
         const resetToIdle = async (message = CONFIG.TEXT.IDLE, isError = false) => {
-            if (!state.isInitialLoad && state.isDirty && state.currentView !== 'input') {
-            } else if (!state.isInitialLoad && state.isDirty) {
+            if (!state.isInitialLoad && state.isDirty) {
                  const safeListName = escapeHtml(state.loadedListName || '현재');
                  const confirmed = await Modal.show({
                     title: '저장되지 않은 변경사항',
@@ -951,11 +969,11 @@
         const getSavedLists = async () => {
             try {
                 const data = await chrome.storage.local.get(CONFIG.URL_LISTS_KEY);
-                return toSafeListMap(data[CONFIG.URL_LISTS_KEY]);
+                return parseStoredListMap(data[CONFIG.URL_LISTS_KEY]);
             } catch (e) {
                 console.error('Error getting saved lists:', e);
-                Toast.show('저장된 목록을 불러오는데 실패했습니다.', 'error');
-                return Object.create(null);
+                Toast.show('저장된 목록을 불러오지 못했습니다. 기존 데이터를 보호하기 위해 작업을 중단했습니다.', 'error', 5000);
+                return null;
             }
         };
 
@@ -976,6 +994,7 @@
 
         const loadSavedLists = async () => {
             const lists = await getSavedLists();
+            if (!lists) return false;
             const listNames = Object.keys(lists);
             const currentSelectionInDropdown = UI.savedListsDropdown ? UI.savedListsDropdown.value : '';
 
@@ -1002,6 +1021,7 @@
             }
             updateButtonState();
             scheduleSetCardHeight();
+            return true;
         };
 
         const _switchToNewListState = () => {
@@ -1031,11 +1051,17 @@
 
                 if (choice === 'cancel' || choice === undefined || choice === null) return;
 
+                if (choice === 'discard') {
+                    _switchToNewListState();
+                    return;
+                }
+
                 if (choice === 'save_and_new') {
                     let savedSuccessfully = false;
                     if (state.loadedListName) {
                         const urlsToSave = UI.urlInput.value.trim();
                         const lists = await getSavedLists();
+                        if (!lists) return;
                         if (lists[state.loadedListName]) {
                             lists[state.loadedListName].urls = urlsToSave;
                             if (await saveLists(lists)) {
@@ -1060,13 +1086,14 @@
                         if (result && rawListName) {
                             const listName = rawListName.trim().replace(/\s+/g, ' ');
                             if (!listName) {
-                                Toast.show('목록 이름은 비워둘 수 없습니다. 새 목록 작성을 계속합니다.', 'error');
+                                Toast.show('목록 이름은 비워둘 수 없습니다. 현재 편집 내용은 유지됩니다.', 'error');
                             } else if (!assertSafeListName(listName)) {
                                 return;
                             } else {
                                 const lists = await getSavedLists();
+                                if (!lists) return;
                                 if (lists[listName]) {
-                                    Toast.show(`'${listName}' 목록이 이미 존재합니다. 다른 이름을 사용해주세요. 새 목록 작성을 계속합니다.`, 'error');
+                                    Toast.show(`'${listName}' 목록이 이미 존재합니다. 현재 편집 내용은 유지됩니다.`, 'error');
                                 } else {
                                     const urlsToSave = UI.urlInput.value.trim();
                                     lists[listName] = { urls: urlsToSave, createdAt: new Date().toISOString() };
@@ -1081,12 +1108,13 @@
                                 }
                             }
                         } else {
-                            Toast.show('저장이 취소되었습니다. 새 목록 작성을 계속합니다.', 'info');
+                            Toast.show('저장이 취소되었습니다. 현재 편집 내용은 유지됩니다.', 'info');
                         }
                     }
-                    if (savedSuccessfully) state.isDirty = false;
+                    if (!savedSuccessfully) return;
+                    state.isDirty = false;
+                    _switchToNewListState();
                 }
-                _switchToNewListState();
             } else {
                 _switchToNewListState();
             }
@@ -1097,6 +1125,7 @@
 
             const urlsToSave = UI.urlInput.value.trim();
             const lists = await getSavedLists();
+            if (!lists) return;
             if (!lists[state.loadedListName]) {
                 Toast.show(`'${state.loadedListName}' 목록을 찾을 수 없어 업데이트할 수 없습니다. 새 목록으로 저장해보세요.`, 'error');
                 state.loadedListName = null;
@@ -1140,6 +1169,7 @@
             }
 
             const lists = await getSavedLists();
+            if (!lists) return false;
             if (lists[listName] && listName !== state.loadedListName) {
                 const safeListName = escapeHtml(listName);
                 const overwrite = await Modal.show({
@@ -1202,6 +1232,10 @@
             }
 
             const lists = await getSavedLists();
+            if (!lists) {
+                if (UI.savedListsDropdown) UI.savedListsDropdown.value = state.loadedListName || '';
+                return;
+            }
             const loadedData = lists[listNameToLoad];
             if (!loadedData) {
                 Toast.show(`'${listNameToLoad}' 목록을 찾을 수 없습니다. 목록이 삭제되었을 수 있습니다.`, 'error');
@@ -1238,6 +1272,7 @@
             if (!confirmed) return;
 
             const lists = await getSavedLists();
+            if (!lists) return;
             delete lists[listName];
 
             if (await saveLists(lists)) {
@@ -1277,6 +1312,12 @@
             if (newName === oldName) return;
 
             const lists = await getSavedLists();
+            if (!lists) return;
+            if (!lists[oldName]) {
+                Toast.show(`'${oldName}' 목록을 찾을 수 없어 이름을 변경하지 못했습니다.`, 'error');
+                await loadSavedLists();
+                return;
+            }
             if (lists[newName]) {
                 await Modal.show({ title: '오류', body: '같은 이름의 목록이 이미 존재합니다.', hideCancel: true });
                 return;
@@ -1365,6 +1406,7 @@
 
         const handleExportLists = async () => {
             const lists = await getSavedLists();
+            if (!lists) return;
             if (Object.keys(lists).length === 0) {
                 Toast.show('내보낼 목록이 없습니다.', 'error');
                 return;
@@ -1425,6 +1467,7 @@
             }
 
             const currentLists = await getSavedLists();
+            if (!currentLists) return;
             const conflicts = Object.keys(validImportedLists).filter(key => currentLists[key]);
             let applyImport = true;
             let newListsData = { ...currentLists };
@@ -1454,7 +1497,16 @@
 
             if (applyImport && await saveLists(newListsData)) {
                 Toast.show('JSON 목록을 성공적으로 가져왔습니다.', 'success');
-                _switchToNewListState();
+
+                if (state.loadedListName && newListsData[state.loadedListName]) {
+                    const persistedUrls = newListsData[state.loadedListName].urls;
+                    if (state.isDirty) {
+                        state.originalLoadedListUrls = persistedUrls;
+                    } else if (UI.urlInput) {
+                        UI.urlInput.value = persistedUrls;
+                        state.originalLoadedListUrls = persistedUrls;
+                    }
+                }
                 await loadSavedLists();
             } else if (!applyImport) {
                 Toast.show('JSON 가져오기가 취소되었거나 변경사항이 없습니다.', 'info');
@@ -2486,12 +2538,15 @@
             await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, allSessions);
             renderSessions();
             const undoCallback = async () => {
+                const sessionsBeforeUndo = [...allSessions];
                 allSessions.push(sessionToDelete);
                 try {
                     await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, allSessions);
                     renderSessions();
                     showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
                 } catch (e) {
+                    allSessions = sessionsBeforeUndo;
+                    renderSessions();
                     showToast(`❌ 복원 실패: ${escapeHtml(e.message)}`);
                 }
             };
@@ -2606,6 +2661,7 @@
             importFileInput.value = '';
         };
         reader.onload = async (e) => {
+          const sessionsBeforeImport = allSessions;
           try {
             const imported = JSON.parse(e.target.result);
             if (!Array.isArray(imported)) throw new Error("Invalid format");
@@ -2640,6 +2696,8 @@
             renderSessions();
             showToast(CONSTANTS.MESSAGES.createImportSuccessMessage(valid.length));
           } catch (error) {
+            allSessions = sessionsBeforeImport;
+            renderSessions();
             showToast(error.message.startsWith('저장 공간') ? `❌ ${escapeHtml(error.message)}` : CONSTANTS.MESSAGES.IMPORT_INVALID_FORMAT);
           } finally {
             importFileInput.value = '';

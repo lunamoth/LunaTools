@@ -113,6 +113,7 @@ class TabManager {
   constructor() {
     this.urlCache = new Map();
     this.reverseUrlLookup = new Map();
+    this.duplicateOperationQueues = new Map();
 
     this.handleTabRemoved = this.handleTabRemoved.bind(this);
     this.handleTabUpdate = this.handleTabUpdate.bind(this);
@@ -312,35 +313,65 @@ class TabManager {
     await this._findAndHandleDuplicates(tab, parsedUrl);
   }
 
-  async _findAndHandleDuplicates(currentTab, parsedUrl) {
+  async _runDuplicateOperationSerially(lockKey, operation) {
+    const previousOperation = this.duplicateOperationQueues.get(lockKey) || Promise.resolve();
+    const currentOperation = previousOperation
+      .catch(() => {})
+      .then(operation);
+
+    this.duplicateOperationQueues.set(lockKey, currentOperation);
+
     try {
-      const potentialDuplicatesInWindow = (this.reverseUrlLookup.get(parsedUrl.href) || [])
-        .filter(entry => entry.tabId !== currentTab.id && entry.windowId === currentTab.windowId);
-
-      if (potentialDuplicatesInWindow.length === 0) return;
-      
-      const existingDuplicateTabIds = [];
-      for (const { tabId } of potentialDuplicatesInWindow) {
-          try {
-              await chrome.tabs.get(tabId);
-              existingDuplicateTabIds.push(tabId);
-          } catch (error) {
-              if (this._isTabNotFoundError(error)) {
-                  this._removeUrlFromCache(tabId, parsedUrl);
-              }
-          }
+      return await currentOperation;
+    } finally {
+      if (this.duplicateOperationQueues.get(lockKey) === currentOperation) {
+        this.duplicateOperationQueues.delete(lockKey);
       }
-
-      if (existingDuplicateTabIds.length > 0) {
-        await this._handleVerifiedDuplicate(currentTab, existingDuplicateTabIds[0], parsedUrl);
-      }
-    } catch (error) {
     }
   }
 
+  async _findAndHandleDuplicates(currentTab, parsedUrl) {
+    const lockKey = `${currentTab.windowId}\u0000${parsedUrl.href}`;
+
+    return this._runDuplicateOperationSerially(lockKey, async () => {
+      try {
+        const potentialDuplicatesInWindow = (this.reverseUrlLookup.get(parsedUrl.href) || [])
+          .filter(entry => entry.tabId !== currentTab.id && entry.windowId === currentTab.windowId);
+
+        if (potentialDuplicatesInWindow.length === 0) return;
+
+        const existingDuplicateTabIds = [];
+        for (const { tabId } of potentialDuplicatesInWindow) {
+          try {
+            const liveTab = await chrome.tabs.get(tabId);
+            const liveUrl = this._tryParseUrl(this._getTabUrlString(liveTab));
+            if (liveTab.windowId === currentTab.windowId && liveUrl?.href === parsedUrl.href) {
+              existingDuplicateTabIds.push(tabId);
+            } else {
+              this._removeUrlFromCache(tabId, parsedUrl);
+              if (liveUrl && this._isValidTabForProcessing(liveTab)) {
+                this._addUrlToCache(liveTab.id, liveUrl, liveTab.windowId);
+              }
+            }
+          } catch (error) {
+            if (this._isTabNotFoundError(error)) {
+              this._removeUrlFromCache(tabId, parsedUrl);
+            }
+          }
+        }
+
+        if (existingDuplicateTabIds.length > 0) {
+          await this._handleVerifiedDuplicate(currentTab, existingDuplicateTabIds[0], parsedUrl);
+        }
+      } catch (error) {
+      }
+    });
+  }
+
   async _handleVerifiedDuplicate(newlyOpenedTab, existingDuplicateId, parsedUrl) {
+    let liveNewTab;
     try {
-      await chrome.tabs.get(newlyOpenedTab.id);
+      liveNewTab = await chrome.tabs.get(newlyOpenedTab.id);
     } catch (e) {
       if (this._isTabNotFoundError(e)) {
         this._removeUrlFromCache(newlyOpenedTab.id, parsedUrl);
@@ -349,12 +380,32 @@ class TabManager {
       return; 
     }
 
+    let liveExistingTab;
     try {
-      await chrome.tabs.get(existingDuplicateId);
+      liveExistingTab = await chrome.tabs.get(existingDuplicateId);
     } catch (e) {
       if (this._isTabNotFoundError(e)) {
         this._removeUrlFromCache(existingDuplicateId, parsedUrl);
         return;
+      }
+      return;
+    }
+
+    const liveNewUrl = this._tryParseUrl(this._getTabUrlString(liveNewTab));
+    const liveExistingUrl = this._tryParseUrl(this._getTabUrlString(liveExistingTab));
+    const tabsStillMatch = liveNewTab.windowId === liveExistingTab.windowId &&
+      liveNewUrl?.href === parsedUrl.href &&
+      liveExistingUrl?.href === parsedUrl.href;
+
+    if (!tabsStillMatch) {
+      for (const liveTab of [liveNewTab, liveExistingTab]) {
+        const cachedInfo = this.urlCache.get(liveTab.id);
+        if (cachedInfo) this._removeUrlFromCache(liveTab.id, cachedInfo.url);
+
+        const liveUrl = this._tryParseUrl(this._getTabUrlString(liveTab));
+        if (liveUrl && this._isValidTabForProcessing(liveTab)) {
+          this._addUrlToCache(liveTab.id, liveUrl, liveTab.windowId);
+        }
       }
       return;
     }
@@ -366,7 +417,7 @@ class TabManager {
     }
 
     try {
-      if (newlyOpenedTab.active) {
+      if (liveNewTab.active) {
         await chrome.tabs.update(existingDuplicateId, { active: true }).catch(err => {
         });
       }
