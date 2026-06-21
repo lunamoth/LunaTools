@@ -1,10 +1,235 @@
 const NEW_TAB_URL = "chrome://newtab/";
 const PERFORM_GESTURE_ACTION = 'perform-gesture';
 const FETCH_EXCHANGE_RATE_ACTION = "fetchLunaToolsExchangeRate";
+const REFRESH_EXCHANGE_RATE_TABLE_ACTION = "refreshLunaToolsExchangeRateTable";
 const API_TIMEOUT_MS_EXCHANGE_RATE = 7000;
+const EXCHANGE_RATE_STORAGE_KEY = "lunaToolsExchangeRateTableV1";
+const EXCHANGE_RATE_SCHEMA_VERSION = 1;
+const EXCHANGE_RATE_BASE_CURRENCY = "EUR";
+const EXCHANGE_RATE_CACHE_DURATION_MS = 24 * 60 * 60 * 1000;
+const EXCHANGE_RATE_API_URL = `https://api.frankfurter.dev/v1/latest?base=${EXCHANGE_RATE_BASE_CURRENCY}`;
+const FIXED_EURO_CONVERSION_RATES = Object.freeze({
+  // 불가리아는 2026-01-01부터 EUR을 도입했으며 공식 고정 환산율은 EUR 1 = BGN 1.95583입니다.
+  BGN: 1.95583
+});
 const CONTEXT_MENU_ID_MERGE_TABS = "lunaToolsMergeTabsContextMenu";
 const BADGE_ALERT_THRESHOLD = 100;
 const CURRENCY_CODE_REGEX = /^[A-Z]{3}$/;
+
+let exchangeRateRefreshPromise = null;
+
+function normalizeCurrencyCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function isPositiveFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function normalizeExchangeRateTable(candidate) {
+  if (!candidate || typeof candidate !== 'object') return null;
+
+  const base = normalizeCurrencyCode(candidate.base);
+  const date = typeof candidate.date === 'string' ? candidate.date.trim() : '';
+  const timestamp = Number(candidate.timestamp);
+
+  if (base !== EXCHANGE_RATE_BASE_CURRENCY || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return null;
+  }
+  if (!Number.isFinite(timestamp) || timestamp <= 0 || !candidate.rates || typeof candidate.rates !== 'object') {
+    return null;
+  }
+
+  const rates = { [EXCHANGE_RATE_BASE_CURRENCY]: 1 };
+  for (const [rawCode, rawRate] of Object.entries(candidate.rates)) {
+    const code = normalizeCurrencyCode(rawCode);
+    const rate = Number(rawRate);
+    if (CURRENCY_CODE_REGEX.test(code) && Number.isFinite(rate) && rate > 0) {
+      rates[code] = rate;
+    }
+  }
+
+  Object.assign(rates, FIXED_EURO_CONVERSION_RATES);
+
+  if (Object.keys(rates).length < 2) return null;
+
+  return {
+    schemaVersion: EXCHANGE_RATE_SCHEMA_VERSION,
+    base: EXCHANGE_RATE_BASE_CURRENCY,
+    date,
+    rates,
+    timestamp,
+    source: 'Frankfurter v1'
+  };
+}
+
+function isExchangeRateTableFresh(table, now = Date.now()) {
+  if (!table || !Number.isFinite(table.timestamp)) return false;
+  const age = Math.max(0, now - table.timestamp);
+  return age < EXCHANGE_RATE_CACHE_DURATION_MS;
+}
+
+function calculateExchangeRate(table, fromCurrency, toCurrency) {
+  const normalizedTable = normalizeExchangeRateTable(table);
+  if (!normalizedTable) {
+    throw new Error('API response error: Invalid exchange-rate table.');
+  }
+
+  const from = normalizeCurrencyCode(fromCurrency);
+  const to = normalizeCurrencyCode(toCurrency);
+
+  if (!CURRENCY_CODE_REGEX.test(from) || !CURRENCY_CODE_REGEX.test(to)) {
+    throw new Error('Invalid currency code.');
+  }
+  if (from === to) return 1;
+
+  const fromRate = normalizedTable.rates[from];
+  const toRate = normalizedTable.rates[to];
+  if (!isPositiveFiniteNumber(fromRate)) {
+    throw new Error(`API response error: Could not find rate for ${from}`);
+  }
+  if (!isPositiveFiniteNumber(toRate)) {
+    throw new Error(`API response error: Could not find rate for ${to}`);
+  }
+
+  const crossRate = toRate / fromRate;
+  if (!isPositiveFiniteNumber(crossRate)) {
+    throw new Error(`API response error: Could not calculate ${from}/${to}`);
+  }
+  return crossRate;
+}
+
+async function getStoredExchangeRateTable() {
+  const stored = await chrome.storage.local.get([EXCHANGE_RATE_STORAGE_KEY]);
+  return normalizeExchangeRateTable(stored[EXCHANGE_RATE_STORAGE_KEY]);
+}
+
+function normalizeExchangeRateError(error) {
+  if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+    return new Error('Request timed out.');
+  }
+
+  const message = error?.message || String(error || 'Unknown error');
+  if (
+    message.startsWith('Network error') ||
+    message.startsWith('API response error') ||
+    message.startsWith('API processing error') ||
+    message === 'Request timed out.' ||
+    message === 'Invalid currency code.'
+  ) {
+    return new Error(message);
+  }
+  return new Error(`API processing error: ${message}`);
+}
+
+async function fetchAndStoreExchangeRateTable() {
+  if (exchangeRateRefreshPromise) return exchangeRateRefreshPromise;
+
+  exchangeRateRefreshPromise = (async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS_EXCHANGE_RATE);
+
+    try {
+      const response = await fetch(EXCHANGE_RATE_API_URL, {
+        signal: controller.signal,
+        cache: 'no-store'
+      });
+      if (!response.ok) {
+        throw new Error(`Network error (status: ${response.status})`);
+      }
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (error) {
+        throw new Error(`API processing error: ${error?.message || 'Invalid JSON response.'}`);
+      }
+
+      const table = normalizeExchangeRateTable({
+        schemaVersion: EXCHANGE_RATE_SCHEMA_VERSION,
+        base: data?.base || EXCHANGE_RATE_BASE_CURRENCY,
+        date: data?.date,
+        rates: data?.rates,
+        timestamp: Date.now(),
+        source: 'Frankfurter v1'
+      });
+
+      if (!table) {
+        throw new Error('API response error: Invalid or incomplete exchange-rate table.');
+      }
+
+      // 저장이 끝난 뒤에만 호출자에게 성공을 반환합니다.
+      await chrome.storage.local.set({ [EXCHANGE_RATE_STORAGE_KEY]: table });
+      return table;
+    } catch (error) {
+      throw normalizeExchangeRateError(error);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  })().finally(() => {
+    exchangeRateRefreshPromise = null;
+  });
+
+  return exchangeRateRefreshPromise;
+}
+
+async function refreshExchangeRateTableIfNeeded({ force = false } = {}) {
+  const storedTable = await getStoredExchangeRateTable();
+  if (!force && isExchangeRateTableFresh(storedTable)) {
+    return storedTable;
+  }
+  return fetchAndStoreExchangeRateTable();
+}
+
+async function getExchangeRateForResponse(fromCurrency, toCurrency, { forceRefresh = false } = {}) {
+  const from = normalizeCurrencyCode(fromCurrency);
+  const to = normalizeCurrencyCode(toCurrency);
+
+  if (!CURRENCY_CODE_REGEX.test(from) || !CURRENCY_CODE_REGEX.test(to)) {
+    throw new Error('Invalid currency code.');
+  }
+  if (from === to) {
+    return {
+      rate: 1,
+      date: new Date().toISOString().split('T')[0],
+      timestamp: Date.now(),
+      stale: false,
+      refreshing: false
+    };
+  }
+
+  let table = await getStoredExchangeRateTable();
+  let stale = !!table && !isExchangeRateTableFresh(table);
+
+  if (forceRefresh || !table) {
+    try {
+      table = await fetchAndStoreExchangeRateTable();
+      stale = false;
+    } catch (error) {
+      if (!table) throw error;
+      stale = true;
+    }
+  } else if (stale) {
+    // 기존 콘텐츠 스크립트와의 호환을 위해 stale 값은 즉시 반환하고 뒤에서 갱신합니다.
+    void fetchAndStoreExchangeRateTable().catch((error) => {
+      console.warn('LunaTools: 백그라운드 환율표 갱신 실패', error);
+    });
+  }
+
+  return {
+    rate: calculateExchangeRate(table, from, to),
+    date: table.date,
+    timestamp: table.timestamp,
+    stale,
+    refreshing: stale
+  };
+}
+
+function warmExchangeRateCache() {
+  void refreshExchangeRateTableIfNeeded().catch((error) => {
+    console.warn('LunaTools: 환율표 선행 갱신 실패', error);
+  });
+}
 
 async function updateTabCountBadge() {
   try {
@@ -48,28 +273,37 @@ function ensureMergeTabsContextMenu() {
   }
 }
 
-try {
-  if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+function configureSidePanelBehavior() {
+  try {
+    if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+      void chrome.sidePanel
+        .setPanelBehavior({ openPanelOnActionClick: true })
+        .catch((error) => console.warn('LunaTools: 사이드 패널 동작 설정 실패', error));
+    }
+  } catch (error) {
+    console.warn('LunaTools: 사이드 패널 동작 설정 실패', error);
   }
-} catch (e) {
-  console.error("Error setting side panel behavior:", e);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
   ensureMergeTabsContextMenu();
-  updateTabCountBadge();
+  configureSidePanelBehavior();
+  void updateTabCountBadge();
+  warmExchangeRateCache();
 });
 
 if (chrome.runtime.onStartup) {
   chrome.runtime.onStartup.addListener(() => {
     ensureMergeTabsContextMenu();
-    updateTabCountBadge();
+    configureSidePanelBehavior();
+    void updateTabCountBadge();
+    warmExchangeRateCache();
   });
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === CONTEXT_MENU_ID_MERGE_TABS) {
+    await ensureTabCacheInitialized();
     await tabManager.mergeAllWindows(tab?.windowId);
   }
 });
@@ -205,10 +439,10 @@ class TabManager {
   }
 
   async initializeCache() {
-    this.urlCache.clear();
-    this.reverseUrlLookup.clear();
     try {
       const allTabs = await chrome.tabs.query({ windowType: 'normal' });
+      this.urlCache.clear();
+      this.reverseUrlLookup.clear();
       allTabs.forEach(tab => {
         if (!this._isValidTabForProcessing(tab)) return;
         const urlString = this._getTabUrlString(tab);
@@ -217,7 +451,10 @@ class TabManager {
           this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
         }
       });
+      return true;
     } catch (error) {
+      console.warn('LunaTools: 탭 캐시 초기화 실패', error);
+      return false;
     }
   }
 
@@ -612,14 +849,29 @@ class TabManager {
 }
 
 const tabManager = new TabManager();
+let tabCacheInitialized = false;
+let tabCacheInitializationPromise = null;
 
-(async () => {
-  await tabManager.initializeCache();
-  updateTabCountBadge();
-})();
+async function ensureTabCacheInitialized() {
+  if (tabCacheInitialized) return true;
+
+  if (!tabCacheInitializationPromise) {
+    tabCacheInitializationPromise = tabManager.initializeCache()
+      .then((initialized) => {
+        tabCacheInitialized = initialized;
+        return initialized;
+      })
+      .finally(() => {
+        tabCacheInitializationPromise = null;
+      });
+  }
+
+  return tabCacheInitializationPromise;
+}
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command === "sort-tabs") {
+    await ensureTabCacheInitialized();
     await tabManager.sortTabsInCurrentWindow(tab?.windowId);
   } else if (command === "toggle-mute-current") {
     const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -645,7 +897,7 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'openTabsInNewTab' && Array.isArray(message.urls)) {
+  if (message?.action === 'openTabsInNewTab' && Array.isArray(message.urls)) {
     message.urls.forEach(url => {
         if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
             chrome.tabs.create({ url: url, active: false });
@@ -659,45 +911,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message?.action === REFRESH_EXCHANGE_RATE_TABLE_ACTION) {
+    fetchAndStoreExchangeRateTable()
+      .then((table) => sendResponse({ data: { table } }))
+      .catch((error) => sendResponse({ error: normalizeExchangeRateError(error).message }));
+    return true;
+  }
+
   if (message?.action === FETCH_EXCHANGE_RATE_ACTION && message.from && message.to) {
-    const fromCurrency = String(message.from).trim().toUpperCase();
-    const toCurrency = String(message.to).trim().toUpperCase();
+    const fromCurrency = normalizeCurrencyCode(message.from);
+    const toCurrency = normalizeCurrencyCode(message.to);
 
     if (!CURRENCY_CODE_REGEX.test(fromCurrency) || !CURRENCY_CODE_REGEX.test(toCurrency)) {
       sendResponse({ error: 'Invalid currency code.' });
       return false;
     }
 
-    const apiUrl = `https://api.frankfurter.app/latest?from=${encodeURIComponent(fromCurrency)}&to=${encodeURIComponent(toCurrency)}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS_EXCHANGE_RATE);
-    
-    fetch(apiUrl, { signal: controller.signal })
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`Network error (status: ${response.status})`);
-        }
-        return response.json();
-      })
-      .then(data => {
-        if (data.rates && typeof data.rates[toCurrency] === 'number' && data.date) {
-          sendResponse({ data: { rate: data.rates[toCurrency], date: data.date } });
-        } else {
-          sendResponse({ error: `API response error: Could not find rate for ${toCurrency}` });
-        }
-      })
-      .catch(error => {
-        let errorMessage = 'Failed to fetch exchange rate.';
-        if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-            errorMessage = 'Request timed out.';
-        } else if (error.message && error.message.startsWith('Network error')) {
-            errorMessage = error.message;
-        } else if (error.message) {
-            errorMessage = `API processing error: ${error.message}`;
-        }
-        sendResponse({ error: errorMessage });
-      })
-      .finally(() => clearTimeout(timeoutId));
+    getExchangeRateForResponse(fromCurrency, toCurrency, {
+      forceRefresh: message.forceRefresh === true
+    })
+      .then((data) => sendResponse({ data }))
+      .catch((error) => sendResponse({ error: normalizeExchangeRateError(error).message }));
     return true;
   }
 
@@ -709,7 +943,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
-  updateTabCountBadge();
+  void updateTabCountBadge();
   if (!tabManager._isValidTabForProcessing(tab)) return;
   
   const urlString = tabManager._getTabUrlString(tab);
@@ -720,6 +954,9 @@ chrome.tabs.onCreated.addListener((tab) => {
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (!changeInfo.url && changeInfo.status !== 'complete') return;
+  await ensureTabCacheInitialized();
+
   let tabToProcess = tab; 
   if (!tabManager._isValidTabForProcessing(tabToProcess) || 
       (!tabToProcess.url && (changeInfo.url || changeInfo.status === 'complete'))) {
@@ -743,6 +980,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 if (chrome.tabs.onReplaced) {
   chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+    await ensureTabCacheInitialized();
+
     const cachedInfo = tabManager.urlCache.get(removedTabId);
     if (cachedInfo) {
       tabManager._removeUrlFromCache(removedTabId, cachedInfo.url);
@@ -760,11 +999,13 @@ if (chrome.tabs.onReplaced) {
 }
 
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-  updateTabCountBadge();
+  void updateTabCountBadge();
   tabManager.handleTabRemoved(tabId, removeInfo);
 });
 
 chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
+  await ensureTabCacheInitialized();
+
   try {
     const tab = await chrome.tabs.get(tabId);
     if (tab) {

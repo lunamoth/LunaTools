@@ -852,8 +852,12 @@
     'use strict';
 
     const Config = {
-        API_TIMEOUT_MS: 7000,
-        CACHE_DURATION_MS: 12 * 3600 * 1000, 
+        EXCHANGE_RATE_CACHE_DURATION_MS: 24 * 60 * 60 * 1000,
+        EXCHANGE_RATE_STORAGE_KEY: 'lunaToolsExchangeRateTableV1',
+        EXCHANGE_RATE_BASE_CURRENCY: 'EUR',
+        EXCHANGE_RATE_FETCH_ACTION: 'fetchLunaToolsExchangeRate',
+        EXCHANGE_RATE_REFRESH_ACTION: 'refreshLunaToolsExchangeRateTable',
+        FIXED_EURO_CONVERSION_RATES: Object.freeze({ BGN: 1.95583 }),
         POPUP_OFFSET_X: 10,
         POPUP_OFFSET_Y: 10,
         POPUP_SCREEN_MARGIN: 10,
@@ -961,6 +965,8 @@
         KOREAN_APPROX_PREFIX: "약 ",
         ORIGINAL_TEXT_LABEL: "원본: ",
         ECB_TEXT: "유럽중앙은행",
+        CACHED_RATE_TEXT: "캐시된 환율",
+        REFRESHING_RATE_TEXT: "최신 환율 확인 중",
         TIME_KST_PREFIX: "한국 시각: ",
         TIME_KST_DATE_MONTH_SUFFIX: "월 ",
         TIME_KST_DATE_DAY_SUFFIX: "일 ",
@@ -1001,7 +1007,9 @@
     };
 
     const AppState = {
-        exchangeRateCache: {},
+        exchangeRateCache: new Map(),
+        exchangeRateRequests: new Map(),
+        exchangeRateStorageListenerRegistered: false,
         lastMouseX: 0,
         lastMouseY: 0,
         currentPopupElement: null,
@@ -1701,67 +1709,281 @@
     };
 
     const ApiService = {
-        fetchExchangeRate: async function(fromCurrency, toCurrency = Config.DEFAULT_TARGET_CURRENCY) {
-            fromCurrency = String(fromCurrency || '').trim().toUpperCase();
-            toCurrency = String(toCurrency || Config.DEFAULT_TARGET_CURRENCY).trim().toUpperCase();
+        _normalizeCurrencyCode: function(value) {
+            return String(value || '').trim().toUpperCase();
+        },
+        _isPositiveFiniteNumber: function(value) {
+            return typeof value === 'number' && Number.isFinite(value) && value > 0;
+        },
+        _isFreshTimestamp: function(timestamp, now = Date.now()) {
+            if (!Number.isFinite(timestamp) || timestamp <= 0) return false;
+            const age = Math.max(0, now - timestamp);
+            return age < Config.EXCHANGE_RATE_CACHE_DURATION_MS;
+        },
+        _normalizeExchangeRateTable: function(candidate) {
+            if (!candidate || typeof candidate !== 'object') return null;
 
-            if (!/^[A-Z]{3}$/.test(fromCurrency)) {
-                return Promise.reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_INVALID_CURRENCY(fromCurrency)));
-            }
-            if (!/^[A-Z]{3}$/.test(toCurrency)) {
-                return Promise.reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_INVALID_CURRENCY(toCurrency)));
-            }
-            if (fromCurrency === toCurrency) {
-                return { rate: 1, date: new Date().toISOString().split('T')[0] };
+            const base = ApiService._normalizeCurrencyCode(candidate.base);
+            const date = typeof candidate.date === 'string' ? candidate.date.trim() : '';
+            const timestamp = Number(candidate.timestamp);
+            if (
+                base !== Config.EXCHANGE_RATE_BASE_CURRENCY ||
+                !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+                !Number.isFinite(timestamp) ||
+                timestamp <= 0 ||
+                !candidate.rates ||
+                typeof candidate.rates !== 'object'
+            ) {
+                return null;
             }
 
-            const cacheKey = `rate_${fromCurrency}_${toCurrency}`;
-            
-            try {
-                const storageData = await new Promise(resolve => {
-                    chrome.storage.local.get([cacheKey], (result) => resolve(result[cacheKey]));
-                });
+            const rates = { [Config.EXCHANGE_RATE_BASE_CURRENCY]: 1 };
+            for (const [rawCode, rawRate] of Object.entries(candidate.rates)) {
+                const code = ApiService._normalizeCurrencyCode(rawCode);
+                const rate = Number(rawRate);
+                if (/^[A-Z]{3}$/.test(code) && Number.isFinite(rate) && rate > 0) {
+                    rates[code] = rate;
+                }
+            }
+            Object.assign(rates, Config.FIXED_EURO_CONVERSION_RATES);
+            if (Object.keys(rates).length < 2) return null;
 
-                const now = Date.now();
-                
-                if (storageData && (now - storageData.timestamp < Config.CACHE_DURATION_MS)) {
-                    return { rate: storageData.rate, date: storageData.date };
+            return {
+                base: Config.EXCHANGE_RATE_BASE_CURRENCY,
+                date,
+                rates,
+                timestamp
+            };
+        },
+        _calculateRateFromTable: function(table, fromCurrency, toCurrency) {
+            const fromRate = table.rates[fromCurrency];
+            const toRate = table.rates[toCurrency];
+            if (!ApiService._isPositiveFiniteNumber(fromRate) || !ApiService._isPositiveFiniteNumber(toRate)) {
+                return null;
+            }
+            const rate = toRate / fromRate;
+            return ApiService._isPositiveFiniteNumber(rate) ? rate : null;
+        },
+        _normalizeCachedResult: function(candidate, sourceType = 'table') {
+            if (!candidate || typeof candidate !== 'object') return null;
+            const rate = Number(candidate.rate);
+            const timestamp = Number(candidate.timestamp);
+            const date = typeof candidate.date === 'string' ? candidate.date.trim() : '';
+            if (
+                !ApiService._isPositiveFiniteNumber(rate) ||
+                !Number.isFinite(timestamp) ||
+                timestamp <= 0 ||
+                !/^\d{4}-\d{2}-\d{2}$/.test(date)
+            ) {
+                return null;
+            }
+            return { rate, date, timestamp, sourceType };
+        },
+        _cacheRateResult: function(cacheKey, candidate, sourceType = 'table') {
+            const normalized = ApiService._normalizeCachedResult(candidate, sourceType);
+            if (!normalized) return null;
+            AppState.exchangeRateCache.set(cacheKey, normalized);
+            return normalized;
+        },
+        _formatRateResult: function(cached, { refreshing = false } = {}) {
+            const stale = !ApiService._isFreshTimestamp(cached.timestamp);
+            return {
+                rate: cached.rate,
+                date: cached.date,
+                stale,
+                refreshing: refreshing || stale
+            };
+        },
+        _createBackgroundError: function(errorMessage, toCurrency) {
+            const message = String(errorMessage || 'Unknown error');
+            if (message.includes('timed out')) {
+                return new Error(UI_STRINGS.ERROR_FETCH_RATE_TIMEOUT);
+            }
+            if (message.includes('Invalid currency code')) {
+                return new Error(UI_STRINGS.ERROR_FETCH_RATE_INVALID_CURRENCY(toCurrency));
+            }
+            if (message.includes('Network error')) {
+                const status = message.match(/\(status:\s*([^\)]+)\)/i)?.[1] || 'unknown';
+                return new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(status));
+            }
+            if (message.includes('API response error')) {
+                return new Error(UI_STRINGS.ERROR_FETCH_RATE_API_RESPONSE_CURRENCY(toCurrency));
+            }
+            return new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING(message));
+        },
+        _sendRuntimeMessage: function(message) {
+            return new Promise((resolve, reject) => {
+                try {
+                    chrome.runtime.sendMessage(message, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(chrome.runtime.lastError.message || 'extension_error')));
+                            return;
+                        }
+                        resolve(response);
+                    });
+                } catch (error) {
+                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK('sendMessage_failed')));
+                }
+            });
+        },
+        refreshExchangeRateTable: function() {
+            const refreshKey = '__exchange_rate_table_refresh__';
+            const existingRequest = AppState.exchangeRateRequests.get(refreshKey);
+            if (existingRequest) return existingRequest;
+
+            const refreshRequest = ApiService._sendRuntimeMessage({
+                action: Config.EXCHANGE_RATE_REFRESH_ACTION
+            }).then((response) => {
+                if (response?.error) {
+                    throw ApiService._createBackgroundError(response.error, Config.DEFAULT_TARGET_CURRENCY);
+                }
+                const table = ApiService._normalizeExchangeRateTable(response?.data?.table);
+                if (!table) {
+                    throw new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING('Invalid or incomplete exchange-rate table from background.'));
                 }
 
-                return new Promise((resolve, reject) => {
-                    try {
-                        chrome.runtime.sendMessage(
-                            { action: "fetchLunaToolsExchangeRate", from: fromCurrency, to: toCurrency },
-                            (response) => {
-                                if (chrome.runtime.lastError) {
-                                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(chrome.runtime.lastError.message || 'extension_error')));
-                                    return;
-                                }
-                                if (response.error) {
-                                    if (response.error.includes('timed out')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_TIMEOUT));
-                                    else if (response.error.includes('Network error')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK(response.error.match(/\(status: (\w+)\)/)?.[1] || 'unknown')));
-                                    else if (response.error.includes('API response error')) reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_RESPONSE_CURRENCY(toCurrency)));
-                                    else reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING(response.error)));
-                                } else if (response.data && typeof response.data.rate === 'number' && response.data.date) {
-                                    const result = { rate: response.data.rate, date: response.data.date };
-                                    
-                                    const dataToStore = { ...result, timestamp: Date.now() };
-                                    chrome.storage.local.set({ [cacheKey]: dataToStore });
-                                    
-                                    resolve(result);
-                                } else {
-                                    reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING('Invalid or incomplete data from background.')));
-                                }
-                            }
-                        );
-                    } catch (e) {
-                        reject(new Error(UI_STRINGS.ERROR_FETCH_RATE_NETWORK('sendMessage_failed')));
-                    }
-                });
+                // background.js가 chrome.storage.local.set() 완료 후 응답하므로 메모리 캐시만 비웁니다.
+                AppState.exchangeRateCache.clear();
+                return table;
+            }).finally(() => {
+                AppState.exchangeRateRequests.delete(refreshKey);
+            });
 
-            } catch (e) {
-                 return Promise.reject(e);
+            AppState.exchangeRateRequests.set(refreshKey, refreshRequest);
+            return refreshRequest;
+        },
+        _refreshExchangeRateTableSilently: function() {
+            void ApiService.refreshExchangeRateTable().catch((error) => {
+                console.warn('LunaTools: 환율표 백그라운드 갱신 실패', error);
+            });
+        },
+        _requestRateFromBackground: async function(fromCurrency, toCurrency, forceRefresh = false) {
+            const response = await ApiService._sendRuntimeMessage({
+                action: Config.EXCHANGE_RATE_FETCH_ACTION,
+                from: fromCurrency,
+                to: toCurrency,
+                forceRefresh
+            });
+
+            if (response?.error) {
+                throw ApiService._createBackgroundError(response.error, toCurrency);
             }
+            if (!response?.data || !ApiService._isPositiveFiniteNumber(response.data.rate) || !response.data.date) {
+                throw new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING('Invalid or incomplete data from background.'));
+            }
+
+            const cacheKey = `${fromCurrency}_${toCurrency}`;
+            const cached = ApiService._cacheRateResult(cacheKey, {
+                rate: response.data.rate,
+                date: response.data.date,
+                timestamp: Number(response.data.timestamp) || Date.now()
+            }, 'background');
+            if (!cached) {
+                throw new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING('Invalid exchange-rate values from background.'));
+            }
+
+            const stale = response.data.stale === true || !ApiService._isFreshTimestamp(cached.timestamp);
+            if (stale) ApiService._refreshExchangeRateTableSilently();
+            return {
+                rate: cached.rate,
+                date: cached.date,
+                stale,
+                refreshing: response.data.refreshing === true || stale
+            };
+        },
+        _loadRateFromStorageOrBackground: async function(fromCurrency, toCurrency) {
+            const cacheKey = `${fromCurrency}_${toCurrency}`;
+            const legacyCacheKey = `rate_${fromCurrency}_${toCurrency}`;
+            let stored = null;
+
+            try {
+                stored = await chrome.storage.local.get([
+                    Config.EXCHANGE_RATE_STORAGE_KEY,
+                    legacyCacheKey
+                ]);
+            } catch (error) {
+                console.warn('LunaTools: 저장된 환율 캐시 읽기 실패', error);
+            }
+
+            let tableMissingRequestedCurrency = false;
+            const table = ApiService._normalizeExchangeRateTable(stored?.[Config.EXCHANGE_RATE_STORAGE_KEY]);
+            if (table) {
+                const rate = ApiService._calculateRateFromTable(table, fromCurrency, toCurrency);
+                if (rate !== null) {
+                    const cached = ApiService._cacheRateResult(cacheKey, {
+                        rate,
+                        date: table.date,
+                        timestamp: table.timestamp
+                    }, 'table');
+                    const result = ApiService._formatRateResult(cached);
+                    if (result.stale) ApiService._refreshExchangeRateTableSilently();
+                    return result;
+                }
+                tableMissingRequestedCurrency = true;
+            }
+
+            // 15.4 이하 버전의 통화쌍 캐시가 있으면 업데이트 직후에도 즉시 표시합니다.
+            const legacyCached = ApiService._normalizeCachedResult(stored?.[legacyCacheKey], 'legacy');
+            if (legacyCached) {
+                AppState.exchangeRateCache.set(cacheKey, legacyCached);
+                const result = ApiService._formatRateResult(legacyCached, { refreshing: true });
+                ApiService._refreshExchangeRateTableSilently();
+                return result;
+            }
+
+            return ApiService._requestRateFromBackground(
+                fromCurrency,
+                toCurrency,
+                tableMissingRequestedCurrency
+            );
+        },
+        fetchExchangeRate: async function(fromCurrency, toCurrency = Config.DEFAULT_TARGET_CURRENCY) {
+            fromCurrency = ApiService._normalizeCurrencyCode(fromCurrency);
+            toCurrency = ApiService._normalizeCurrencyCode(toCurrency || Config.DEFAULT_TARGET_CURRENCY);
+
+            if (!/^[A-Z]{3}$/.test(fromCurrency)) {
+                throw new Error(UI_STRINGS.ERROR_FETCH_RATE_INVALID_CURRENCY(fromCurrency));
+            }
+            if (!/^[A-Z]{3}$/.test(toCurrency)) {
+                throw new Error(UI_STRINGS.ERROR_FETCH_RATE_INVALID_CURRENCY(toCurrency));
+            }
+            if (fromCurrency === toCurrency) {
+                return {
+                    rate: 1,
+                    date: new Date().toISOString().split('T')[0],
+                    stale: false,
+                    refreshing: false
+                };
+            }
+
+            const cacheKey = `${fromCurrency}_${toCurrency}`;
+            const memoryCached = AppState.exchangeRateCache.get(cacheKey);
+            if (memoryCached) {
+                const shouldRefresh =
+                    memoryCached.sourceType === 'legacy' ||
+                    !ApiService._isFreshTimestamp(memoryCached.timestamp);
+                if (shouldRefresh) ApiService._refreshExchangeRateTableSilently();
+                return ApiService._formatRateResult(memoryCached, { refreshing: shouldRefresh });
+            }
+
+            const existingRequest = AppState.exchangeRateRequests.get(cacheKey);
+            if (existingRequest) return existingRequest;
+
+            const request = ApiService._loadRateFromStorageOrBackground(fromCurrency, toCurrency)
+                .finally(() => {
+                    AppState.exchangeRateRequests.delete(cacheKey);
+                });
+            AppState.exchangeRateRequests.set(cacheKey, request);
+            return request;
+        },
+        initializeStorageListener: function() {
+            if (AppState.exchangeRateStorageListenerRegistered || !chrome.storage?.onChanged) return;
+            chrome.storage.onChanged.addListener((changes, areaName) => {
+                if (areaName === 'local' && changes[Config.EXCHANGE_RATE_STORAGE_KEY]) {
+                    AppState.exchangeRateCache.clear();
+                }
+            });
+            AppState.exchangeRateStorageListenerRegistered = true;
         }
     };
 
@@ -1811,7 +2033,12 @@
             }
 
             try {
-                const { rate, date: rateDate } = await ApiService.fetchExchangeRate(currencyDetails.currencyCode, Config.DEFAULT_TARGET_CURRENCY);
+                const {
+                    rate,
+                    date: rateDate,
+                    stale: isStaleRate = false,
+                    refreshing: isRateRefreshing = false
+                } = await ApiService.fetchExchangeRate(currencyDetails.currencyCode, Config.DEFAULT_TARGET_CURRENCY);
                 const convertedValue = currencyDetails.amount * rate;
                 const formattedKrwText = Formatter.formatNumberToKoreanUnits(convertedValue, true);
                 const formattedRateText = Formatter.formatNumberToKoreanUnits(rate, true);
@@ -1829,9 +2056,12 @@
                     plainOriginalTextForCopy = `${formattedOriginalAmount} ${currencyDetails.currencyCode} ${currencyFlag}` + (displayOriginalTextForHTML.includes(UI_STRINGS.ORIGINAL_TEXT_LABEL) ? ` (${UI_STRINGS.ORIGINAL_TEXT_LABEL}${currencyDetails.originalText})` : '');
                 }
                 const safeRateDate = Utils.escapeHTML(rateDate);
+                const freshnessSuffix = isStaleRate
+                    ? `, ${UI_STRINGS.CACHED_RATE_TEXT}${isRateRefreshing ? ` · ${UI_STRINGS.REFRESHING_RATE_TEXT}` : ''}`
+                    : '';
                 const titleHtml = `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${displayOriginalTextForHTML}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_SUFFIX}</span>`;
-                const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate})</small>`;
-                const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate})`;
+                const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate}${freshnessSuffix})</small>`;
+                const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate}${freshnessSuffix})`;
 
                 return { titleHtml, contentHtml, copyText, isError: false, extractedMagnitudeText: currencyDetails.magnitudeAmountText };
             } catch (error) {
@@ -2148,6 +2378,7 @@
     };
 
     function textConverterMain() {
+        ApiService.initializeStorageListener();
         PopupUI.injectStyles();
         EventHandlers.initEventListeners();
     }
