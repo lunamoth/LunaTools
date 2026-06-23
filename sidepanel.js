@@ -36,7 +36,7 @@
     const lunaToolsApp = (function(pane) {
         const CONFIG = {
             TEXT: {
-                RUN: '실행하기',
+                RUN: '실행하기 (Ctrl+Enter)',
                 RUN_COUNT: (count) => `🚀 ${count}개 URL 실행`,
                 PAUSE: '⏸️ 일시 정지',
                 RESUME: '▶️ 계속하기',
@@ -1792,6 +1792,24 @@
             }
         };
 
+        const handleUrlInputKeydown = (event) => {
+            const isCtrlEnter = event.key === 'Enter' && event.ctrlKey &&
+                !event.altKey && !event.shiftKey && !event.metaKey;
+
+            if (!isCtrlEnter || event.isComposing || event.repeat) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (state.currentView !== 'input') return;
+
+            // 실행 버튼과 동일한 검증 및 옵션 처리를 거쳐 현재 URL 목록을 실행합니다.
+            updateButtonState();
+            if (UI.startRunButton && !UI.startRunButton.disabled) {
+                UI.startRunButton.click();
+            }
+        };
+
         const updateProgress = () => {
             if (!UI.progressBar || !UI.progressStats) return;
 
@@ -1861,6 +1879,7 @@
             }
 
             if(UI.urlInput) {
+                UI.urlInput.addEventListener('keydown', handleUrlInputKeydown);
                 UI.urlInput.addEventListener('input', () => {
                     state.isDirty = true;
                     if (!state.loadedListName) state.originalLoadedListUrls = null;
