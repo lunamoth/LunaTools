@@ -433,9 +433,12 @@
                 return;
             }
 
-            const currentHostname = window.location.hostname;
+            const currentHostname = window.location.hostname.toLowerCase();
             const disabledSites = Array.isArray(disabledDragSites) ? disabledDragSites : [];
-            const isDragDisabled = disabledSites.some(site => site && (currentHostname === site || currentHostname.endsWith('.' + site)));
+            const isDragDisabled = disabledSites.some(site => {
+                const normalizedSite = String(site || '').trim().toLowerCase();
+                return normalizedSite && (currentHostname === normalizedSite || currentHostname.endsWith('.' + normalizedSite));
+            });
 
             if (!isDragDisabled) {
                 initializeDragSelector();

@@ -1910,7 +1910,7 @@
             if (UI.sortUrlsButton) {
                 UI.sortUrlsButton.addEventListener('click', () => {
                     if (!UI.urlInput) return;
-                    const urls = UI.urlInput.value.split('\n').filter(Boolean);
+                    const urls = UI.urlInput.value.split('\n').map(url => url.trim()).filter(Boolean);
                     if (urls.length === 0) return;
                     urls.sort((a, b) => a.localeCompare(b, undefined, {sensitivity: 'base'}));
                     const newValue = urls.join('\n') + '\n';
@@ -1925,7 +1925,7 @@
             if (UI.deduplicateUrlsButton) {
                 UI.deduplicateUrlsButton.addEventListener('click', () => {
                     if (!UI.urlInput) return;
-                    const urls = UI.urlInput.value.split('\n').filter(Boolean);
+                    const urls = UI.urlInput.value.split('\n').map(url => url.trim()).filter(Boolean);
                     if (urls.length === 0) return;
                     const uniqueUrls = [...new Set(urls)];
                     const newValue = uniqueUrls.join('\n') + '\n';
@@ -2436,6 +2436,89 @@
         }
       };
       
+      const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
+
+      const restoreTabGroupsForWindow = async (createdTabs, windowId) => {
+        if (!chrome.tabs?.group || !chrome.tabGroups?.update) return;
+
+        const groupsToRestore = new Map();
+        createdTabs.forEach(({ savedTab, createdTabId }) => {
+          if (!createdTabId || savedTab.pinned || typeof savedTab.groupId !== 'number' || savedTab.groupId < 0) return;
+          const groupKey = String(savedTab.groupId);
+          if (!groupsToRestore.has(groupKey)) {
+            groupsToRestore.set(groupKey, { info: savedTab.groupInfo || null, tabIds: [] });
+          }
+          groupsToRestore.get(groupKey).tabIds.push(createdTabId);
+        });
+
+        for (const { info, tabIds } of groupsToRestore.values()) {
+          if (!tabIds.length) continue;
+          try {
+            const newGroupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
+            const updateProperties = {};
+            if (info && typeof info.title === 'string') updateProperties.title = info.title;
+            if (info && SUPPORTED_TAB_GROUP_COLORS.has(info.color)) updateProperties.color = info.color;
+            if (info && typeof info.collapsed === 'boolean') updateProperties.collapsed = info.collapsed;
+            if (Object.keys(updateProperties).length > 0) {
+              await chrome.tabGroups.update(newGroupId, updateProperties);
+            }
+          } catch (groupError) {
+            console.warn('Failed to restore tab group:', groupError);
+            showToast(CONSTANTS.MESSAGES.GET_TAB_GROUPS_FAILED);
+          }
+        }
+      };
+
+      const restoreSessionTabs = async (session) => {
+        const validTabs = session.tabs.filter(tab => isValidTab(tab));
+        if (validTabs.length === 0) {
+          showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
+          return;
+        }
+
+        const tabsByWindow = new Map();
+        validTabs.forEach((tab, index) => {
+          const windowKey = tab.windowId === undefined || tab.windowId === null ? 'single-window' : String(tab.windowId);
+          if (!tabsByWindow.has(windowKey)) tabsByWindow.set(windowKey, []);
+          tabsByWindow.get(windowKey).push({ ...tab, originalIndex: index });
+        });
+
+        const createdWindows = [];
+        for (const windowTabs of tabsByWindow.values()) {
+          const [firstTab, ...remainingTabs] = windowTabs;
+          const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: createdWindows.length === 0 });
+          createdWindows.push(createdWindow);
+
+          const createdTabs = [];
+          const createdWindowTabs = await chrome.tabs.query({ windowId: createdWindow.id });
+          const createdFirstTab = createdWindowTabs[0];
+
+          if (createdFirstTab?.id) {
+            if (firstTab.pinned) {
+              await chrome.tabs.update(createdFirstTab.id, { pinned: true });
+            }
+            createdTabs.push({ savedTab: firstTab, createdTabId: createdFirstTab.id });
+          }
+
+          for (const savedTab of remainingTabs) {
+            const createdTab = await chrome.tabs.create({
+              windowId: createdWindow.id,
+              url: savedTab.url,
+              active: false,
+              pinned: Boolean(savedTab.pinned)
+            });
+            createdTabs.push({ savedTab, createdTabId: createdTab.id });
+          }
+
+          await restoreTabGroupsForWindow(createdTabs, createdWindow.id);
+        }
+
+        if (createdWindows[0]?.id) {
+          await chrome.windows.update(createdWindows[0].id, { focused: true });
+        }
+        showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
+      };
+
       const generateUniqueSessionName = (baseName) => {
         if (!isDuplicateSessionName(baseName)) return baseName;
         let counter = 2, newName = `${baseName} (${counter})`;
@@ -2463,7 +2546,7 @@
               return CONSTANTS.MESSAGES.createSessionUpdatedMessage(name);
             } else {
               let name = sessionInput.value.trim();
-              if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`;
+              if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`.trim();
               name = generateUniqueSessionName(name);
               allSessions.push({ id: generateUniqueId(), name, tabs, isPinned: false });
               sessionInput.value = '';
@@ -2486,7 +2569,7 @@
         }
 
         let name = sessionInput.value.trim();
-        if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`;
+        if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`.trim();
         name = generateUniqueSessionName(name);
 
         const originalInputValue = sessionInput.value;
@@ -2530,12 +2613,11 @@
           return;
         }
         showToast(CONSTANTS.MESSAGES.createSessionRestoreStartedMessage(session.name));
-        const urls = session.tabs.map(tab => tab.url);
-        if (window.lunaToolsURLOpener && typeof window.lunaToolsURLOpener.openUrls === 'function') {
-            window.lunaToolsURLOpener.openUrls(urls);
-        } else {
-            console.error("LunaTools URL Opener is not available.");
-            showToast("오류: URL 열기 기능과 연동할 수 없습니다.", 5000);
+        try {
+          await restoreSessionTabs(session);
+        } catch (restoreError) {
+          console.error("Failed to restore session layout:", restoreError);
+          showToast(`❌ 세션 복원 실패: ${escapeHtml(restoreError.message)}`, CONSTANTS.UI.TOAST_DURATION * 1.5);
         }
       };
       

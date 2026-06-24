@@ -77,9 +77,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
-    const getValuesFromTextarea = (textarea) => {
+    const getValuesFromTextarea = (textarea, { lowercase = false } = {}) => {
         if (!textarea) return [];
-        return textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+        return textarea.value
+            .split('\n')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .map(value => lowercase ? value.toLowerCase() : value);
     };
 
     const normalizeStringArray = (value) => {
@@ -258,9 +262,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const saveOptions = () => {
         const settingsToSave = {
-            [STORAGE_KEYS.LOCKED]: getValuesFromTextarea(lockedSitesTextarea),
+            [STORAGE_KEYS.LOCKED]: getValuesFromTextarea(lockedSitesTextarea, { lowercase: true }),
             [STORAGE_KEYS.BLOCKED]: getValuesFromTextarea(blockedSitesTextarea),
-            [STORAGE_KEYS.DISABLED_DRAG]: getValuesFromTextarea(disabledDragSitesTextarea)
+            [STORAGE_KEYS.DISABLED_DRAG]: getValuesFromTextarea(disabledDragSitesTextarea, { lowercase: true })
         };
 
         if (chrome && chrome.storage && chrome.storage.sync) {

@@ -20,8 +20,12 @@
       }
 
       if (lockedSites.length > 0) {
-        const currentHostname = window.location.hostname;
-        const isLocked = lockedSites.some(site => site && (currentHostname === site || currentHostname.endsWith('.' + site)));
+        const currentHostname = window.location.hostname.toLowerCase();
+        const normalizeHostEntry = (site) => String(site || '').trim().toLowerCase();
+        const isLocked = lockedSites.some(site => {
+          const normalizedSite = normalizeHostEntry(site);
+          return normalizedSite && (currentHostname === normalizedSite || currentHostname.endsWith('.' + normalizedSite));
+        });
 
         if (isLocked) {
           const preventUnload = (event) => {
@@ -1417,12 +1421,26 @@
                         if (hOff <= 14 && mOff <= 59) {
                             resolvedTzOffsetString = `GMT${sign}${String(hOff).padStart(2, '0')}:${String(mOff).padStart(2, '0')}`;
                         }
-                    } else if (upperTzStr.match(/^(?:PACIFIC|MOUNTAIN|CENTRAL|EASTERN|ATLANTIC|ALASKA|HAWAII)(?:\s(?:STANDARD|DAYLIGHT))?(?:\sTIME)?$/)) {
-                        let ianaForFullName = null;
-                        if (upperTzStr.includes("PACIFIC")) ianaForFullName = "America/Los_Angeles";
-                        else if (upperTzStr.includes("MOUNTAIN")) ianaForFullName = "America/Denver";
-                        if (ianaForFullName) {
-                            resolvedTzOffsetString = this._getOffsetStringForIANA(ianaForFullName, year, monthIndex, day, hour, minute);
+                    } else if (upperTzStr.match(/^(?:PACIFIC|MOUNTAIN|CENTRAL|EASTERN|ATLANTIC|ALASKA|HAWAII)(?:\s(?:STANDARD|DAYLIGHT))?(?:\sTIME)?$|^(?:GREENWICH MEAN|COORDINATED UNIVERSAL)(?:\sTIME)?$/)) {
+                        const fullTimeZoneLookup = [
+                            ['PACIFIC', 'America/Los_Angeles'],
+                            ['MOUNTAIN', 'America/Denver'],
+                            ['CENTRAL', 'America/Chicago'],
+                            ['EASTERN', 'America/New_York'],
+                            ['ATLANTIC', 'America/Halifax'],
+                            ['ALASKA', 'America/Anchorage'],
+                            ['HAWAII', 'Pacific/Honolulu'],
+                            ['GREENWICH MEAN', 'Etc/GMT'],
+                            ['COORDINATED UNIVERSAL', 'Etc/UTC'],
+                        ];
+                        const normalizedFullName = upperTzStr
+                            .replace(/\s+(STANDARD|DAYLIGHT|EUROPEAN)?\s*TIME$/u, '')
+                            .trim();
+                        const matchedFullTimeZone = fullTimeZoneLookup.find(([label]) =>
+                            normalizedFullName === label || upperTzStr.startsWith(`${label} `)
+                        );
+                        if (matchedFullTimeZone) {
+                            resolvedTzOffsetString = this._getOffsetStringForIANA(matchedFullTimeZone[1], year, monthIndex, day, hour, minute);
                         }
                     }
                 }
