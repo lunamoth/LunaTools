@@ -1883,7 +1883,6 @@
             }
 
             const stale = response.data.stale === true || !ApiService._isFreshTimestamp(cached.timestamp);
-            if (stale) ApiService._refreshExchangeRateTableSilently();
             return {
                 rate: cached.rate,
                 date: cached.date,
@@ -1957,19 +1956,13 @@
             }
 
             const cacheKey = `${fromCurrency}_${toCurrency}`;
-            const memoryCached = AppState.exchangeRateCache.get(cacheKey);
-            if (memoryCached) {
-                const shouldRefresh =
-                    memoryCached.sourceType === 'legacy' ||
-                    !ApiService._isFreshTimestamp(memoryCached.timestamp);
-                if (shouldRefresh) ApiService._refreshExchangeRateTableSilently();
-                return ApiService._formatRateResult(memoryCached, { refreshing: shouldRefresh });
-            }
-
             const existingRequest = AppState.exchangeRateRequests.get(cacheKey);
             if (existingRequest) return existingRequest;
 
-            const request = ApiService._loadRateFromStorageOrBackground(fromCurrency, toCurrency)
+            // 최신성 판단은 ECB 게시 시각·TARGET 영업일을 아는 background.js 한 곳에서 수행합니다.
+            // 콘텐츠 스크립트의 24시간 로컬 캐시를 먼저 반환하면 게시일이 바뀐 뒤에도 전일 이전 환율이
+            // 표시될 수 있으므로, Alt+Z 실행 시 항상 백그라운드 판정을 거칩니다.
+            const request = ApiService._requestRateFromBackground(fromCurrency, toCurrency, false)
                 .finally(() => {
                     AppState.exchangeRateRequests.delete(cacheKey);
                 });

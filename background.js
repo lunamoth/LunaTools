@@ -7,6 +7,11 @@ const EXCHANGE_RATE_STORAGE_KEY = "lunaToolsExchangeRateTableV1";
 const EXCHANGE_RATE_SCHEMA_VERSION = 1;
 const EXCHANGE_RATE_BASE_CURRENCY = "EUR";
 const EXCHANGE_RATE_CACHE_DURATION_MS = 24 * 60 * 60 * 1000;
+const EXCHANGE_RATE_STALE_RETRY_INTERVAL_MS = 15 * 60 * 1000;
+const EXCHANGE_RATE_PUBLICATION_TIME_ZONE = 'Europe/Berlin';
+// ECB/Frankfurter는 유럽 현지 시각 약 16:00에 갱신됩니다. 전파 지연을 고려해 30분의 유예를 둡니다.
+const EXCHANGE_RATE_PUBLICATION_CUTOFF_MINUTES = (16 * 60) + 30;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const EXCHANGE_RATE_API_URL = `https://api.frankfurter.dev/v1/latest?base=${EXCHANGE_RATE_BASE_CURRENCY}`;
 const FIXED_EURO_CONVERSION_RATES = Object.freeze({
   // 불가리아는 2026-01-01부터 EUR을 도입했으며 공식 고정 환산율은 EUR 1 = BGN 1.95583입니다.
@@ -24,6 +29,97 @@ function normalizeCurrencyCode(value) {
 
 function isPositiveFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function formatUtcDate(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getZonedDateTimeParts(now = Date.now(), timeZone = EXCHANGE_RATE_PUBLICATION_TIME_ZONE) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(new Date(now))
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)])
+  );
+
+  if (![parts.year, parts.month, parts.day, parts.hour, parts.minute].every(Number.isFinite)) {
+    throw new Error('Could not determine exchange-rate publication time.');
+  }
+  return parts;
+}
+
+// Meeus/Jones/Butcher 알고리즘: TARGET 휴무일인 성금요일·부활절 월요일 계산에 사용합니다.
+function getGregorianEasterSundayUtc(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function isTargetBusinessDayUtc(date) {
+  const dayOfWeek = date.getUTCDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
+
+  const month = date.getUTCMonth() + 1;
+  const day = date.getUTCDate();
+  const isFixedTargetClosingDay =
+    (month === 1 && day === 1) ||
+    (month === 5 && day === 1) ||
+    (month === 12 && (day === 25 || day === 26));
+  if (isFixedTargetClosingDay) return false;
+
+  const easterSunday = getGregorianEasterSundayUtc(date.getUTCFullYear());
+  const daysFromEaster = Math.round((date.getTime() - easterSunday.getTime()) / ONE_DAY_MS);
+  return daysFromEaster !== -2 && daysFromEaster !== 1;
+}
+
+function getExpectedLatestExchangeRateDate(now = Date.now()) {
+  const parts = getZonedDateTimeParts(now);
+  const minutesSinceMidnight = (parts.hour * 60) + parts.minute;
+  const candidate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+
+  // 당일 게시 시각 전에는 직전 TARGET 영업일의 고시 환율이 최신입니다.
+  if (minutesSinceMidnight < EXCHANGE_RATE_PUBLICATION_CUTOFF_MINUTES) {
+    candidate.setUTCDate(candidate.getUTCDate() - 1);
+  }
+  while (!isTargetBusinessDayUtc(candidate)) {
+    candidate.setUTCDate(candidate.getUTCDate() - 1);
+  }
+  return formatUtcDate(candidate);
+}
+
+function isExchangeRateDataCurrent(table, now = Date.now()) {
+  if (!table || typeof table.date !== 'string') return false;
+  return table.date >= getExpectedLatestExchangeRateDate(now);
+}
+
+function wasExchangeRateTableCheckedRecently(table, now = Date.now()) {
+  if (!table || !Number.isFinite(table.timestamp)) return false;
+  const age = Math.max(0, now - table.timestamp);
+  return age < EXCHANGE_RATE_STALE_RETRY_INTERVAL_MS;
 }
 
 function normalizeExchangeRateTable(candidate) {
@@ -66,7 +162,7 @@ function normalizeExchangeRateTable(candidate) {
 function isExchangeRateTableFresh(table, now = Date.now()) {
   if (!table || !Number.isFinite(table.timestamp)) return false;
   const age = Math.max(0, now - table.timestamp);
-  return age < EXCHANGE_RATE_CACHE_DURATION_MS;
+  return age < EXCHANGE_RATE_CACHE_DURATION_MS && isExchangeRateDataCurrent(table, now);
 }
 
 function calculateExchangeRate(table, fromCurrency, toCurrency) {
@@ -178,6 +274,15 @@ async function refreshExchangeRateTableIfNeeded({ force = false } = {}) {
   if (!force && isExchangeRateTableFresh(storedTable)) {
     return storedTable;
   }
+  // 게시 직후 공급처 반영이 늦는 경우, 같은 오래된 기준일을 매번 재요청하지 않도록 잠시 대기합니다.
+  if (
+    !force &&
+    storedTable &&
+    !isExchangeRateDataCurrent(storedTable) &&
+    wasExchangeRateTableCheckedRecently(storedTable)
+  ) {
+    return storedTable;
+  }
   return fetchAndStoreExchangeRateTable();
 }
 
@@ -199,21 +304,31 @@ async function getExchangeRateForResponse(fromCurrency, toCurrency, { forceRefre
   }
 
   let table = await getStoredExchangeRateTable();
+  const dataCurrent = !!table && isExchangeRateDataCurrent(table);
+  const recentlyChecked = !!table && wasExchangeRateTableCheckedRecently(table);
   let stale = !!table && !isExchangeRateTableFresh(table);
+  let refreshing = false;
 
-  if (forceRefresh || !table) {
+  // 기준일이 기대 최신일보다 뒤처졌다면 단순 백그라운드 갱신이 아니라 이번 변환에서 갱신을 기다립니다.
+  // 단, 방금 확인했는데 공급처가 아직 갱신되지 않은 경우에는 15분 동안 재요청을 억제합니다.
+  const shouldAwaitRefresh = forceRefresh || !table || (!dataCurrent && !recentlyChecked);
+
+  if (shouldAwaitRefresh) {
     try {
       table = await fetchAndStoreExchangeRateTable();
-      stale = false;
+      stale = !isExchangeRateTableFresh(table);
     } catch (error) {
       if (!table) throw error;
       stale = true;
     }
   } else if (stale) {
-    // 기존 콘텐츠 스크립트와의 호환을 위해 stale 값은 즉시 반환하고 뒤에서 갱신합니다.
-    void fetchAndStoreExchangeRateTable().catch((error) => {
-      console.warn('LunaTools: 백그라운드 환율표 갱신 실패', error);
-    });
+    if (dataCurrent) {
+      // 기준일은 최신이지만 장시간 재검증하지 않은 경우에만 기존 값을 즉시 반환하고 뒤에서 확인합니다.
+      refreshing = true;
+      void fetchAndStoreExchangeRateTable().catch((error) => {
+        console.warn('LunaTools: 백그라운드 환율표 갱신 실패', error);
+      });
+    }
   }
 
   return {
@@ -221,7 +336,8 @@ async function getExchangeRateForResponse(fromCurrency, toCurrency, { forceRefre
     date: table.date,
     timestamp: table.timestamp,
     stale,
-    refreshing: stale
+    refreshing,
+    expectedDate: getExpectedLatestExchangeRateDate()
   };
 }
 
