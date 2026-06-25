@@ -10,6 +10,7 @@
         VOLUME_MULTIPLIER: 3.0,
         ACTIVATION_KEY: 'v',
         DEBOUNCE_DELAY: 200,
+        SAFE_MEDIA_PROTOCOLS: new Set(['blob:', 'data:', 'mediastream:']),
         UI: {
             INDICATOR_ID: 'sound-booster-indicator',
             VISIBLE_CLASS: 'sbi-visible',
@@ -121,6 +122,7 @@
     class AudioProcessor {
         #audioContext = null;
         #sourceNodeMap = new WeakMap();
+        #warnedUnsafeMedia = new WeakSet();
         #userHasInteracted = false; 
 
         setUserInteracted() {
@@ -152,11 +154,10 @@
             return context.state === 'running' ? context : null;
         }
 
-        #applyVolume(mediaElements, volume, context) {
+        #applyVolume(mediaElements, volume, context, allowNewSetup) {
             for (const media of mediaElements) {
                 if (media.isConnected) {
-                    this.#setup(media);
-                    const audioComponents = this.#sourceNodeMap.get(media);
+                    const audioComponents = this.#setup(media, allowNewSetup);
                     audioComponents?.gainNode?.gain.setTargetAtTime(volume, context.currentTime, 0.05);
                 }
             }
@@ -166,7 +167,12 @@
             const context = await this.ensureContextIsRunning();
             if (!context) return; 
             const volume = isActivated ? multiplier : 1.0;
-            this.#applyVolume(this.#findAllMediaElements(document.documentElement), volume, context);
+            this.#applyVolume(
+                this.#findAllMediaElements(document.documentElement),
+                volume,
+                context,
+                isActivated
+            );
         }
 
         async processNewNodes(nodeList, isActivated, multiplier) {
@@ -177,7 +183,7 @@
             if (newMediaElements.length === 0) return;
 
             const volume = isActivated ? multiplier : 1.0;
-            this.#applyVolume(newMediaElements, volume, context);
+            this.#applyVolume(newMediaElements, volume, context, isActivated);
         }
 
         cleanupRemovedNodes(nodeList) {
@@ -201,13 +207,50 @@
             for (const node of nodeList) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
                 if (node.matches('video, audio')) mediaElements.add(node);
+                if (node.matches('source') && node.parentElement?.matches('video, audio')) {
+                    mediaElements.add(node.parentElement);
+                }
                 node.querySelectorAll('video, audio').forEach(el => mediaElements.add(el));
             }
             return Array.from(mediaElements);
         }
 
-        #setup(mediaElement) {
-            if (!this.#audioContext) return;
+        #isSafeToRouteThroughWebAudio(mediaElement) {
+            if (mediaElement.srcObject) return true;
+
+            const sourceValue = mediaElement.currentSrc ||
+                mediaElement.getAttribute('src') ||
+                mediaElement.querySelector('source[src]')?.getAttribute('src');
+            if (!sourceValue) return false;
+
+            let mediaUrl;
+            try {
+                mediaUrl = new URL(sourceValue, document.baseURI);
+            } catch {
+                return false;
+            }
+
+            if (CONFIG.SAFE_MEDIA_PROTOCOLS.has(mediaUrl.protocol)) return true;
+            if (mediaUrl.origin === window.location.origin) return true;
+
+            // 명시적인 CORS 모드가 있는 미디어만 교차 출처 Web Audio 라우팅을 허용합니다.
+            // CORS 없이 createMediaElementSource()를 사용하면 사양상 노드가 무음을 출력할 수 있습니다.
+            return mediaElement.crossOrigin === 'anonymous' ||
+                mediaElement.crossOrigin === 'use-credentials' ||
+                mediaElement.hasAttribute('crossorigin');
+        }
+
+        #warnUnsafeMediaOnce(mediaElement) {
+            if (this.#warnedUnsafeMedia.has(mediaElement)) return;
+            this.#warnedUnsafeMedia.add(mediaElement);
+            console.warn(
+                'LunaTools: CORS가 확인되지 않은 교차 출처 미디어는 원본 오디오 보호를 위해 볼륨 부스터에서 제외했습니다.',
+                mediaElement.currentSrc || mediaElement.getAttribute('src') || ''
+            );
+        }
+
+        #setup(mediaElement, allowNewSetup) {
+            if (!this.#audioContext) return null;
 
             const existingComponents = this.#sourceNodeMap.get(mediaElement);
             if (existingComponents) {
@@ -218,15 +261,26 @@
                         existingComponents.connected = true;
                     } catch {}
                 }
-                return;
+                return existingComponents;
+            }
+
+            if (!allowNewSetup) return null;
+
+            if (!this.#isSafeToRouteThroughWebAudio(mediaElement)) {
+                this.#warnUnsafeMediaOnce(mediaElement);
+                return null;
             }
 
             try {
                 const source = this.#audioContext.createMediaElementSource(mediaElement);
                 const gainNode = this.#audioContext.createGain();
                 source.connect(gainNode).connect(this.#audioContext.destination);
-                this.#sourceNodeMap.set(mediaElement, { source, gainNode, connected: true });
-            } catch {}
+                const audioComponents = { source, gainNode, connected: true };
+                this.#sourceNodeMap.set(mediaElement, audioComponents);
+                return audioComponents;
+            } catch {
+                return null;
+            }
         }
 
         #findAllMediaElements(rootNode) {
@@ -309,8 +363,12 @@
                 const addedNodes = [];
                 const removedNodes = [];
                 for (const mutation of mutationsList) {
-                    addedNodes.push(...mutation.addedNodes);
-                    removedNodes.push(...mutation.removedNodes);
+                    if (mutation.type === 'attributes') {
+                        addedNodes.push(mutation.target);
+                    } else {
+                        addedNodes.push(...mutation.addedNodes);
+                        removedNodes.push(...mutation.removedNodes);
+                    }
                 }
 
                 if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
@@ -319,7 +377,12 @@
                 if (addedNodes.length > 0) this.#queueAddedNodes(addedNodes);
             });
 
-            observer.observe(document.documentElement, { childList: true, subtree: true });
+            observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['src', 'crossorigin']
+            });
         }
     }
 

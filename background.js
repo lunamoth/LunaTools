@@ -464,9 +464,50 @@ class TabManager {
     this.urlCache = new Map();
     this.reverseUrlLookup = new Map();
     this.duplicateOperationQueues = new Map();
+    this.tabCreationOrder = new Map();
+    this.nextTabCreationOrder = 1;
 
     this.handleTabRemoved = this.handleTabRemoved.bind(this);
     this.handleTabUpdate = this.handleTabUpdate.bind(this);
+  }
+
+  _recordTabCreated(tabId) {
+    if (typeof tabId !== 'number' || this.tabCreationOrder.has(tabId)) return;
+    this.tabCreationOrder.set(tabId, this.nextTabCreationOrder++);
+  }
+
+  _forgetTabCreationOrder(tabId) {
+    if (typeof tabId === 'number') {
+      this.tabCreationOrder.delete(tabId);
+    }
+  }
+
+  _transferTabCreationOrder(removedTabId, addedTabId) {
+    if (typeof addedTabId !== 'number') return;
+
+    const creationOrder = this.tabCreationOrder.get(removedTabId);
+    this.tabCreationOrder.delete(removedTabId);
+    if (creationOrder !== undefined) {
+      this.tabCreationOrder.set(addedTabId, creationOrder);
+    }
+  }
+
+  _compareTabAge(tabA, tabB) {
+    const orderA = this.tabCreationOrder.get(tabA.id) ?? 0;
+    const orderB = this.tabCreationOrder.get(tabB.id) ?? 0;
+
+    // 서비스 워커 시작 전에 이미 존재하던 탭(순서 0)은 새로 생성된 탭보다 오래된 것으로 취급합니다.
+    if (orderA !== orderB) {
+      if (orderA === 0) return -1;
+      if (orderB === 0) return 1;
+      return orderA - orderB;
+    }
+
+    const indexA = Number.isInteger(tabA.index) ? tabA.index : Number.MAX_SAFE_INTEGER;
+    const indexB = Number.isInteger(tabB.index) ? tabB.index : Number.MAX_SAFE_INTEGER;
+    if (indexA !== indexB) return indexA - indexB;
+
+    return (tabA.id ?? Number.MAX_SAFE_INTEGER) - (tabB.id ?? Number.MAX_SAFE_INTEGER);
   }
 
   _isTabNotFoundError(error) {
@@ -557,6 +598,11 @@ class TabManager {
   async initializeCache() {
     try {
       const allTabs = await chrome.tabs.query({ windowType: 'normal' });
+      const liveTabIds = new Set(allTabs.map(tab => tab.id).filter(id => typeof id === 'number'));
+      for (const tabId of this.tabCreationOrder.keys()) {
+        if (!liveTabIds.has(tabId)) this.tabCreationOrder.delete(tabId);
+      }
+
       this.urlCache.clear();
       this.reverseUrlLookup.clear();
       allTabs.forEach(tab => {
@@ -648,7 +694,7 @@ class TabManager {
     return pathA.localeCompare(pathB);
   }
 
-  async checkForDuplicateAndFocusExisting(tab) {
+  async checkForDuplicateAndFocusExisting(tab, { currentBecameDuplicate = false } = {}) {
     if (!this._isValidTabForProcessing(tab)) return;
 
     const tabUrlString = this._getTabUrlString(tab);
@@ -663,7 +709,7 @@ class TabManager {
       this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
     }
 
-    await this._findAndHandleDuplicates(tab, parsedUrl);
+    await this._findAndHandleDuplicates(tab, parsedUrl, currentBecameDuplicate);
   }
 
   async _runDuplicateOperationSerially(lockKey, operation) {
@@ -683,7 +729,7 @@ class TabManager {
     }
   }
 
-  async _findAndHandleDuplicates(currentTab, parsedUrl) {
+  async _findAndHandleDuplicates(currentTab, parsedUrl, currentBecameDuplicate = false) {
     const lockKey = `${currentTab.windowId}\u0000${parsedUrl.href}`;
 
     return this._runDuplicateOperationSerially(lockKey, async () => {
@@ -713,24 +759,30 @@ class TabManager {
           }
         }
 
-        if (existingDuplicateTabIds.length > 0) {
-          await this._handleVerifiedDuplicate(currentTab, existingDuplicateTabIds[0], parsedUrl);
+        for (const existingDuplicateTabId of existingDuplicateTabIds) {
+          const result = await this._handleVerifiedDuplicate(
+            currentTab,
+            existingDuplicateTabId,
+            parsedUrl,
+            currentBecameDuplicate
+          );
+          if (result?.currentTabRemoved) break;
         }
       } catch (error) {
       }
     });
   }
 
-  async _handleVerifiedDuplicate(newlyOpenedTab, existingDuplicateId, parsedUrl) {
-    let liveNewTab;
+  async _handleVerifiedDuplicate(currentTab, existingDuplicateId, parsedUrl, currentBecameDuplicate = false) {
+    let liveCurrentTab;
     try {
-      liveNewTab = await chrome.tabs.get(newlyOpenedTab.id);
+      liveCurrentTab = await chrome.tabs.get(currentTab.id);
     } catch (e) {
       if (this._isTabNotFoundError(e)) {
-        this._removeUrlFromCache(newlyOpenedTab.id, parsedUrl);
-        return; 
+        this._removeUrlFromCache(currentTab.id, parsedUrl);
+        return { currentTabRemoved: true };
       }
-      return; 
+      return { currentTabRemoved: false };
     }
 
     let liveExistingTab;
@@ -739,19 +791,19 @@ class TabManager {
     } catch (e) {
       if (this._isTabNotFoundError(e)) {
         this._removeUrlFromCache(existingDuplicateId, parsedUrl);
-        return;
+        return { currentTabRemoved: false };
       }
-      return;
+      return { currentTabRemoved: false };
     }
 
-    const liveNewUrl = this._tryParseUrl(this._getTabUrlString(liveNewTab));
+    const liveCurrentUrl = this._tryParseUrl(this._getTabUrlString(liveCurrentTab));
     const liveExistingUrl = this._tryParseUrl(this._getTabUrlString(liveExistingTab));
-    const tabsStillMatch = liveNewTab.windowId === liveExistingTab.windowId &&
-      liveNewUrl?.href === parsedUrl.href &&
+    const tabsStillMatch = liveCurrentTab.windowId === liveExistingTab.windowId &&
+      liveCurrentUrl?.href === parsedUrl.href &&
       liveExistingUrl?.href === parsedUrl.href;
 
     if (!tabsStillMatch) {
-      for (const liveTab of [liveNewTab, liveExistingTab]) {
+      for (const liveTab of [liveCurrentTab, liveExistingTab]) {
         const cachedInfo = this.urlCache.get(liveTab.id);
         if (cachedInfo) this._removeUrlFromCache(liveTab.id, cachedInfo.url);
 
@@ -760,28 +812,37 @@ class TabManager {
           this._addUrlToCache(liveTab.id, liveUrl, liveTab.windowId);
         }
       }
-      return;
+      return { currentTabRemoved: false };
     }
-    
-    const allTabsWithUrlInWindow = (this.reverseUrlLookup.get(parsedUrl.href) || [])
-                                  .filter(t => t.windowId === newlyOpenedTab.windowId);
-    if (allTabsWithUrlInWindow.length <= 1) {
-        return;
+
+    let tabToKeep = liveExistingTab;
+    let tabToRemove = liveCurrentTab;
+
+    // URL이 방금 바뀐 탭은 기존 URL 탭보다 나중에 중복 상태가 된 탭입니다.
+    // 단순한 완료/새로고침 이벤트라면 생성 순서를 사용해 더 오래된 탭을 보존합니다.
+    if (!currentBecameDuplicate && this._compareTabAge(liveCurrentTab, liveExistingTab) <= 0) {
+      tabToKeep = liveCurrentTab;
+      tabToRemove = liveExistingTab;
     }
 
     try {
-      if (liveNewTab.active) {
-        await chrome.tabs.update(existingDuplicateId, { active: true }).catch(err => {
+      if (tabToRemove.active) {
+        await chrome.tabs.update(tabToKeep.id, { active: true }).catch(() => {
         });
       }
 
-      await chrome.tabs.remove(newlyOpenedTab.id);
-      this._removeUrlFromCache(newlyOpenedTab.id, parsedUrl);
+      await chrome.tabs.remove(tabToRemove.id);
+      this._removeUrlFromCache(tabToRemove.id, parsedUrl);
+      this._forgetTabCreationOrder(tabToRemove.id);
+      return { currentTabRemoved: tabToRemove.id === liveCurrentTab.id };
 
     } catch (error) {
       if (this._isTabNotFoundError(error)) {
-        this._removeUrlFromCache(newlyOpenedTab.id, parsedUrl);
-      } 
+        this._removeUrlFromCache(tabToRemove.id, parsedUrl);
+        this._forgetTabCreationOrder(tabToRemove.id);
+        return { currentTabRemoved: tabToRemove.id === liveCurrentTab.id };
+      }
+      return { currentTabRemoved: false };
     }
   }
 
@@ -946,9 +1007,9 @@ class TabManager {
     if (urlChanged || windowChanged) {
       if (oldCachedInfo) this._removeUrlFromCache(tab.id, oldCachedInfo.url);
       this._addUrlToCache(tab.id, newParsedUrl, tab.windowId);
-      await this.checkForDuplicateAndFocusExisting(tab); 
+      await this.checkForDuplicateAndFocusExisting(tab, { currentBecameDuplicate: true });
     } else if (tab.status === 'complete' && oldCachedInfo && oldCachedInfo.url.href === newParsedUrl.href) {
-      await this.checkForDuplicateAndFocusExisting(tab);
+      await this.checkForDuplicateAndFocusExisting(tab, { currentBecameDuplicate: false });
     }
   }
 
@@ -961,6 +1022,7 @@ class TabManager {
         this._removeUrlFromCache(tabId, cachedInfo.url);
       }
     }
+    this._forgetTabCreationOrder(tabId);
   }
 }
 
@@ -1075,6 +1137,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.tabs.onCreated.addListener((tab) => {
   void updateTabCountBadge();
   if (!tabManager._isValidTabForProcessing(tab)) return;
+  tabManager._recordTabCreated(tab.id);
   
   const urlString = tabManager._getTabUrlString(tab);
   const parsedUrl = tabManager._tryParseUrl(urlString);
@@ -1110,6 +1173,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 if (chrome.tabs.onReplaced) {
   chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+    tabManager._transferTabCreationOrder(removedTabId, addedTabId);
     await ensureTabCacheInitialized();
 
     const cachedInfo = tabManager.urlCache.get(removedTabId);

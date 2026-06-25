@@ -2152,9 +2152,12 @@ document.addEventListener('DOMContentLoaded', function() {
             RENAME_FAILED: '이름 변경 실패', SESSION_PINNED: '📍 세션을 고정했습니다.', SESSION_UNPINNED: '📌 고정을 해제했습니다.',
             PIN_FAILED: '고정 실패', NO_URLS_TO_COPY: '⚠️ 복사할 URL이 없습니다.', URLS_COPIED: '📋 모든 URL을 클립보드에 복사했습니다.',
             COPY_FAILED: '❌ 클립보드 복사에 실패했습니다.', NO_SESSIONS_TO_EXPORT: '⚠️ 내보낼 세션이 없습니다.',
-            EXPORT_SUCCESS: '📤 모든 세션을 내보냈습니다.', IMPORT_FILE_TOO_LARGE: '❌ 파일이 너무 큽니다 (최대 10MB)',
+            EXPORT_SUCCESS: '📤 모든 세션을 내보냈습니다.', EXPORT_FAILED: '❌ 세션 내보내기에 실패했습니다.',
+            IMPORT_FILE_TOO_LARGE: '❌ 파일이 너무 큽니다 (최대 10MB)',
             IMPORT_FILE_READ_ERROR: '❌ 파일을 읽는 중 오류가 발생했습니다.', IMPORT_INVALID_FORMAT: '❌ 잘못된 파일 형식입니다.',
             IMPORT_NO_VALID_SESSIONS: '유효한 세션이 없습니다.',
+            SESSION_DATA_CORRUPTED: '저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 기존 데이터를 보호하기 위해 저장·편집 작업을 중단했습니다.',
+            SESSION_DATA_WARNING: '⚠️ 저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 유효한 세션만 표시하며, 기존 데이터 보호를 위해 저장·편집을 차단합니다.',
             SESSION_SAVED_AND_TABS_CLOSED: (name, count) => `✅ '${escapeHtml(name)}'으로 저장하고 ${count}개의 탭을 닫았습니다.`,
             SESSION_SAVED_TABS_CLOSE_FAILED: (name) => `⚠️ 탭 닫기 실패. '${escapeHtml(name)}' 세션은 저장되었습니다.`,
             SESSION_SAVED_TABS_PARTIALLY_CLOSED: (name, closed, failed) => `⚠️ '${escapeHtml(name)}' 세션은 저장했습니다. ${closed}개 탭을 닫았고 ${failed}개는 상태 변경으로 남겨두었습니다.`,
@@ -2190,7 +2193,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const storage = {
         get: async (key, defaultValue = []) => {
           const result = await chrome.storage.local.get(key);
-          return result[key] ?? defaultValue;
+          return Object.prototype.hasOwnProperty.call(result, key) ? result[key] : defaultValue;
         },
         set: async (key, value) => {
           try {
@@ -2312,15 +2315,37 @@ document.addEventListener('DOMContentLoaded', function() {
           session.tabs.every(isValidTab);
       };
 
-      const normalizeSessions = (value) => {
-        if (!Array.isArray(value)) return [];
-        return value.filter(isValidSession);
+      const inspectStoredSessions = (value) => {
+        if (value === undefined) {
+          return { sessions: [], hasInvalidData: false };
+        }
+        if (!Array.isArray(value)) {
+          return { sessions: [], hasInvalidData: true };
+        }
+
+        const sessions = value.filter(isValidSession);
+        return {
+          sessions,
+          hasInvalidData: sessions.length !== value.length
+        };
+      };
+
+      const parseSessionsForMutation = (value) => {
+        const inspected = inspectStoredSessions(value);
+        if (inspected.hasInvalidData) {
+          throw new Error(CONSTANTS.MESSAGES.SESSION_DATA_CORRUPTED);
+        }
+        return inspected.sessions;
       };
 
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area === 'local' && changes[CONSTANTS.STORAGE_KEYS.SESSIONS]) {
-          allSessions = normalizeSessions(changes[CONSTANTS.STORAGE_KEYS.SESSIONS].newValue);
+          const inspected = inspectStoredSessions(changes[CONSTANTS.STORAGE_KEYS.SESSIONS].newValue);
+          allSessions = inspected.sessions;
           renderSessions();
+          if (inspected.hasInvalidData) {
+            showToast(CONSTANTS.MESSAGES.SESSION_DATA_WARNING, CONSTANTS.UI.TOAST_DURATION * 2);
+          }
         }
       });
 
@@ -2454,7 +2479,7 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const mutateAndPersistSessions = (mutator) => enqueueSessionMutation(async () => {
-        const persistedSessions = normalizeSessions(
+        const persistedSessions = parseSessionsForMutation(
           await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, [])
         );
         const workingSessions = JSON.parse(JSON.stringify(persistedSessions));
@@ -2933,14 +2958,24 @@ document.addEventListener('DOMContentLoaded', function() {
         const day = now.getDate().toString().padStart(2, '0');
         const filename = `${year}${month}${day}_LunaTools_Session_Manager_Backup.json`;
         
-        chrome.downloads.download({ url, filename }, (downloadId) => {
-          if (downloadId === undefined && chrome.runtime.lastError) {
-            URL.revokeObjectURL(url);
-          } else {
+        try {
+          chrome.downloads.download({ url, filename }, (downloadId) => {
+            const downloadError = chrome.runtime.lastError;
+            if (downloadId === undefined || downloadError) {
+              URL.revokeObjectURL(url);
+              const detail = downloadError?.message ? ` (${downloadError.message})` : '';
+              showToast(`${CONSTANTS.MESSAGES.EXPORT_FAILED}${detail}`);
+              return;
+            }
+
             setTimeout(() => URL.revokeObjectURL(url), CONSTANTS.TIMING.EXPORT_URL_REVOKE_DELAY);
-          }
-        });
-        showToast(CONSTANTS.MESSAGES.EXPORT_SUCCESS);
+            showToast(CONSTANTS.MESSAGES.EXPORT_SUCCESS);
+          });
+        } catch (error) {
+          URL.revokeObjectURL(url);
+          const detail = error?.message ? ` (${error.message})` : '';
+          showToast(`${CONSTANTS.MESSAGES.EXPORT_FAILED}${detail}`);
+        }
       };
 
       const handleImport = () => {
@@ -3027,9 +3062,13 @@ document.addEventListener('DOMContentLoaded', function() {
         sessionInput.maxLength = CONSTANTS.UI.SESSION_NAME_MAX_LENGTH;
 
         const sessions = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
-        allSessions = normalizeSessions(sessions);
+        const inspectedSessions = inspectStoredSessions(sessions);
+        allSessions = inspectedSessions.sessions;
         
         renderSessions();
+        if (inspectedSessions.hasInvalidData) {
+          showToast(CONSTANTS.MESSAGES.SESSION_DATA_WARNING, CONSTANTS.UI.TOAST_DURATION * 2);
+        }
         
         saveCurrentWindowBtn.addEventListener('click', () => {
           withLoadingState(saveCurrentWindowBtn, () => handleSaveSession(CONSTANTS.SAVE_SCOPES.CURRENT_WINDOW));

@@ -8,15 +8,12 @@
     const elementMatches = Element.prototype.matches;
 
     const CONFIG = Object.freeze({
-        CC_SLDS: new Set([
-            'co', 'ac', 'go', 'or', 'ne', 're', 'pe', 'com', 'net', 'org', 'edu',
-            'gov', 'mil', 'int', 'school', 'biz', 'info', 'pro', 'museum', 'aero',
-            'gen', 'id', 'in', 'firm', 'law', 'pol', 'lib', 'shop', 'club', 'site',
-            'news', 'blog', 'app', 'xyz', 'io', 'dev', 'jp', 'kr', 'cn', 'tw', 'hk',
-            'sg', 'my', 'uk', 'au', 'nz', 'art', 'design', 'online', 'store', 'tech',
-            'media', 'tv', 'fm', 'io', 'me',
-            'github', 'gitlab', 'vercel', 'netlify', 'herokuapp', 'amazonaws', 'azurewebsites',
-            'google', 'tistory', 'blogspot', 'wordpress'
+        COMMON_CC_SECOND_LEVEL_LABELS: new Set([
+            'ac', 'co', 'com', 'edu', 'go', 'gov', 'mil', 'ne', 'net', 'or', 'org', 'school'
+        ]),
+        PRIVATE_PUBLIC_SUFFIXES: new Set([
+            'github.io', 'gitlab.io', 'vercel.app', 'netlify.app', 'herokuapp.com',
+            'azurewebsites.net', 'tistory.com', 'blogspot.com', 'wordpress.com'
         ]),
         ALLOWED_PROTOCOLS: new Set(['http:', 'https:']),
         MIN_SEGMENTS: 2,
@@ -37,19 +34,23 @@
     });
 
     class UrlUtils {
+        static normalizeHostname(hostname) {
+            return String(hostname || '').toLowerCase().replace(/\.+$/, '');
+        }
+
         static isTwoLevel(hostname) {
-            const parts = hostname.split('.');
+            const normalizedHostname = this.normalizeHostname(hostname);
+            const parts = normalizedHostname.split('.');
             if (parts.length < 3) return false;
-            
+
             const tld = parts[parts.length - 1];
             const sld = parts[parts.length - 2];
+            const suffix = `${sld}.${tld}`;
 
-            if (CONFIG.CC_SLDS.has(sld.toLowerCase())) return true;
+            if (CONFIG.PRIVATE_PUBLIC_SUFFIXES.has(suffix)) return true;
 
-            if (tld.length === 2) {
-                return CONFIG.REGEX.CC_SLD_FALLBACK.test(sld);
-            }
-            return false;
+            return tld.length === 2 &&
+                (CONFIG.COMMON_CC_SECOND_LEVEL_LABELS.has(sld) || CONFIG.REGEX.CC_SLD_FALLBACK.test(sld));
         }
 
         static getMinSegments(hostname) {
@@ -57,23 +58,26 @@
         }
 
         static isBaseDomain(hostname) {
-            if (hostname.length >= 7 && hostname.length <= 15 && CONFIG.REGEX.IPV4.test(hostname)) return true;
-            return hostname.split('.').length <= this.getMinSegments(hostname);
+            const normalizedHostname = this.normalizeHostname(hostname);
+            if (normalizedHostname.length >= 7 && normalizedHostname.length <= 15 && CONFIG.REGEX.IPV4.test(normalizedHostname)) return true;
+            return normalizedHostname.split('.').length <= this.getMinSegments(normalizedHostname);
         }
 
         static getParentHost(hostname) {
-            if (this.isBaseDomain(hostname)) return null;
-            const parts = hostname.split('.');
+            const normalizedHostname = this.normalizeHostname(hostname);
+            if (this.isBaseDomain(normalizedHostname)) return null;
+            const parts = normalizedHostname.split('.');
             const next = parts.slice(1).join('.');
             return next.includes('.') || next === 'localhost' ? next : null;
         }
 
         static getRootHost(hostname) {
-            if (hostname.length >= 7 && CONFIG.REGEX.IPV4.test(hostname)) return hostname;
+            const normalizedHostname = this.normalizeHostname(hostname);
+            if (normalizedHostname.length >= 7 && CONFIG.REGEX.IPV4.test(normalizedHostname)) return normalizedHostname;
             
-            const parts = hostname.split('.');
-            const min = this.getMinSegments(hostname);
-            if (parts.length <= min) return hostname;
+            const parts = normalizedHostname.split('.');
+            const min = this.getMinSegments(normalizedHostname);
+            if (parts.length <= min) return normalizedHostname;
             return parts.slice(-min).join('.');
         }
 
