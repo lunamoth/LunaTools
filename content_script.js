@@ -409,20 +409,23 @@
         this.eventListeners = [];
       }
       isElementFocusableInput(element) {
-        if (!element) return false;
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
         if (element.isContentEditable) return true;
-        const tagName = element.tagName.toUpperCase();
-        const type = element.type?.toLowerCase();
-        switch (tagName) {
-          case 'INPUT':
-            return !['button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'range', 'color', 'file'].includes(type) &&
-                   !(element.disabled || element.readOnly);
-          case 'TEXTAREA':
-          case 'SELECT':
-            return !(element.disabled || element.readOnly);
-          default:
-            return false;
+
+        const tagName = String(element.tagName || '').toUpperCase();
+        if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tagName)) {
+          return !element.disabled;
         }
+
+        const role = String(element.getAttribute?.('role') || '').toLowerCase();
+        const arrowKeyRoles = new Set([
+          'application', 'combobox', 'grid', 'gridcell', 'listbox', 'menu', 'menubar',
+          'menuitem', 'option', 'radio', 'searchbox', 'slider', 'spinbutton', 'tab',
+          'tablist', 'textbox', 'tree', 'treegrid', 'treeitem'
+        ]);
+        if (arrowKeyRoles.has(role)) return true;
+
+        return Boolean(element.matches?.('.CodeMirror, .monaco-editor, .ace_editor'));
       }
       findNavigationLinks() {
         if (this.cachedLinks) return this.cachedLinks;
@@ -504,8 +507,11 @@
         this._debouncedProcessKey(direction);
       }
       _shouldIgnoreKeyEvent(event) {
-        if (event.altKey || event.ctrlKey || event.metaKey) return true;
-        return document.activeElement && this.domLinkFinder.isElementFocusableInput(document.activeElement);
+        if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented || event.isComposing) return true;
+
+        const eventPath = typeof event.composedPath === 'function' ? event.composedPath() : [];
+        const candidates = [...eventPath, event.target, document.activeElement];
+        return candidates.some(candidate => this.domLinkFinder.isElementFocusableInput(candidate));
       }
       _processNavigationKey(direction) {
         if (this.isNavigating) return;
@@ -2453,20 +2459,57 @@
             return transform;
         }
 
+        #captureOriginalStyle(video) {
+            const computedStyle = window.getComputedStyle(video);
+            const computedTransform = computedStyle.transform;
+            const computedWillChange = computedStyle.willChange;
+
+            return {
+                step: 0,
+                baseTransform: computedTransform && computedTransform !== 'none' ? computedTransform : '',
+                activeWillChange: computedWillChange && computedWillChange !== 'auto'
+                    ? [...new Set(computedWillChange.split(',').map(value => value.trim()).filter(Boolean).concat('transform'))].join(', ')
+                    : 'transform',
+                originalTransform: video.style.getPropertyValue('transform'),
+                originalTransformPriority: video.style.getPropertyPriority('transform'),
+                originalWillChange: video.style.getPropertyValue('will-change'),
+                originalWillChangePriority: video.style.getPropertyPriority('will-change')
+            };
+        }
+
+        #restoreOriginalStyle(video, state) {
+            if (state.originalTransform) {
+                video.style.setProperty('transform', state.originalTransform, state.originalTransformPriority);
+            } else {
+                video.style.removeProperty('transform');
+            }
+
+            if (state.originalWillChange) {
+                video.style.setProperty('will-change', state.originalWillChange, state.originalWillChangePriority);
+            } else {
+                video.style.removeProperty('will-change');
+            }
+        }
+
         #applyRotation(video) {
-            const currentStep = this.#rotationState.get(video) ?? 0;
-            const nextStep = (currentStep + 1) % VideoRotator.#CONFIG.ROTATION_STEPS;
-
-            const transformStyle = this.#calculateTransform(nextStep, video);
-
-            video.style.transform = transformStyle;
-            video.style.willChange = transformStyle ? 'transform' : 'auto';
+            const state = this.#rotationState.get(video) ?? this.#captureOriginalStyle(video);
+            const nextStep = (state.step + 1) % VideoRotator.#CONFIG.ROTATION_STEPS;
 
             if (nextStep === 0) {
+                this.#restoreOriginalStyle(video, state);
                 this.#rotationState.delete(video);
-            } else {
-                this.#rotationState.set(video, nextStep);
+                return;
             }
+
+            const rotationTransform = this.#calculateTransform(nextStep, video);
+            const transformStyle = [state.baseTransform, rotationTransform].filter(Boolean).join(' ');
+
+            // Use a temporary important declaration so author styles cannot suppress the requested rotation.
+            // The exact pre-existing inline declarations and priorities are restored after the fourth step.
+            video.style.setProperty('transform', transformStyle, 'important');
+            video.style.setProperty('will-change', state.activeWillChange, 'important');
+            state.step = nextStep;
+            this.#rotationState.set(video, state);
         }
 
         #handleKeyDown(event) {

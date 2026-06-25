@@ -88,7 +88,8 @@ document.addEventListener('DOMContentLoaded', function() {
             DEFAULT_OPTIONS: {
                 interval: 2, removeDuplicates: true, focusLock: true, delayLoading: false, sortUrlsBeforeRun: true, playSound: true
             },
-            FADE_DURATION: 300
+            FADE_DURATION: 300,
+            MAX_IMPORT_FILE_SIZE_BYTES: 10 * 1024 * 1024
         };
 
         const UI = Object.keys(CONFIG.SELECTOR).reduce((acc, key) => {
@@ -1574,6 +1575,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const processImportedFile = (file) => {
             if (!file) return;
+            if (file.size > CONFIG.MAX_IMPORT_FILE_SIZE_BYTES) {
+                Toast.show('가져오기 파일은 10MB를 초과할 수 없습니다.', 'error', 5000);
+                return;
+            }
             const reader = new FileReader();
 
             reader.onload = async (e) => {
@@ -1604,51 +1609,34 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         async function createAndDiscardTab(url) {
-            let newTab;
-            const tabToWatch = { id: null };
-            let updateListener, removeListener;
-            let cleanupTimer = null;
-
-            const cleanup = () => {
-                if (cleanupTimer) {
-                    clearTimeout(cleanupTimer);
-                    cleanupTimer = null;
-                }
-                if (updateListener) chrome.tabs.onUpdated.removeListener(updateListener);
-                if (removeListener) chrome.tabs.onRemoved.removeListener(removeListener);
-            };
-
-            updateListener = (tabId, changeInfo) => {
-                if (tabId === tabToWatch.id && changeInfo.status === 'loading') {
-                    cleanup();
-                    chrome.tabs.discard(tabId).catch((discardError) => {
-                        console.warn(`Failed to discard tab ${tabId} for URL ${url}:`, discardError);
-                    });
-                }
-            };
-
-            removeListener = (tabId) => {
-                if (tabId === tabToWatch.id) {
-                    cleanup();
-                }
-            };
+            let tabId = null;
 
             try {
-                newTab = await chrome.tabs.create({ active: false });
-                tabToWatch.id = newTab.id;
+                const newTab = await chrome.tabs.create({ active: false });
+                if (!Number.isInteger(newTab?.id)) {
+                    throw new Error('새 탭의 식별자를 확인할 수 없습니다.');
+                }
+                tabId = newTab.id;
 
-                chrome.tabs.onUpdated.addListener(updateListener);
-                chrome.tabs.onRemoved.addListener(removeListener);
-                cleanupTimer = setTimeout(cleanup, 15000);
+                await chrome.tabs.update(tabId, { url });
+                const discardResult = await chrome.tabs.discard(tabId);
+                const verifiedTab = discardResult?.discarded === true
+                    ? discardResult
+                    : await chrome.tabs.get(tabId);
 
-                await chrome.tabs.update(newTab.id, { url });
+                if (verifiedTab?.discarded !== true) {
+                    throw new Error('탭을 지연 로딩 상태로 전환하지 못했습니다.');
+                }
+
+                return verifiedTab;
             } catch (error) {
-                console.error(`Error creating/updating tab for ${url}:`, error);
-                cleanup();
-                if (newTab && newTab.id) {
-                    chrome.tabs.remove(newTab.id).catch(removeError => {
-                        console.warn(`Failed to remove tab ${newTab.id} after error:`, removeError);
-                    });
+                console.error(`Error creating/discarding tab for ${url}:`, error);
+                if (Number.isInteger(tabId)) {
+                    try {
+                        await chrome.tabs.remove(tabId);
+                    } catch (removeError) {
+                        console.warn(`Failed to remove tab ${tabId} after error:`, removeError);
+                    }
                 }
                 throw error;
             }
@@ -2607,40 +2595,64 @@ document.addEventListener('DOMContentLoaded', function() {
           tabsByWindow.get(windowKey).push({ ...tab, originalIndex: index });
         });
 
-        const createdWindows = [];
-        for (const windowTabs of tabsByWindow.values()) {
-          const [firstTab, ...remainingTabs] = windowTabs;
-          const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: createdWindows.length === 0 });
-          createdWindows.push(createdWindow);
+        const createdWindowIds = [];
+        try {
+          for (const windowTabs of tabsByWindow.values()) {
+            const [firstTab, ...remainingTabs] = windowTabs;
+            const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: createdWindowIds.length === 0 });
+            if (!Number.isInteger(createdWindow?.id)) {
+              throw new Error('복원된 창의 식별자를 확인할 수 없습니다.');
+            }
+            const createdWindowId = createdWindow.id;
+            createdWindowIds.push(createdWindowId);
 
-          const createdTabs = [];
-          const createdWindowTabs = await chrome.tabs.query({ windowId: createdWindow.id });
-          const createdFirstTab = createdWindowTabs[0];
+            const createdTabs = [];
+            const createdWindowTabs = await chrome.tabs.query({ windowId: createdWindowId });
+            const createdFirstTab = createdWindowTabs[0];
+            if (!Number.isInteger(createdFirstTab?.id)) {
+              throw new Error('복원된 창의 첫 번째 탭을 확인할 수 없습니다.');
+            }
 
-          if (createdFirstTab?.id) {
             if (firstTab.pinned) {
               await chrome.tabs.update(createdFirstTab.id, { pinned: true });
             }
             createdTabs.push({ savedTab: firstTab, createdTabId: createdFirstTab.id });
+
+            for (const savedTab of remainingTabs) {
+              const createdTab = await chrome.tabs.create({
+                windowId: createdWindowId,
+                url: savedTab.url,
+                active: false,
+                pinned: Boolean(savedTab.pinned)
+              });
+              if (!Number.isInteger(createdTab?.id)) {
+                throw new Error('복원된 탭의 식별자를 확인할 수 없습니다.');
+              }
+              createdTabs.push({ savedTab, createdTabId: createdTab.id });
+            }
+
+            await restoreTabGroupsForWindow(createdTabs, createdWindowId);
           }
 
-          for (const savedTab of remainingTabs) {
-            const createdTab = await chrome.tabs.create({
-              windowId: createdWindow.id,
-              url: savedTab.url,
-              active: false,
-              pinned: Boolean(savedTab.pinned)
-            });
-            createdTabs.push({ savedTab, createdTabId: createdTab.id });
+          if (createdWindowIds.length > 0) {
+            await chrome.windows.update(createdWindowIds[0], { focused: true });
+          }
+          showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
+        } catch (error) {
+          const rollbackResults = await Promise.allSettled(
+            [...createdWindowIds].reverse().map(windowId => chrome.windows.remove(windowId))
+          );
+          const rollbackFailureCount = rollbackResults.filter(result => result.status === 'rejected').length;
+          if (rollbackFailureCount > 0) {
+            console.error(`Failed to roll back ${rollbackFailureCount} restored window(s).`, rollbackResults);
           }
 
-          await restoreTabGroupsForWindow(createdTabs, createdWindow.id);
+          const reason = error instanceof Error ? error.message : String(error);
+          const rollbackStatus = rollbackFailureCount === 0
+            ? ' 생성된 복원 창은 모두 정리했습니다.'
+            : ` 생성된 복원 창 중 ${rollbackFailureCount}개를 정리하지 못했습니다.`;
+          throw new Error(`${reason}${rollbackStatus}`);
         }
-
-        if (createdWindows[0]?.id) {
-          await chrome.windows.update(createdWindows[0].id, { focused: true });
-        }
-        showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
       };
 
       const generateUniqueSessionName = (

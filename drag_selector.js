@@ -51,6 +51,8 @@
         #boundHandleMouseUp = this.#handleMouseUp.bind(this);
         #boundHandleKeyDown = this.#handleKeyDown.bind(this);
         #boundHandleKeyUp = this.#handleKeyUp.bind(this);
+        #boundHandleInteractionAbort = this.#handleInteractionAbort.bind(this);
+        #boundHandleVisibilityChange = this.#handleVisibilityChange.bind(this);
 
         constructor() {
             this.#injectStyles();
@@ -78,6 +80,10 @@
             window.addEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
             document.addEventListener('keydown', this.#boundHandleKeyDown, this.#listenerOptions);
             document.addEventListener('keyup', this.#boundHandleKeyUp, this.#listenerOptions);
+            window.addEventListener('blur', this.#boundHandleInteractionAbort, true);
+            window.addEventListener('pagehide', this.#boundHandleInteractionAbort, true);
+            window.addEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
+            document.addEventListener('visibilitychange', this.#boundHandleVisibilityChange, true);
         }
 
         #removeEventListeners() {
@@ -86,6 +92,10 @@
             window.removeEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
             document.removeEventListener('keydown', this.#boundHandleKeyDown, this.#listenerOptions);
             document.removeEventListener('keyup', this.#boundHandleKeyUp, this.#listenerOptions);
+            window.removeEventListener('blur', this.#boundHandleInteractionAbort, true);
+            window.removeEventListener('pagehide', this.#boundHandleInteractionAbort, true);
+            window.removeEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
+            document.removeEventListener('visibilitychange', this.#boundHandleVisibilityChange, true);
         }
 
         #injectStyles() {
@@ -326,7 +336,7 @@
             if (this.#animationFrameId) cancelAnimationFrame(this.#animationFrameId);
 
             const C = DragSelector.CONFIG;
-            document.body.classList.remove(C.CSS_CLASSES.BODY_DRAG_STATE);
+            document.body?.classList.remove(C.CSS_CLASSES.BODY_DRAG_STATE);
             this.#highlightedLinks.forEach(link => link.classList.remove(C.CSS_CLASSES.HIGHLIGHT));
 
             if (this.#selectionBox) {
@@ -334,8 +344,11 @@
                 const indicatorToRemove = this.#actionIndicator;
                 const fadeOutClass = C.CSS_CLASSES.FADE_OUT;
                 boxToRemove.classList.add(fadeOutClass);
-                indicatorToRemove.classList.add(fadeOutClass);
-                setTimeout(() => { boxToRemove.remove(); indicatorToRemove.remove(); }, C.TIMING.FADE_OUT_DURATION_MS);
+                indicatorToRemove?.classList.add(fadeOutClass);
+                setTimeout(() => {
+                    boxToRemove.remove();
+                    indicatorToRemove?.remove();
+                }, C.TIMING.FADE_OUT_DURATION_MS);
             }
 
             this.#isDragging = false;
@@ -370,6 +383,10 @@
         #handleMouseMove(e) {
             if (!e.isTrusted || !this.#isTrustedSequence) return;
             if (!this.#modifier) return;
+            if ((e.buttons & 1) === 0) {
+                this.#resetState();
+                return;
+            }
 
             this.#lastMouseEvent = e;
             if (this.#isDragging) return;
@@ -418,6 +435,18 @@
                 this.#resetState();
             } else if (!this.#isDragging && this.#modifier && !this.#getModifier(e)) {
                 this.#resetState();
+            }
+        }
+
+        #handleInteractionAbort() {
+            if (this.#isTrustedSequence || this.#isDragging || this.#modifier) {
+                this.#resetState();
+            }
+        }
+
+        #handleVisibilityChange() {
+            if (document.visibilityState === 'hidden') {
+                this.#handleInteractionAbort();
             }
         }
     }
