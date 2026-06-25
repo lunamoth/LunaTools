@@ -1,4 +1,4 @@
-﻿document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
     // --- Tab UI Control ---
@@ -111,7 +111,9 @@
             currentView: 'input',
             isTransitioning: false,
             isInitialLoad: true,
-            currentRunId: 0
+            currentRunId: 0,
+            processingRunId: null,
+            completionRunId: null
         };
 
         const canAutoFocusUrlInput = () => (
@@ -267,6 +269,11 @@
             resolve: null,
             _keydownListener: null,
             show(config) {
+                // Resolve any previous modal before replacing it. Otherwise the
+                // previous caller can remain suspended forever.
+                if (this.resolve || UI.modalOverlay?.classList.contains('visible')) {
+                    this.hide(undefined);
+                }
                 UI.modalHeader.textContent = config.title;
                 setSafeModalBody(UI.modalBody, config.body);
                 UI.modalConfirmBtn.textContent = config.confirmText || '확인';
@@ -850,7 +857,8 @@
 
             Object.assign(state, {
                 urlsToProcess: [], currentUrlIndex: 0, isPaused: false, errorCount: 0,
-                isDirty: false, loadedListName: null, originalLoadedListUrls: null
+                isDirty: false, loadedListName: null, originalLoadedListUrls: null,
+                processingRunId: null, completionRunId: null
             });
             state.currentRunId += 1;
             clearTimeout(state.intervalId); state.intervalId = null;
@@ -876,6 +884,8 @@
             state.intervalId = null;
             state.isPaused = false;
             state.currentRunId += 1;
+            state.processingRunId = null;
+            state.completionRunId = null;
             state.urlsToProcess = [];
             state.currentUrlIndex = 0;
             state.errorCount = 0;
@@ -1653,20 +1663,28 @@
             }
         };
 
+        const scheduleRunCompletion = (runId) => {
+            if (runId !== state.currentRunId || state.completionRunId === runId) return;
+
+            state.completionRunId = runId;
+            clearTimeout(state.intervalId);
+            state.intervalId = setTimeout(() => {
+                state.intervalId = null;
+                if (state.completionRunId === runId) state.completionRunId = null;
+                if (runId === state.currentRunId) handleCompletion();
+            }, 400);
+        };
+
         const processNextUrl = async (runId) => {
-            if (runId !== state.currentRunId) {
+            if (runId !== state.currentRunId || state.processingRunId === runId) return;
+
+            if (state.currentUrlIndex >= state.urlsToProcess.length) {
+                if (state.urlsToProcess.length > 0) scheduleRunCompletion(runId);
                 return;
             }
+            if (state.isPaused) return;
 
-            if (state.isPaused || state.currentUrlIndex >= state.urlsToProcess.length) {
-                if (state.currentUrlIndex >= state.urlsToProcess.length && state.urlsToProcess.length > 0) {
-                    setTimeout(() => {
-                        if (runId === state.currentRunId) handleCompletion();
-                    }, 400);
-                }
-                return;
-            }
-
+            state.processingRunId = runId;
             updateProgress();
 
             const previousSpan = UI.urlQueue ? UI.urlQueue.querySelector(`.${CONFIG.CSS.PROCESSING_CLASS}`) : null;
@@ -1697,17 +1715,30 @@
                     currentSpan.textContent = `⚠️ ${url}`;
                     currentSpan.title = `오류: ${e.message}`;
                 }
+            } finally {
+                if (state.processingRunId === runId) state.processingRunId = null;
             }
 
-            if (runId !== state.currentRunId) {
+            if (runId !== state.currentRunId) return;
+
+            state.currentUrlIndex++;
+            updateProgress();
+
+            if (state.currentUrlIndex >= state.urlsToProcess.length) {
+                scheduleRunCompletion(runId);
                 return;
             }
 
-            state.currentUrlIndex++;
+            // A pause may occur while chrome.tabs.create() is pending. Do not
+            // schedule a second callback; resume will continue exactly once.
+            if (state.isPaused) return;
 
             const value = UI.intervalInput ? parseFloat(UI.intervalInput.value) : CONFIG.DEFAULT_OPTIONS.interval;
             const intervalSeconds = !isNaN(value) && value >= 0.1 ? value : 0.1;
-            state.intervalId = setTimeout(() => processNextUrl(runId), intervalSeconds * 1000);
+            state.intervalId = setTimeout(() => {
+                state.intervalId = null;
+                processNextUrl(runId);
+            }, intervalSeconds * 1000);
         };
 
         const startProcess = () => {
@@ -1717,19 +1748,22 @@
             if (UI.sortUrlsBeforeRunCheckbox && UI.sortUrlsBeforeRunCheckbox.checked) {
                 urls.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
             }
-            
             if (UI.removeDuplicatesCheckbox && UI.removeDuplicatesCheckbox.checked) {
                 urls = [...new Set(urls)];
             }
 
             state.urlsToProcess = urls;
-
             if (state.urlsToProcess.length === 0) {
                 resetToIdle(CONFIG.TEXT.EMPTY_INPUT, true);
                 return;
             }
 
-            Object.assign(state, { currentUrlIndex: 0, isPaused: false, errorCount: 0 });
+            clearTimeout(state.intervalId);
+            state.intervalId = null;
+            Object.assign(state, {
+                currentUrlIndex: 0, isPaused: false, errorCount: 0,
+                processingRunId: null, completionRunId: null
+            });
             state.currentRunId += 1;
             const runId = state.currentRunId;
 
@@ -1757,6 +1791,8 @@
 
             if (state.isPaused) {
                 clearTimeout(state.intervalId);
+                state.intervalId = null;
+                if (state.completionRunId === state.currentRunId) state.completionRunId = null;
             } else {
                 processNextUrl(state.currentRunId);
             }
@@ -2121,6 +2157,7 @@
             IMPORT_NO_VALID_SESSIONS: '유효한 세션이 없습니다.',
             SESSION_SAVED_AND_TABS_CLOSED: (name, count) => `✅ '${escapeHtml(name)}'으로 저장하고 ${count}개의 탭을 닫았습니다.`,
             SESSION_SAVED_TABS_CLOSE_FAILED: (name) => `⚠️ 탭 닫기 실패. '${escapeHtml(name)}' 세션은 저장되었습니다.`,
+            SESSION_SAVED_TABS_PARTIALLY_CLOSED: (name, closed, failed) => `⚠️ '${escapeHtml(name)}' 세션은 저장했습니다. ${closed}개 탭을 닫았고 ${failed}개는 상태 변경으로 남겨두었습니다.`,
             createDuplicateNameWarning: (name) => `⚠️ 중복된 이름입니다. '${name}'(으)로 저장합니다.`,
             createSessionUpdatedMessage: (name) => `🔄 '${escapeHtml(name)}' 세션을 업데이트했습니다.`,
             createSessionSavedMessage: (name) => `💾 '${escapeHtml(name)}' 세션을 저장했습니다.`,
@@ -2148,6 +2185,7 @@
       let allSessions = [];
       let toastTimeout;
       let inputDebounce;
+      let sessionMutationQueue = Promise.resolve();
 
       const storage = {
         get: async (key, defaultValue = []) => {
@@ -2209,6 +2247,7 @@
       };
       
       const escapeHtml = (str) => String(str).replace(/[&<>"'\/]/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;', '/': '&#x2F;' }[s]));
+      const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
       
       const writeTextToClipboard = async (text) => {
         try {
@@ -2244,19 +2283,30 @@
       };
 
       const isValidTab = (tab) => {
-        if (!tab || typeof tab.url !== 'string' || !isValidUrl(tab.url)) return false;
-        const titleOk = ('title' in tab) ? typeof tab.title === 'string' : true;
-        const pinnedOk = ('pinned' in tab) ? typeof tab.pinned === 'boolean' : true;
-        const groupOk = !('groupId' in tab) || typeof tab.groupId === 'number';
-        return titleOk && pinnedOk && groupOk;
+        if (!tab || typeof tab !== 'object' || Array.isArray(tab) || typeof tab.url !== 'string' || !isValidUrl(tab.url)) return false;
+        const titleOk = !hasOwn(tab, 'title') || typeof tab.title === 'string';
+        const pinnedOk = !hasOwn(tab, 'pinned') || typeof tab.pinned === 'boolean';
+        const groupOk = !hasOwn(tab, 'groupId') || Number.isInteger(tab.groupId);
+        const windowOk = !hasOwn(tab, 'windowId') || Number.isInteger(tab.windowId);
+        const groupInfo = tab.groupInfo;
+        const groupInfoOk = !hasOwn(tab, 'groupInfo') || groupInfo === null || (
+          groupInfo && typeof groupInfo === 'object' && !Array.isArray(groupInfo) &&
+          (!hasOwn(groupInfo, 'title') || typeof groupInfo.title === 'string') &&
+          (!hasOwn(groupInfo, 'color') || typeof groupInfo.color === 'string') &&
+          (!hasOwn(groupInfo, 'collapsed') || typeof groupInfo.collapsed === 'boolean')
+        );
+        return titleOk && pinnedOk && groupOk && windowOk && groupInfoOk;
       };
 
       const isValidSession = (session) => {
         return session &&
+          typeof session === 'object' &&
+          !Array.isArray(session) &&
           (typeof session.id === 'number' || typeof session.id === 'string') &&
           typeof session.name === 'string' &&
-          session.name.length > 0 &&
+          session.name.trim().length > 0 &&
           session.name.length <= CONSTANTS.UI.SESSION_NAME_MAX_LENGTH &&
+          (!hasOwn(session, 'isPinned') || typeof session.isPinned === 'boolean') &&
           Array.isArray(session.tabs) &&
           session.tabs.length > 0 &&
           session.tabs.every(isValidTab);
@@ -2274,8 +2324,9 @@
         }
       });
 
-      const isDuplicateSessionName = (name, excludeId = null) => allSessions.some(s => String(s.id) !== String(excludeId) && s.name === name);
-	  const generateUniqueId = () => `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+      const isDuplicateSessionName = (name, excludeId = null, sessions = allSessions) =>
+        sessions.some(s => String(s.id) !== String(excludeId) && s.name === name);
+      const generateUniqueId = () => `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 
       const findSessionById = (id) => allSessions.find(s => String(s.id) === String(id));
       const findSessionIndexById = (id) => allSessions.findIndex(s => String(s.id) === String(id));
@@ -2394,28 +2445,64 @@
         return item;
       };
 
-      const updateAndSaveSessions = async (updateFunction, { errorMessagePrefix }) => {
-        const originalSessions = JSON.parse(JSON.stringify(allSessions));
+      const enqueueSessionMutation = (operation) => {
+        const queuedOperation = sessionMutationQueue
+          .catch(() => {})
+          .then(operation);
+        sessionMutationQueue = queuedOperation.catch(() => {});
+        return queuedOperation;
+      };
+
+      const mutateAndPersistSessions = (mutator) => enqueueSessionMutation(async () => {
+        const persistedSessions = normalizeSessions(
+          await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, [])
+        );
+        const workingSessions = JSON.parse(JSON.stringify(persistedSessions));
+
         try {
-            const successMessage = await updateFunction();
-            if (successMessage === null) return; 
-            await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, allSessions);
+          const result = await mutator(workingSessions);
+          if (result?.skipSave) {
+            allSessions = persistedSessions;
             renderSessions();
-            if (successMessage) showToast(successMessage);
+            return result;
+          }
+
+          await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, workingSessions);
+          allSessions = workingSessions;
+          renderSessions();
+          return result;
+        } catch (error) {
+          allSessions = persistedSessions;
+          renderSessions();
+          throw error;
+        }
+      });
+
+      const updateAndSaveSessions = async (updateFunction, { errorMessagePrefix }) => {
+        try {
+          const result = await mutateAndPersistSessions(async (sessions) => {
+            const successMessage = await updateFunction(sessions);
+            if (successMessage === null) {
+              return { skipSave: true, successMessage: null };
+            }
+            return { successMessage };
+          });
+          if (result?.successMessage) showToast(result.successMessage);
+          return !result?.skipSave;
         } catch (e) {
-            allSessions = originalSessions;
-            renderSessions();
-            showToast(`❌ ${errorMessagePrefix}: ${escapeHtml(e.message)}`);
+          showToast(`❌ ${errorMessagePrefix}: ${escapeHtml(e.message)}`);
+          return false;
         }
       };
 
-      const getTabsToSave = async (scope) => {
+      const getTabsSnapshot = async (scope) => {
         try {
           const queryInfo = scope === CONSTANTS.SAVE_SCOPES.CURRENT_WINDOW
             ? { currentWindow: true }
             : {};
           const tabs = await chrome.tabs.query(queryInfo);
-          if (tabs.length === 0) return [];
+          if (tabs.length === 0) return { tabs: [], closingCandidates: [] };
+
           const windows = await chrome.windows.getAll();
           let allTabGroups = [];
           try {
@@ -2423,18 +2510,30 @@
           } catch (e) {
             showToast(CONSTANTS.MESSAGES.GET_TAB_GROUPS_FAILED);
           }
+
           const validTabs = tabs.filter(tab => tab.url && isValidUrl(tab.url));
-          return validTabs.map(tab => ({ 
-            url: tab.url, title: tab.title, pinned: tab.pinned, 
-            groupId: tab.groupId,
-            groupInfo: tab.groupId > -1 ? allTabGroups.find(g => g.id === tab.groupId) : null,
-            windowId: tab.windowId
-          }));
+          return {
+            tabs: validTabs.map(tab => ({
+              url: tab.url,
+              title: typeof tab.title === 'string' ? tab.title : '',
+              pinned: Boolean(tab.pinned),
+              groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
+              groupInfo: Number.isInteger(tab.groupId) && tab.groupId > -1
+                ? allTabGroups.find(g => g.id === tab.groupId) || null
+                : null,
+              windowId: Number.isInteger(tab.windowId) ? tab.windowId : undefined
+            })),
+            closingCandidates: validTabs
+              .filter(tab => Number.isInteger(tab.id))
+              .map(tab => ({ id: tab.id, url: tab.url }))
+          };
         } catch (error) {
           showToast(CONSTANTS.MESSAGES.GET_TABS_FAILED);
-          return [];
+          return { tabs: [], closingCandidates: [] };
         }
       };
+
+      const getTabsToSave = async (scope) => (await getTabsSnapshot(scope)).tabs;
       
       const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
 
@@ -2519,90 +2618,158 @@
         showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
       };
 
-      const generateUniqueSessionName = (baseName) => {
-        if (!isDuplicateSessionName(baseName)) return baseName;
-        let counter = 2, newName = `${baseName} (${counter})`;
-        while (isDuplicateSessionName(newName)) newName = `${baseName} (${++counter})`;
-        showToast(CONSTANTS.MESSAGES.createDuplicateNameWarning(newName));
+      const generateUniqueSessionName = (
+        baseName,
+        sessions = allSessions,
+        { showWarning = false } = {}
+      ) => {
+        const maxLength = CONSTANTS.UI.SESSION_NAME_MAX_LENGTH;
+        const fallbackName = `세션 ${formatDate(Date.now())}`;
+        const normalizedBase = String(baseName ?? '').trim().slice(0, maxLength) || fallbackName.slice(0, maxLength);
+
+        if (!isDuplicateSessionName(normalizedBase, null, sessions)) return normalizedBase;
+
+        let counter = 2;
+        let newName;
+        do {
+          const suffix = ` (${counter++})`;
+          const availableLength = Math.max(1, maxLength - suffix.length);
+          const truncatedBase = normalizedBase.slice(0, availableLength).trimEnd();
+          newName = `${truncatedBase}${suffix}`;
+        } while (isDuplicateSessionName(newName, null, sessions));
+
+        if (showWarning) showToast(CONSTANTS.MESSAGES.createDuplicateNameWarning(newName));
         return newName;
       };
 
+      const generateUniqueSessionId = (sessions) => {
+        const existingIds = new Set(sessions.map(session => String(session.id)));
+        let id;
+        do {
+          id = generateUniqueId();
+        } while (existingIds.has(String(id)));
+        return id;
+      };
+
       const handleSaveSession = async (scope, overwriteId = null, overwriteName = null) => {
+        const requestedName = sessionInput.value.trim();
         const tabs = await getTabsToSave(scope);
         if (tabs.length === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
         }
-        await updateAndSaveSessions(
-          () => {
+
+        const saved = await updateAndSaveSessions(
+          (sessions) => {
             if (overwriteId) {
-              const sessionIndex = allSessions.findIndex(s => String(s.id) === String(overwriteId));
+              const sessionIndex = sessions.findIndex(s => String(s.id) === String(overwriteId));
               if (sessionIndex === -1) {
                 showToast(CONSTANTS.MESSAGES.UPDATE_SESSION_NOT_FOUND);
                 return null;
               }
               const name = overwriteName;
-              allSessions[sessionIndex] = { ...allSessions[sessionIndex], tabs: tabs, name: name };
+              sessions[sessionIndex] = { ...sessions[sessionIndex], tabs, name };
               return CONSTANTS.MESSAGES.createSessionUpdatedMessage(name);
-            } else {
-              let name = sessionInput.value.trim();
-              if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`.trim();
-              name = generateUniqueSessionName(name);
-              allSessions.push({ id: generateUniqueId(), name, tabs, isPinned: false });
-              sessionInput.value = '';
-              return CONSTANTS.MESSAGES.createSessionSavedMessage(name);
             }
+
+            let name = requestedName;
+            if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`.trim();
+            name = generateUniqueSessionName(name, sessions);
+            sessions.push({ id: generateUniqueSessionId(sessions), name, tabs, isPinned: false });
+            return CONSTANTS.MESSAGES.createSessionSavedMessage(name);
           },
           { errorMessagePrefix: CONSTANTS.MESSAGES.SESSION_SAVE_FAILED }
         );
+
+        // Preserve the typed name on a failed write. A successful clear also
+        // changes the current search filter, so refresh the list immediately.
+        if (saved && !overwriteId) {
+          sessionInput.value = '';
+          renderSessions();
+        }
       };
 
       const handleSaveAndCloseAll = async () => {
-        const tabsForSession = await getTabsToSave(CONSTANTS.SAVE_SCOPES.ALL_WINDOWS);
-        if (tabsForSession.length === 0) {
-            showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
-            return;
+        const initialSnapshot = await getTabsSnapshot(CONSTANTS.SAVE_SCOPES.ALL_WINDOWS);
+        if (initialSnapshot.tabs.length === 0) {
+          showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
+          return;
         }
 
-        if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(tabsForSession.length))) {
-            return;
+        if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(initialSnapshot.tabs.length))) return;
+
+        // Re-capture after confirmation. Anything opened after this snapshot is
+        // neither part of the saved session nor eligible for automatic closing.
+        const snapshot = await getTabsSnapshot(CONSTANTS.SAVE_SCOPES.ALL_WINDOWS);
+        if (snapshot.tabs.length === 0) {
+          showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
+          return;
         }
 
-        let name = sessionInput.value.trim();
-        if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`.trim();
-        name = generateUniqueSessionName(name);
-
-        const originalInputValue = sessionInput.value;
-        const originalSessions = [...allSessions];
-        const nextSessions = [...allSessions, { id: generateUniqueId(), name, tabs: tabsForSession, isPinned: false }];
-
+        const requestedName = sessionInput.value.trim();
+        let savedSession;
         try {
-            allSessions = nextSessions;
-            await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, allSessions);
-            renderSessions();
-            sessionInput.value = '';
+          savedSession = await mutateAndPersistSessions((sessions) => {
+            let name = requestedName;
+            if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`.trim();
+            name = generateUniqueSessionName(name, sessions);
+            sessions.push({
+              id: generateUniqueSessionId(sessions),
+              name, tabs: snapshot.tabs, isPinned: false
+            });
+            return { name };
+          });
+          sessionInput.value = '';
+          renderSessions();
         } catch (saveError) {
-            allSessions = originalSessions;
-            renderSessions();
-            sessionInput.value = originalInputValue;
-            showToast(`❌ ${CONSTANTS.MESSAGES.SESSION_SAVE_FAILED}: ${escapeHtml(saveError.message)}`);
-            return;
+          showToast(`❌ ${CONSTANTS.MESSAGES.SESSION_SAVE_FAILED}: ${escapeHtml(saveError.message)}`);
+          return;
         }
 
+        const name = savedSession.name;
         try {
-            const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-            const allTabs = await chrome.tabs.query({});
-            const tabIdsToClose = allTabs
-                .filter(t => t.id !== activeTab?.id && t.url && isValidUrl(t.url))
-                .map(t => t.id);
+          const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+          const protectedTabIds = new Set(Number.isInteger(activeTab?.id) ? [activeTab.id] : []);
+          const verifiedIds = [];
+          let changedCount = 0;
 
-            if (tabIdsToClose.length > 0) {
-                await chrome.tabs.remove(tabIdsToClose);
+          for (const candidate of snapshot.closingCandidates) {
+            if (protectedTabIds.has(candidate.id)) continue;
+            try {
+              const liveTab = await chrome.tabs.get(candidate.id);
+              if (liveTab.url === candidate.url && isValidUrl(liveTab.url)) {
+                verifiedIds.push(candidate.id);
+              } else {
+                changedCount++;
+              }
+            } catch (_) {
+              // Already closed by the user; no action is needed.
             }
-            showToast(CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, tabIdsToClose.length));
+          }
+
+          // Protect a tab selected while verification was running.
+          const [latestActiveTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+          if (Number.isInteger(latestActiveTab?.id)) protectedTabIds.add(latestActiveTab.id);
+          const tabIdsToClose = verifiedIds.filter(id => !protectedTabIds.has(id));
+
+          const closeResults = await Promise.allSettled(
+            tabIdsToClose.map(tabId => chrome.tabs.remove(tabId))
+          );
+          const closedCount = closeResults.filter(result => result.status === 'fulfilled').length;
+          const failedCount = closeResults.length - closedCount;
+          const notClosedCount = changedCount + failedCount;
+
+          if (notClosedCount > 0) {
+            showToast(
+              CONSTANTS.MESSAGES.SESSION_SAVED_TABS_PARTIALLY_CLOSED(name, closedCount, notClosedCount),
+              CONSTANTS.UI.TOAST_DURATION * 1.5
+            );
+          } else {
+            showToast(CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, closedCount));
+          }
         } catch (closeError) {
-            console.error("Error closing tabs:", closeError);
-            showToast(CONSTANTS.MESSAGES.SESSION_SAVED_TABS_CLOSE_FAILED(name), CONSTANTS.UI.TOAST_DURATION * 1.5);
+          console.error('Error closing tabs:', closeError);
+          showToast(CONSTANTS.MESSAGES.SESSION_SAVED_TABS_CLOSE_FAILED(name), CONSTANTS.UI.TOAST_DURATION * 1.5);
         }
       };
       
@@ -2631,42 +2798,53 @@
       };
 
       const handleDeleteSession = async (sessionId) => {
-        const sessionIndex = findSessionIndexById(sessionId);
-        if (sessionIndex === -1) return;
-        const sessionToDelete = allSessions[sessionIndex];
-        allSessions.splice(sessionIndex, 1);
+        let deletionResult;
         try {
-            await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, allSessions);
-            renderSessions();
-            const undoCallback = async () => {
-                const sessionsBeforeUndo = [...allSessions];
-                allSessions.push(sessionToDelete);
-                try {
-                    await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, allSessions);
-                    renderSessions();
-                    showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
-                } catch (e) {
-                    allSessions = sessionsBeforeUndo;
-                    renderSessions();
-                    showToast(`❌ 복원 실패: ${escapeHtml(e.message)}`);
-                }
-            };
-            showToast(
-                CONSTANTS.MESSAGES.createSessionDeletedMessage(sessionToDelete.name), 
-                CONSTANTS.UI.TOAST_DURATION, 
-                undoCallback
-            );
+          deletionResult = await mutateAndPersistSessions((sessions) => {
+            const sessionIndex = sessions.findIndex(s => String(s.id) === String(sessionId));
+            if (sessionIndex === -1) return { skipSave: true, missing: true };
+            const [session] = sessions.splice(sessionIndex, 1);
+            return { session, sessionIndex };
+          });
         } catch (e) {
-            allSessions.splice(sessionIndex, 0, sessionToDelete);
-            renderSessions();
-            showToast(`❌ ${CONSTANTS.MESSAGES.DELETE_FAILED}: ${escapeHtml(e.message)}`);
+          showToast(`❌ ${CONSTANTS.MESSAGES.DELETE_FAILED}: ${escapeHtml(e.message)}`);
+          return;
         }
+
+        if (deletionResult?.missing || !deletionResult?.session) {
+          showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
+          return;
+        }
+
+        const { session: sessionToDelete, sessionIndex } = deletionResult;
+        const undoCallback = async () => {
+          try {
+            await mutateAndPersistSessions((sessions) => {
+              const restoredSession = JSON.parse(JSON.stringify(sessionToDelete));
+              if (sessions.some(session => String(session.id) === String(restoredSession.id))) {
+                restoredSession.id = generateUniqueSessionId(sessions);
+              }
+              restoredSession.name = generateUniqueSessionName(restoredSession.name, sessions);
+              sessions.splice(Math.min(sessionIndex, sessions.length), 0, restoredSession);
+              return { restoredName: restoredSession.name };
+            });
+            showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
+          } catch (e) {
+            showToast(`❌ 복원 실패: ${escapeHtml(e.message)}`);
+          }
+        };
+
+        showToast(
+          CONSTANTS.MESSAGES.createSessionDeletedMessage(sessionToDelete.name),
+          CONSTANTS.UI.TOAST_DURATION,
+          undoCallback
+        );
       };
       
       const handleRenameSession = async (sessionId) => {
         const sessionData = findSessionDataOrShowError(sessionId);
         if (!sessionData) return;
-        const { session, index: sessionIndex } = sessionData;
+        const { session } = sessionData;
         const originalName = session.name;
         const newName = prompt('새 세션 이름을 입력하세요:', originalName);
         if (newName === null) return;
@@ -2684,30 +2862,46 @@
           showToast(CONSTANTS.MESSAGES.createNameAlreadyExistsMessage(trimmedNewName));
           return;
         }
-        await updateAndSaveSessions(
-            () => {
-                allSessions[sessionIndex].name = trimmedNewName;
-                return CONSTANTS.MESSAGES.createNameChangedMessage(trimmedNewName);
-            },
-            { errorMessagePrefix: CONSTANTS.MESSAGES.RENAME_FAILED }
+
+        const renamed = await updateAndSaveSessions(
+          (sessions) => {
+            const sessionIndex = sessions.findIndex(s => String(s.id) === String(sessionId));
+            if (sessionIndex === -1) {
+              showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
+              return null;
+            }
+            if (isDuplicateSessionName(trimmedNewName, sessionId, sessions)) {
+              showToast(CONSTANTS.MESSAGES.createNameAlreadyExistsMessage(trimmedNewName));
+              return null;
+            }
+            sessions[sessionIndex].name = trimmedNewName;
+            return CONSTANTS.MESSAGES.createNameChangedMessage(trimmedNewName);
+          },
+          { errorMessagePrefix: CONSTANTS.MESSAGES.RENAME_FAILED }
         );
-        if (sessionInput.value.trim()) {
+        if (renamed && sessionInput.value.trim()) {
           sessionInput.value = '';
           renderSessions();
         }
       };
 
       const handlePinSession = async (sessionId) => {
-        const sessionData = findSessionDataOrShowError(sessionId);
-        if (!sessionData) return;
-        const { index: sessionIndex } = sessionData;
+        if (!findSessionById(sessionId)) {
+          showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
+          return;
+        }
         await updateAndSaveSessions(
-            () => {
-                const session = allSessions[sessionIndex];
-                session.isPinned = !session.isPinned;
-                return session.isPinned ? CONSTANTS.MESSAGES.SESSION_PINNED : CONSTANTS.MESSAGES.SESSION_UNPINNED;
-            },
-            { errorMessagePrefix: CONSTANTS.MESSAGES.PIN_FAILED }
+          (sessions) => {
+            const sessionIndex = sessions.findIndex(s => String(s.id) === String(sessionId));
+            if (sessionIndex === -1) {
+              showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
+              return null;
+            }
+            const session = sessions[sessionIndex];
+            session.isPinned = !session.isPinned;
+            return session.isPinned ? CONSTANTS.MESSAGES.SESSION_PINNED : CONSTANTS.MESSAGES.SESSION_UNPINNED;
+          },
+          { errorMessagePrefix: CONSTANTS.MESSAGES.PIN_FAILED }
         );
       };
       
@@ -2754,52 +2948,50 @@
         if (!file) return;
         if (file.size > 10 * 1024 * 1024) {
           showToast(CONSTANTS.MESSAGES.IMPORT_FILE_TOO_LARGE);
-          return importFileInput.value = '';
+          importFileInput.value = '';
+          return;
         }
+
         const reader = new FileReader();
         reader.onerror = () => {
-            showToast(CONSTANTS.MESSAGES.IMPORT_FILE_READ_ERROR);
-            importFileInput.value = '';
+          showToast(CONSTANTS.MESSAGES.IMPORT_FILE_READ_ERROR);
+          importFileInput.value = '';
         };
         reader.onload = async (e) => {
-          const sessionsBeforeImport = allSessions;
           try {
             const imported = JSON.parse(e.target.result);
-            if (!Array.isArray(imported)) throw new Error("Invalid format");
-            const valid = [];
-            for (const s of imported) {
-                if (isValidSession(s)) {
-                    if (!s.hasOwnProperty('isPinned')) s.isPinned = false;
-                    valid.push(s);
-                }
-            }
+            if (!Array.isArray(imported)) throw new Error('Invalid format');
+
+            const valid = imported
+              .filter(isValidSession)
+              .map(session => {
+                const clonedSession = JSON.parse(JSON.stringify(session));
+                if (!hasOwn(clonedSession, 'isPinned')) clonedSession.isPinned = false;
+                return clonedSession;
+              });
+
             if (valid.length === 0) throw new Error(CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS);
-            const combinedSessions = [...allSessions];
-            const combinedSessionNames = new Set(allSessions.map(s => s.name));
-            const combinedSessionIds = new Set(allSessions.map(s => String(s.id)));
-            for (const sessionToImport of valid) {
-                if (combinedSessionIds.has(String(sessionToImport.id))) {
-                    sessionToImport.id = generateUniqueId();
+
+            const result = await mutateAndPersistSessions((sessions) => {
+              for (const importedSession of valid) {
+                const sessionToImport = JSON.parse(JSON.stringify(importedSession));
+                if (sessions.some(session => String(session.id) === String(sessionToImport.id))) {
+                  sessionToImport.id = generateUniqueSessionId(sessions);
                 }
-                let newName = sessionToImport.name;
-                while (combinedSessionNames.has(newName)) {
-                     const match = newName.match(/^(.*) \((\d+)\)$/);
-                     if (match) newName = `${match[1]} (${parseInt(match[2], 10) + 1})`;
-                     else newName = `${newName} (2)`;
-                }
-                sessionToImport.name = newName;
-                combinedSessions.push(sessionToImport);
-                combinedSessionNames.add(sessionToImport.name);
-                combinedSessionIds.add(String(sessionToImport.id));
-            }
-            allSessions = combinedSessions;
-            await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, allSessions);
-            renderSessions();
-            showToast(CONSTANTS.MESSAGES.createImportSuccessMessage(valid.length));
+                sessionToImport.name = generateUniqueSessionName(sessionToImport.name, sessions);
+                sessions.push(sessionToImport);
+              }
+              return { importedCount: valid.length };
+            });
+
+            showToast(CONSTANTS.MESSAGES.createImportSuccessMessage(result.importedCount));
           } catch (error) {
-            allSessions = sessionsBeforeImport;
-            renderSessions();
-            showToast(error.message.startsWith('저장 공간') ? `❌ ${escapeHtml(error.message)}` : CONSTANTS.MESSAGES.IMPORT_INVALID_FORMAT);
+            const message = String(error?.message || '');
+            showToast(
+              message.startsWith('저장 공간')
+                ? `❌ ${escapeHtml(message)}`
+                : CONSTANTS.MESSAGES.IMPORT_INVALID_FORMAT
+            );
           } finally {
             importFileInput.value = '';
           }

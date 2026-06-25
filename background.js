@@ -1014,12 +1014,26 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === 'openTabsInNewTab' && Array.isArray(message.urls)) {
-    message.urls.forEach(url => {
-        if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
-            chrome.tabs.create({ url: url, active: false });
-        }
-    });
-    return false;
+    const urls = [...new Set(message.urls.flatMap(rawUrl => {
+      if (typeof rawUrl !== 'string') return [];
+      try {
+        const parsed = new URL(rawUrl.trim());
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? [parsed.href] : [];
+      } catch (_) {
+        return [];
+      }
+    }))];
+
+    Promise.allSettled(urls.map(url => chrome.tabs.create({ url, active: false })))
+      .then(results => {
+        const opened = results.filter(result => result.status === 'fulfilled').length;
+        const failed = results.length - opened;
+        sendResponse({ ok: failed === 0, opened, failed });
+      })
+      .catch(error => {
+        sendResponse({ ok: false, opened: 0, failed: urls.length, error: error?.message || String(error) });
+      });
+    return true;
   }
     
   if (message?.action === PERFORM_GESTURE_ACTION && message.gesture && sender?.tab?.id != null) {

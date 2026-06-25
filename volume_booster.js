@@ -251,12 +251,25 @@
             CONFIG.UI
         );
         #debouncedProcessNewNodes;
+        #pendingAddedNodes = new Set();
 
         constructor() {
             this.#debouncedProcessNewNodes = debounce(
-                (nodes) => this.#audioProcessor.processNewNodes(nodes, this.#isActivated, CONFIG.VOLUME_MULTIPLIER),
+                () => this.#flushPendingAddedNodes(),
                 CONFIG.DEBOUNCE_DELAY
             );
+        }
+
+        #queueAddedNodes(nodes) {
+            for (const node of nodes) this.#pendingAddedNodes.add(node);
+            this.#debouncedProcessNewNodes();
+        }
+
+        async #flushPendingAddedNodes() {
+            if (this.#pendingAddedNodes.size === 0) return;
+            const nodes = Array.from(this.#pendingAddedNodes);
+            this.#pendingAddedNodes.clear();
+            await this.#audioProcessor.processNewNodes(nodes, this.#isActivated, CONFIG.VOLUME_MULTIPLIER);
         }
 
         init() {
@@ -301,7 +314,9 @@
                 }
 
                 if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
-                if (addedNodes.length > 0) this.#debouncedProcessNewNodes(addedNodes);
+                // Accumulate every mutation batch. A conventional debounce would
+                // retain only the final batch and leave earlier dynamic media unboosted.
+                if (addedNodes.length > 0) this.#queueAddedNodes(addedNodes);
             });
 
             observer.observe(document.documentElement, { childList: true, subtree: true });

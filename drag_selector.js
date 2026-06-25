@@ -292,9 +292,11 @@
 
         #sendOpenTabsMessage(urls) {
             try {
-                chrome.runtime.sendMessage({ action: 'openTabsInNewTab', urls }, () => {
+                chrome.runtime.sendMessage({ action: 'openTabsInNewTab', urls }, (response) => {
                     if (chrome.runtime.lastError) {
                         console.warn('LunaTools: 탭 열기 메시지 전송 실패', chrome.runtime.lastError.message);
+                    } else if (response && response.failed > 0) {
+                        console.warn(`LunaTools: ${response.failed}개 탭을 열지 못했습니다.`);
                     }
                 });
             } catch (error) {
