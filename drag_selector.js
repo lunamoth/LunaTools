@@ -305,8 +305,15 @@
                 chrome.runtime.sendMessage({ action: 'openTabsInNewTab', urls }, (response) => {
                     if (chrome.runtime.lastError) {
                         console.warn('LunaTools: 탭 열기 메시지 전송 실패', chrome.runtime.lastError.message);
-                    } else if (response && response.failed > 0) {
-                        console.warn(`LunaTools: ${response.failed}개 탭을 열지 못했습니다.`);
+                        return;
+                    }
+
+                    if (!response) return;
+
+                    const failed = Number(response.failed || 0);
+                    const skipped = Number(response.skipped || 0);
+                    if (failed > 0 || skipped > 0) {
+                        console.warn(`LunaTools: 탭 열기 결과 - 실패 ${failed}개, 제외 ${skipped}개.`);
                     }
                 });
             } catch (error) {

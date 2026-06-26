@@ -89,7 +89,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 interval: 2, removeDuplicates: true, focusLock: true, delayLoading: false, sortUrlsBeforeRun: true, playSound: true
             },
             FADE_DURATION: 300,
-            MAX_IMPORT_FILE_SIZE_BYTES: 10 * 1024 * 1024
+            MAX_IMPORT_FILE_SIZE_BYTES: 10 * 1024 * 1024,
+            MAX_URLS_PER_RUN: 300,
+            MAX_URL_LENGTH: 2048
         };
 
         const UI = Object.keys(CONFIG.SELECTOR).reduce((acc, key) => {
@@ -158,6 +160,84 @@ document.addEventListener('DOMContentLoaded', function() {
             "'": '&#39;',
             '`': '&#96;'
         }[ch]));
+
+        const OPENABLE_URL_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+
+        const normalizeUrlForOpening = (rawUrl) => {
+            if (typeof rawUrl !== 'string') return null;
+            const trimmed = rawUrl.trim();
+            if (!trimmed || trimmed.length > CONFIG.MAX_URL_LENGTH) return null;
+
+            const candidate = /^(?:https?:\/\/|file:\/\/)/i.test(trimmed) ? trimmed : `https://${trimmed}`;
+            try {
+                const parsed = new URL(candidate);
+                return OPENABLE_URL_PROTOCOLS.has(parsed.protocol) ? parsed.href : null;
+            } catch (_) {
+                return null;
+            }
+        };
+
+        const prepareUrlsForRun = (rawUrls) => {
+            const prepared = [];
+            const stats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
+
+            for (const rawUrl of rawUrls) {
+                if (typeof rawUrl !== 'string') {
+                    stats.invalid += 1;
+                    continue;
+                }
+
+                const trimmed = rawUrl.trim();
+                if (!trimmed) continue;
+                if (trimmed.length > CONFIG.MAX_URL_LENGTH) {
+                    stats.tooLong += 1;
+                    continue;
+                }
+
+                const normalizedUrl = normalizeUrlForOpening(trimmed);
+                if (!normalizedUrl) {
+                    stats.invalid += 1;
+                    continue;
+                }
+                prepared.push(normalizedUrl);
+            }
+
+            let urls = prepared;
+            if (UI.sortUrlsBeforeRunCheckbox && UI.sortUrlsBeforeRunCheckbox.checked) {
+                urls = [...urls].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+            }
+
+            if (UI.removeDuplicatesCheckbox && UI.removeDuplicatesCheckbox.checked) {
+                const deduplicated = [];
+                const seenUrls = new Set();
+                for (const url of urls) {
+                    if (seenUrls.has(url)) {
+                        stats.duplicate += 1;
+                        continue;
+                    }
+                    seenUrls.add(url);
+                    deduplicated.push(url);
+                }
+                urls = deduplicated;
+            }
+
+            if (urls.length > CONFIG.MAX_URLS_PER_RUN) {
+                stats.overLimit = urls.length - CONFIG.MAX_URLS_PER_RUN;
+                urls = urls.slice(0, CONFIG.MAX_URLS_PER_RUN);
+            }
+
+            return { urls, ...stats };
+        };
+
+        const showSkippedUrlNotice = ({ invalid = 0, tooLong = 0, overLimit = 0 }) => {
+            const parts = [];
+            if (invalid > 0) parts.push(`형식 오류 ${invalid}개`);
+            if (tooLong > 0) parts.push(`길이 초과 ${tooLong}개`);
+            if (overLimit > 0) parts.push(`최대 ${CONFIG.MAX_URLS_PER_RUN}개 초과 ${overLimit}개`);
+            if (parts.length > 0) {
+                Toast.show(`일부 URL을 제외했습니다. (${parts.join(', ')})`, 'info', 6000);
+            }
+        };
 
         const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
         const isReservedObjectKey = (key) => RESERVED_OBJECT_KEYS.has(String(key));
@@ -1679,7 +1759,6 @@ document.addEventListener('DOMContentLoaded', function() {
             finalizeProcessedQueueItem(previousSpan);
 
             const url = state.urlsToProcess[state.currentUrlIndex];
-            const fullUrl = (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://')) ? url : 'https://' + url;
 
             const currentSpan = UI.urlQueue && UI.urlQueue.children[state.currentUrlIndex] ? UI.urlQueue.children[state.currentUrlIndex] : null;
             if (currentSpan) {
@@ -1688,7 +1767,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             try {
-                const urlToOpen = new URL(fullUrl).href;
+                const urlToOpen = normalizeUrlForOpening(url);
+                if (!urlToOpen) throw new Error('지원하지 않는 URL 형식입니다.');
+
                 if (UI.delayLoadingCheckbox && UI.delayLoadingCheckbox.checked) {
                     await createAndDiscardTab(urlToOpen);
                 } else {
@@ -1731,20 +1812,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const startProcess = () => {
             if (!UI.urlInput) return;
-            let urls = UI.urlInput.value.split('\n').map(u => u.trim()).filter(Boolean);
+            const rawUrls = UI.urlInput.value.split('\n');
+            const prepared = prepareUrlsForRun(rawUrls);
 
-            if (UI.sortUrlsBeforeRunCheckbox && UI.sortUrlsBeforeRunCheckbox.checked) {
-                urls.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-            }
-            if (UI.removeDuplicatesCheckbox && UI.removeDuplicatesCheckbox.checked) {
-                urls = [...new Set(urls)];
-            }
-
-            state.urlsToProcess = urls;
+            state.urlsToProcess = prepared.urls;
             if (state.urlsToProcess.length === 0) {
                 resetToIdle(CONFIG.TEXT.EMPTY_INPUT, true);
+                showSkippedUrlNotice(prepared);
                 return;
             }
+
+            showSkippedUrlNotice(prepared);
 
             clearTimeout(state.intervalId);
             state.intervalId = null;
@@ -2097,13 +2175,22 @@ document.addEventListener('DOMContentLoaded', function() {
             // Expose a public method for TabHaiku integration
             window.lunaToolsURLOpener = {
                 openUrls: (urls) => {
+                    const prepared = prepareUrlsForRun(Array.isArray(urls) ? urls : []);
+                    if (prepared.urls.length === 0) {
+                        showSkippedUrlNotice(prepared);
+                        Toast.show('열 수 있는 유효한 URL이 없습니다.', 'error');
+                        return;
+                    }
+
+                    showSkippedUrlNotice(prepared);
                     if (UI.urlInput) {
-                        UI.urlInput.value = urls.join('\n');
+                        UI.urlInput.value = prepared.urls.join('\n');
                         // BUG FIX: Manually dispatch input event to update the state of the app
                         UI.urlInput.dispatchEvent(new Event('input', { bubbles: true }));
                     }
 
-                    document.querySelector('.tab-button[data-tab="multi-url-opener"]').click();
+                    const multiUrlTabButton = document.querySelector('.tab-button[data-tab="multi-url-opener"]');
+                    if (multiUrlTabButton) multiUrlTabButton.click();
                     
                     // Allow UI to update before clicking
                     setTimeout(() => {

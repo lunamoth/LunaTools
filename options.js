@@ -147,15 +147,25 @@ document.addEventListener('DOMContentLoaded', () => {
         return Object.fromEntries(Object.entries(normalized));
     };
 
-    const isSafeSessionUrl = (url) => {
-        if (typeof url !== 'string') return false;
+    const normalizeSafeSessionUrl = (url) => {
+        if (typeof url !== 'string') return null;
         try {
-            const parsed = new URL(url);
-            return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+            const parsed = new URL(url.trim());
+            return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : null;
         } catch (_) {
-            return false;
+            return null;
         }
     };
+
+    const isValidSessionGroupInfo = (value) => (
+        value === null ||
+        (
+            isRecord(value) &&
+            (!hasOwn(value, 'title') || typeof value.title === 'string') &&
+            (!hasOwn(value, 'color') || typeof value.color === 'string') &&
+            (!hasOwn(value, 'collapsed') || typeof value.collapsed === 'boolean')
+        )
+    );
 
     const normalizeSessions = (value) => {
         if (!Array.isArray(value)) {
@@ -163,11 +173,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         return value.map((session, sessionIndex) => {
+            const sessionName = typeof session?.name === 'string' ? session.name.trim() : '';
             const validSession = isRecord(session) &&
                 (typeof session.id === 'number' || typeof session.id === 'string') &&
-                typeof session.name === 'string' &&
-                session.name.length > 0 &&
-                session.name.length <= 200 &&
+                sessionName.length > 0 &&
+                sessionName.length <= 200 &&
                 Array.isArray(session.tabs) &&
                 session.tabs.length > 0;
 
@@ -175,24 +185,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(`${sessionIndex + 1}번째 세션의 형식이 올바르지 않습니다.`);
             }
 
-            for (const [tabIndex, tab] of session.tabs.entries()) {
-                const validTab = isRecord(tab) &&
-                    isSafeSessionUrl(tab.url) &&
+            const normalizedTabs = session.tabs.map((tab, tabIndex) => {
+                if (!isRecord(tab)) {
+                    throw new Error(`${sessionIndex + 1}번째 세션의 ${tabIndex + 1}번째 탭 데이터가 올바르지 않습니다.`);
+                }
+
+                const normalizedUrl = normalizeSafeSessionUrl(tab.url);
+                const validTab = normalizedUrl &&
                     (!hasOwn(tab, 'title') || typeof tab.title === 'string') &&
                     (!hasOwn(tab, 'pinned') || typeof tab.pinned === 'boolean') &&
-                    (!hasOwn(tab, 'groupId') || typeof tab.groupId === 'number') &&
-                    (!hasOwn(tab, 'windowId') || typeof tab.windowId === 'number');
+                    (!hasOwn(tab, 'groupId') || Number.isInteger(tab.groupId)) &&
+                    (!hasOwn(tab, 'windowId') || Number.isInteger(tab.windowId)) &&
+                    (!hasOwn(tab, 'groupInfo') || isValidSessionGroupInfo(tab.groupInfo));
 
                 if (!validTab) {
                     throw new Error(`${sessionIndex + 1}번째 세션의 ${tabIndex + 1}번째 탭 데이터가 올바르지 않습니다.`);
                 }
-            }
+
+                const normalizedTab = { url: normalizedUrl };
+                if (hasOwn(tab, 'title')) normalizedTab.title = tab.title;
+                if (hasOwn(tab, 'pinned')) normalizedTab.pinned = tab.pinned;
+                if (hasOwn(tab, 'groupId')) normalizedTab.groupId = tab.groupId;
+                if (hasOwn(tab, 'windowId')) normalizedTab.windowId = tab.windowId;
+                if (hasOwn(tab, 'groupInfo')) normalizedTab.groupInfo = cloneJsonValue(tab.groupInfo);
+                return normalizedTab;
+            });
 
             if (hasOwn(session, 'isPinned') && typeof session.isPinned !== 'boolean') {
                 throw new Error(`${sessionIndex + 1}번째 세션의 고정 상태가 올바르지 않습니다.`);
             }
 
-            return cloneJsonValue(session);
+            const normalizedSession = {
+                id: session.id,
+                name: sessionName,
+                tabs: normalizedTabs
+            };
+            if (hasOwn(session, 'isPinned')) normalizedSession.isPinned = session.isPinned;
+            return normalizedSession;
         });
     };
 

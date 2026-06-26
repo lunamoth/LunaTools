@@ -20,11 +20,67 @@ const FIXED_EURO_CONVERSION_RATES = Object.freeze({
 const CONTEXT_MENU_ID_MERGE_TABS = "lunaToolsMergeTabsContextMenu";
 const BADGE_ALERT_THRESHOLD = 100;
 const CURRENCY_CODE_REGEX = /^[A-Z]{3}$/;
+const MAX_OPEN_TABS_PER_MESSAGE = 100;
+const MAX_OPEN_TAB_URL_LENGTH = 2048;
+const SAFE_WEB_PROTOCOLS = new Set(['http:', 'https:']);
 
 let exchangeRateRefreshPromise = null;
 
 function normalizeCurrencyCode(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function normalizeOpenTabsRequestUrls(rawUrls) {
+  const urls = [];
+  const seenUrls = new Set();
+  const stats = { invalid: 0, duplicate: 0, overLimit: 0 };
+
+  for (const rawUrl of rawUrls) {
+    if (typeof rawUrl !== 'string') {
+      stats.invalid += 1;
+      continue;
+    }
+
+    const trimmed = rawUrl.trim();
+    if (!trimmed || trimmed.length > MAX_OPEN_TAB_URL_LENGTH) {
+      stats.invalid += 1;
+      continue;
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(trimmed);
+    } catch (_) {
+      stats.invalid += 1;
+      continue;
+    }
+
+    if (!SAFE_WEB_PROTOCOLS.has(parsed.protocol)) {
+      stats.invalid += 1;
+      continue;
+    }
+
+    if (seenUrls.has(parsed.href)) {
+      stats.duplicate += 1;
+      continue;
+    }
+
+    if (urls.length >= MAX_OPEN_TABS_PER_MESSAGE) {
+      stats.overLimit += 1;
+      continue;
+    }
+
+    seenUrls.add(parsed.href);
+    urls.push(parsed.href);
+  }
+
+  return {
+    urls,
+    invalid: stats.invalid,
+    duplicate: stats.duplicate,
+    overLimit: stats.overLimit,
+    skipped: stats.invalid + stats.duplicate + stats.overLimit
+  };
 }
 
 function isPositiveFiniteNumber(value) {
@@ -1076,24 +1132,53 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === 'openTabsInNewTab' && Array.isArray(message.urls)) {
-    const urls = [...new Set(message.urls.flatMap(rawUrl => {
-      if (typeof rawUrl !== 'string') return [];
-      try {
-        const parsed = new URL(rawUrl.trim());
-        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? [parsed.href] : [];
-      } catch (_) {
-        return [];
-      }
-    }))];
+    const request = normalizeOpenTabsRequestUrls(message.urls);
+    const { urls, skipped, invalid, duplicate, overLimit } = request;
+
+    if (urls.length === 0) {
+      sendResponse({
+        ok: false,
+        opened: 0,
+        failed: 0,
+        skipped,
+        invalid,
+        duplicate,
+        overLimit,
+        limit: MAX_OPEN_TABS_PER_MESSAGE,
+        error: 'No valid http/https URLs were provided.'
+      });
+      return false;
+    }
 
     Promise.allSettled(urls.map(url => chrome.tabs.create({ url, active: false })))
       .then(results => {
         const opened = results.filter(result => result.status === 'fulfilled').length;
         const failed = results.length - opened;
-        sendResponse({ ok: failed === 0, opened, failed });
+        sendResponse({
+          ok: failed === 0 && invalid === 0 && overLimit === 0,
+          opened,
+          failed,
+          skipped,
+          invalid,
+          duplicate,
+          overLimit,
+          requested: message.urls.length,
+          limit: MAX_OPEN_TABS_PER_MESSAGE
+        });
       })
       .catch(error => {
-        sendResponse({ ok: false, opened: 0, failed: urls.length, error: error?.message || String(error) });
+        sendResponse({
+          ok: false,
+          opened: 0,
+          failed: urls.length,
+          skipped,
+          invalid,
+          duplicate,
+          overLimit,
+          requested: message.urls.length,
+          limit: MAX_OPEN_TABS_PER_MESSAGE,
+          error: error?.message || String(error)
+        });
       });
     return true;
   }
