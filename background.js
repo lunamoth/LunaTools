@@ -30,37 +30,49 @@ function normalizeCurrencyCode(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function normalizeOpenTabUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return null;
+
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > MAX_OPEN_TAB_URL_LENGTH) return null;
+
+  const hasHttpScheme = /^https?:\/\//i.test(trimmed);
+  const protocolMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
+
+  // Bare host:port values such as example.com:8443 are valid user input.
+  // Other explicit non-web schemes (javascript:, data:, chrome:, file:, ...) must never be opened here.
+  if (protocolMatch && !hasHttpScheme) {
+    const candidateScheme = protocolMatch[1].toLowerCase();
+    const looksLikeBareHostWithPort = candidateScheme.includes('.') || candidateScheme === 'localhost';
+    if (!looksLikeBareHostWithPort) return null;
+  }
+
+  const candidate = hasHttpScheme ? trimmed : `https://${trimmed}`;
+
+  try {
+    const parsed = new URL(candidate);
+    if (!SAFE_WEB_PROTOCOLS.has(parsed.protocol) || !parsed.hostname) return null;
+    // Avoid misleading URLs such as https://trusted.example@evil.example/.
+    if (parsed.username || parsed.password) return null;
+    return parsed.href;
+  } catch (_) {
+    return null;
+  }
+}
+
 function normalizeOpenTabsRequestUrls(rawUrls) {
   const urls = [];
   const seenUrls = new Set();
   const stats = { invalid: 0, duplicate: 0, overLimit: 0 };
 
   for (const rawUrl of rawUrls) {
-    if (typeof rawUrl !== 'string') {
+    const normalizedUrl = normalizeOpenTabUrl(rawUrl);
+    if (!normalizedUrl) {
       stats.invalid += 1;
       continue;
     }
 
-    const trimmed = rawUrl.trim();
-    if (!trimmed || trimmed.length > MAX_OPEN_TAB_URL_LENGTH) {
-      stats.invalid += 1;
-      continue;
-    }
-
-    let parsed;
-    try {
-      parsed = new URL(trimmed);
-    } catch (_) {
-      stats.invalid += 1;
-      continue;
-    }
-
-    if (!SAFE_WEB_PROTOCOLS.has(parsed.protocol)) {
-      stats.invalid += 1;
-      continue;
-    }
-
-    if (seenUrls.has(parsed.href)) {
+    if (seenUrls.has(normalizedUrl)) {
       stats.duplicate += 1;
       continue;
     }
@@ -70,8 +82,8 @@ function normalizeOpenTabsRequestUrls(rawUrls) {
       continue;
     }
 
-    seenUrls.add(parsed.href);
-    urls.push(parsed.href);
+    seenUrls.add(normalizedUrl);
+    urls.push(normalizedUrl);
   }
 
   return {
@@ -473,11 +485,17 @@ if (chrome.runtime.onStartup) {
   });
 }
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === CONTEXT_MENU_ID_MERGE_TABS) {
-    await ensureTabCacheInitialized();
-    await tabManager.mergeAllWindows(tab?.windowId);
-  }
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== CONTEXT_MENU_ID_MERGE_TABS) return;
+
+  void (async () => {
+    try {
+      await ensureTabCacheInitialized();
+      await tabManager.mergeAllWindows(tab?.windowId);
+    } catch (error) {
+      console.error('LunaTools: 컨텍스트 메뉴 명령 처리 실패', error);
+    }
+  })();
 });
 
 
@@ -1103,31 +1121,39 @@ async function ensureTabCacheInitialized() {
   return tabCacheInitializationPromise;
 }
 
-chrome.commands.onCommand.addListener(async (command, tab) => {
-  if (command === "sort-tabs") {
-    await ensureTabCacheInitialized();
-    await tabManager.sortTabsInCurrentWindow(tab?.windowId);
-  } else if (command === "toggle-mute-current") {
-    const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (typeof currentTab?.id === 'number') {
-      const isMuted = !!currentTab.mutedInfo?.muted;
-      await chrome.tabs.update(currentTab.id, { muted: !isMuted });
-    }
-  } else if (command === "toggle-mute-all") {
-    const allTabs = await chrome.tabs.query({});
-    const anyUnmuted = allTabs.some(t => !t.mutedInfo?.muted);
-    const targetMuteState = anyUnmuted;
-    for (const t of allTabs) {
-      if (typeof t.id !== 'number') continue;
-      try {
-        await chrome.tabs.update(t.id, { muted: targetMuteState });
-      } catch (error) {
-        if (!isTabAccessError(error)) {
-          console.warn("LunaTools: 탭 음소거 상태 변경 실패", error);
+async function handleCommand(command, tab) {
+  try {
+    if (command === "sort-tabs") {
+      await ensureTabCacheInitialized();
+      await tabManager.sortTabsInCurrentWindow(tab?.windowId);
+    } else if (command === "toggle-mute-current") {
+      const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (typeof currentTab?.id === 'number') {
+        const isMuted = !!currentTab.mutedInfo?.muted;
+        await chrome.tabs.update(currentTab.id, { muted: !isMuted });
+      }
+    } else if (command === "toggle-mute-all") {
+      const allTabs = await chrome.tabs.query({});
+      const anyUnmuted = allTabs.some(t => !t.mutedInfo?.muted);
+      const targetMuteState = anyUnmuted;
+      for (const t of allTabs) {
+        if (typeof t.id !== 'number') continue;
+        try {
+          await chrome.tabs.update(t.id, { muted: targetMuteState });
+        } catch (error) {
+          if (!isTabAccessError(error)) {
+            console.warn("LunaTools: 탭 음소거 상태 변경 실패", error);
+          }
         }
       }
     }
+  } catch (error) {
+    console.warn(`LunaTools: 단축키 명령 처리 실패 (${command})`, error);
   }
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  void handleCommand(command, tab);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

@@ -1,4 +1,37 @@
 (() => {
+    const normalizeHostname = (value) => String(value || '').trim().toLowerCase().replace(/\.+$/, '');
+
+    const isLikelyHostRule = (entry) => (
+        /^[a-z0-9.-]+(?::\d+)?(?:[/?#].*)?$/i.test(entry) &&
+        (
+            entry.includes('.') ||
+            /^localhost(?::|[/?#]|$)/i.test(entry) ||
+            /^\d{1,3}(?:\.\d{1,3}){3}(?::|[/?#]|$)/.test(entry)
+        )
+    );
+
+    const parseHostnameRule = (rawRule) => {
+        const entry = String(rawRule || '').trim();
+        if (!entry) return null;
+
+        const hasHttpScheme = /^https?:\/\//i.test(entry);
+        if (!hasHttpScheme && !isLikelyHostRule(entry)) return null;
+
+        try {
+            const parsed = new URL(hasHttpScheme ? entry : `https://${entry}`);
+            const hostname = normalizeHostname(parsed.hostname);
+            return hostname || null;
+        } catch (_) {
+            return null;
+        }
+    };
+
+    const matchesHostnameRule = (currentHostname, rawRule) => {
+        const hostname = normalizeHostname(currentHostname);
+        const rule = parseHostnameRule(rawRule) || normalizeHostname(rawRule);
+        return Boolean(rule) && (hostname === rule || hostname.endsWith(`.${rule}`));
+    };
+
     class DragSelector {
         static CONFIG = {
             MODIFIERS: {
@@ -377,8 +410,13 @@
             const modifier = this.#getModifier(e);
             if (!modifier) return;
             
-            const target = e.target;
-            const isEditable = target.isContentEditable || target.matches('input, textarea');
+            const targetElement = e.target instanceof Element ? e.target : e.target?.parentElement;
+            const editableElement = targetElement?.closest?.('input, textarea, select, [contenteditable]');
+            const isEditable = Boolean(editableElement && (
+                editableElement.matches('input, textarea, select') ||
+                editableElement.isContentEditable ||
+                editableElement.getAttribute('contenteditable') === ''
+            ));
             if (isEditable) return;
             
             this.#modifier = modifier;
@@ -471,12 +509,9 @@
                 return;
             }
 
-            const currentHostname = window.location.hostname.toLowerCase();
+            const currentHostname = window.location.hostname;
             const disabledSites = Array.isArray(disabledDragSites) ? disabledDragSites : [];
-            const isDragDisabled = disabledSites.some(site => {
-                const normalizedSite = String(site || '').trim().toLowerCase();
-                return normalizedSite && (currentHostname === normalizedSite || currentHostname.endsWith('.' + normalizedSite));
-            });
+            const isDragDisabled = disabledSites.some(site => matchesHostnameRule(currentHostname, site));
 
             if (!isDragDisabled) {
                 initializeDragSelector();

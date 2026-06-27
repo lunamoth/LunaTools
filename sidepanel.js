@@ -168,10 +168,23 @@ document.addEventListener('DOMContentLoaded', function() {
             const trimmed = rawUrl.trim();
             if (!trimmed || trimmed.length > CONFIG.MAX_URL_LENGTH) return null;
 
-            const candidate = /^(?:https?:\/\/|file:\/\/)/i.test(trimmed) ? trimmed : `https://${trimmed}`;
+            const hasOpenableScheme = /^(?:https?:\/\/|file:\/\/)/i.test(trimmed);
+            const protocolMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
+
+            // Bare host:port values are accepted, but explicit unsafe schemes are rejected.
+            if (protocolMatch && !hasOpenableScheme) {
+                const candidateScheme = protocolMatch[1].toLowerCase();
+                const looksLikeBareHostWithPort = candidateScheme.includes('.') || candidateScheme === 'localhost';
+                if (!looksLikeBareHostWithPort) return null;
+            }
+
+            const candidate = hasOpenableScheme ? trimmed : `https://${trimmed}`;
             try {
                 const parsed = new URL(candidate);
-                return OPENABLE_URL_PROTOCOLS.has(parsed.protocol) ? parsed.href : null;
+                if (!OPENABLE_URL_PROTOCOLS.has(parsed.protocol)) return null;
+                if (parsed.protocol !== 'file:' && !parsed.hostname) return null;
+                if (parsed.protocol !== 'file:' && (parsed.username || parsed.password)) return null;
+                return parsed.href;
             } catch (_) {
                 return null;
             }
@@ -229,10 +242,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return { urls, ...stats };
         };
 
-        const showSkippedUrlNotice = ({ invalid = 0, tooLong = 0, overLimit = 0 }) => {
+        const showSkippedUrlNotice = ({ invalid = 0, tooLong = 0, duplicate = 0, overLimit = 0 }) => {
             const parts = [];
             if (invalid > 0) parts.push(`형식 오류 ${invalid}개`);
             if (tooLong > 0) parts.push(`길이 초과 ${tooLong}개`);
+            if (duplicate > 0) parts.push(`중복 제외 ${duplicate}개`);
             if (overLimit > 0) parts.push(`최대 ${CONFIG.MAX_URLS_PER_RUN}개 초과 ${overLimit}개`);
             if (parts.length > 0) {
                 Toast.show(`일부 URL을 제외했습니다. (${parts.join(', ')})`, 'info', 6000);
@@ -1606,11 +1620,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
         async function processTextImport(textContent) {
             const urls = textContent.split('\n')
-                .map(line => line.trim())
-                .filter(line => line.length > 0 && (line.startsWith('http://') || line.startsWith('https://') || line.startsWith('file://')));
+                .map(line => normalizeUrlForOpening(line))
+                .filter(Boolean);
 
             if (urls.length === 0) {
-                Toast.show('텍스트 파일에 유효한 URL이 없거나 지원하는 프로토콜(http, https, file)이 아닙니다.', 'info');
+                Toast.show('텍스트 파일에 유효한 URL이 없거나 지원하는 형식(http, https, file, 도메인 주소)이 아닙니다.', 'info');
                 return;
             }
             const urlString = urls.join('\n');

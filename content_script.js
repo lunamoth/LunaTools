@@ -1,43 +1,113 @@
 (async () => {
   'use strict';
 
+  function normalizeHostname(value) {
+    return String(value || '').trim().toLowerCase().replace(/\.+$/, '');
+  }
+
+  function isLikelyHostRule(entry) {
+    return (
+      /^[a-z0-9.-]+(?::\d+)?(?:[/?#].*)?$/i.test(entry) &&
+      (
+        entry.includes('.') ||
+        /^localhost(?::|[/?#]|$)/i.test(entry) ||
+        /^\d{1,3}(?:\.\d{1,3}){3}(?::|[/?#]|$)/.test(entry)
+      )
+    );
+  }
+
+  function parseSiteRule(rawRule, { allowPath = false } = {}) {
+    const entry = String(rawRule || '').trim();
+    if (!entry) return null;
+
+    const hasHttpScheme = /^https?:\/\//i.test(entry);
+    if (!hasHttpScheme && !isLikelyHostRule(entry)) return null;
+
+    try {
+      const parsed = new URL(hasHttpScheme ? entry : `https://${entry}`);
+      const hostname = normalizeHostname(parsed.hostname);
+      if (!hostname) return null;
+
+      const pathname = allowPath && parsed.pathname && parsed.pathname !== '/'
+        ? parsed.pathname.replace(/\/+$/, '')
+        : '';
+
+      return {
+        hostname,
+        pathname,
+        search: allowPath ? parsed.search : ''
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function matchesHostnameRule(currentHostname, ruleHostname) {
+    const hostname = normalizeHostname(currentHostname);
+    const rule = normalizeHostname(ruleHostname);
+    return Boolean(rule) && (hostname === rule || hostname.endsWith(`.${rule}`));
+  }
+
+  function matchesLockedSiteRule(currentUrl, rawRule) {
+    const rule = parseSiteRule(rawRule);
+    return Boolean(rule && matchesHostnameRule(currentUrl.hostname, rule.hostname));
+  }
+
+  function matchesBlockedSiteRule(currentUrl, rawRule) {
+    const ruleText = String(rawRule || '').trim();
+    if (!ruleText) return false;
+
+    const structuredRule = parseSiteRule(ruleText, { allowPath: true });
+    if (!structuredRule) {
+      // Backward compatibility: non-host entries still work as URL keywords.
+      return currentUrl.href.includes(ruleText);
+    }
+
+    if (!matchesHostnameRule(currentUrl.hostname, structuredRule.hostname)) {
+      return false;
+    }
+
+    if (structuredRule.pathname) {
+      const currentPath = (currentUrl.pathname.replace(/\/+$/, '') || '/');
+      const expectedPath = structuredRule.pathname;
+      if (currentPath !== expectedPath && !currentPath.startsWith(`${expectedPath}/`)) {
+        return false;
+      }
+    }
+
+    return !structuredRule.search || currentUrl.search === structuredRule.search;
+  }
+
   async function applySiteSettingsAndCheckIfBlocked() {
     if (window.self !== window.top) {
       return false;
     }
 
+    let currentUrl;
+    try {
+      currentUrl = new URL(window.location.href);
+    } catch (_) {
+      return false;
+    }
+
     try {
       const { lockedSites = [], blockedSites = [] } = await chrome.storage.sync.get(['lockedSites', 'blockedSites']);
-      
-      if (blockedSites.length > 0) {
-        const currentHref = window.location.href;
-        const isBlocked = blockedSites.some(keyword => keyword && currentHref.includes(keyword));
-        
-        if (isBlocked) {
-          window.location.replace('about:blank');
-          return true;
-        }
+
+      if (Array.isArray(blockedSites) && blockedSites.some(rule => matchesBlockedSiteRule(currentUrl, rule))) {
+        window.location.replace('about:blank');
+        return true;
       }
 
-      if (lockedSites.length > 0) {
-        const currentHostname = window.location.hostname.toLowerCase();
-        const normalizeHostEntry = (site) => String(site || '').trim().toLowerCase();
-        const isLocked = lockedSites.some(site => {
-          const normalizedSite = normalizeHostEntry(site);
-          return normalizedSite && (currentHostname === normalizedSite || currentHostname.endsWith('.' + normalizedSite));
-        });
-
-        if (isLocked) {
-          const preventUnload = (event) => {
-            event.preventDefault();
-            event.returnValue = '';
-          };
-          window.addEventListener('beforeunload', preventUnload);
-        }
+      if (Array.isArray(lockedSites) && lockedSites.some(rule => matchesLockedSiteRule(currentUrl, rule))) {
+        const preventUnload = (event) => {
+          event.preventDefault();
+          event.returnValue = '';
+        };
+        window.addEventListener('beforeunload', preventUnload);
       }
     } catch (e) {
     }
-    
+
     return false;
   }
 
@@ -59,6 +129,7 @@
       this.startY = 0;
       this.didMove = false;
       this.isTrustedSequence = false;
+      this.suppressNextContextMenu = false;
 
       this._bindEventHandlers();
       this._initializeEventListeners();
@@ -84,10 +155,15 @@
       window.addEventListener('blur', this.handleBlur, this.blurOptions);
     }
 
-    _resetState() {
+    _resetPointerState() {
       this.isMouseDown = false;
       this.didMove = false;
       this.isTrustedSequence = false;
+    }
+
+    _resetState() {
+      this._resetPointerState();
+      this.suppressNextContextMenu = false;
     }
 
     handleMouseDown(event) {
@@ -99,6 +175,7 @@
       this.startX = event.clientX;
       this.startY = event.clientY;
       this.didMove = false;
+      this.suppressNextContextMenu = false;
     }
 
     handleMouseMove(event) {
@@ -120,11 +197,17 @@
         return;
       }
 
+      const hadGestureLikeDrag = this.didMove;
       const gestureDirection = this._determineGestureDirection(event.clientX, event.clientY);
 
       if (gestureDirection) {
+        this.suppressNextContextMenu = true;
         this._sendGestureMessage(gestureDirection);
+      } else if (hadGestureLikeDrag) {
+        this.suppressNextContextMenu = true;
       }
+
+      this._resetPointerState();
     }
 
     _determineGestureDirection(endX, endY) {
@@ -151,7 +234,7 @@
 
     handleContextMenu(event) {
       if (!event.isTrusted) return;
-      if (this.didMove) {
+      if (this.didMove || this.suppressNextContextMenu) {
         event.preventDefault();
       }
       this._resetState();
@@ -159,7 +242,7 @@
 
     handleBlur(event) {
       if (!event.isTrusted) return;
-      if (this.isMouseDown) {
+      if (this.isMouseDown || this.suppressNextContextMenu) {
         this._resetState();
       }
     }
