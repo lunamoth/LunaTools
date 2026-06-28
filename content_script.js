@@ -1011,15 +1011,28 @@
         KST_IANA_TIMEZONE: 'Asia/Seoul',
         MONTH_NAMES_EN_FULL: ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'],
         MONTH_NAMES_EN_SHORT: ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'],
+        TIMEZONE_FIXED_OFFSETS: Object.freeze({
+            'UTC': 'GMT+00:00', 'GMT': 'GMT+00:00',
+            'WET': 'GMT+00:00', 'WEST': 'GMT+01:00',
+            'BST': 'GMT+01:00',
+            'CET': 'GMT+01:00', 'CEST': 'GMT+02:00',
+            'PST': 'GMT-08:00', 'PDT': 'GMT-07:00',
+            'MST': 'GMT-07:00', 'MDT': 'GMT-06:00',
+            'CST': 'GMT-06:00', 'CDT': 'GMT-05:00',
+            'EST': 'GMT-05:00', 'EDT': 'GMT-04:00',
+            'AST': 'GMT-04:00', 'ADT': 'GMT-03:00',
+            'AKST': 'GMT-09:00', 'AKDT': 'GMT-08:00',
+            'HST': 'GMT-10:00', 'HDT': 'GMT-09:00',
+            'KST': 'GMT+09:00', 'JST': 'GMT+09:00',
+            'AEST': 'GMT+10:00', 'AEDT': 'GMT+11:00',
+            'ACST': 'GMT+09:30', 'ACDT': 'GMT+10:30',
+            'AWST': 'GMT+08:00',
+        }),
         TIMEZONE_LOOKUP: {
-            'PST': 'America/Los_Angeles', 'PDT': 'America/Los_Angeles', 'PT':  'America/Los_Angeles',
-            'MST': 'America/Denver',      'MDT': 'America/Denver',      'MT':  'America/Denver',
-            'CST': 'America/Chicago',     'CDT': 'America/Chicago',     'CT':  'America/Chicago',
-            'EST': 'America/New_York',    'EDT': 'America/New_York',    'ET':  'America/New_York',
-            'CET': 'Europe/Paris',        'CEST': 'Europe/Paris',
-            'WET': 'Europe/Lisbon',       'WEST': 'Europe/Lisbon',
-            'BST': 'Europe/London',
-            'GMT': 'Etc/GMT',             'UTC': 'Etc/UTC',
+            'PT':  'America/Los_Angeles',
+            'MT':  'America/Denver',
+            'CT':  'America/Chicago',
+            'ET':  'America/New_York',
         },
     };
 
@@ -1435,7 +1448,7 @@
                     if (monthIndex === -1) monthIndex = Config.MONTH_NAMES_EN_SHORT.indexOf(monthNameStr);
 
                     day = dayNameStr ? parseInt(dayNameStr, 10) : today.getDate();
-                    if (monthIndex !== -1 && day >= 1 && day <= 31) parsedDateSuccessfully = true;
+                    parsedDateSuccessfully = monthIndex !== -1 && this._isValidDate(year, monthIndex, day);
 
                 } else if (yearYMDStr) {
                     year = parseInt(yearYMDStr, 10);
@@ -1471,26 +1484,40 @@
 
 
                 let hour = parseInt(hourStr, 10);
-                let minute = minuteStr ? parseInt(minuteStr, 10) : 0;
-                let second = secondStr ? parseInt(secondStr, 10) : 0;
+                const minute = minuteStr ? parseInt(minuteStr, 10) : 0;
+                const second = secondStr ? parseInt(secondStr, 10) : 0;
 
-                if (isNaN(hour) || hour < 0 || (hour > 23 && !(hour === 24 && minute === 0 && second === 0))) {
-                    if (!(hour === 24 && minute === 0 && second === 0 && !ampmStr)) {
-                        continue;
-                    }
+                if (!Number.isInteger(hour) || hour < 0 || hour > 24 ||
+                    !Number.isInteger(minute) || minute < 0 || minute > 59 ||
+                    !Number.isInteger(second) || second < 0 || second > 59) {
+                    continue;
                 }
+
                 if (ampmStr) {
+                    if (hour < 1 || hour > 12) continue;
                     ampmStr = ampmStr.toLowerCase().replace(/\./g, '');
                     if (ampmStr === 'pm' && hour < 12) hour += 12;
                     else if (ampmStr === 'am' && hour === 12) hour = 0;
+                } else if (hour === 24 && (minute !== 0 || second !== 0)) {
+                    continue;
                 }
-                if (hour === 24 && minute === 0 && second === 0) hour = 0;
+
+                if (hour === 24) {
+                    hour = 0;
+                    const nextDate = new Date(Date.UTC(year, monthIndex, day));
+                    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+                    year = nextDate.getUTCFullYear();
+                    monthIndex = nextDate.getUTCMonth();
+                    day = nextDate.getUTCDate();
+                }
 
 
                 let resolvedTzOffsetString = null;
-                const upperTzStr = tzStr.toUpperCase();
+                const upperTzStr = tzStr.toUpperCase().replace(/\s+/gu, ' ').trim();
 
-                if (Config.TIMEZONE_LOOKUP[upperTzStr]) {
+                if (Config.TIMEZONE_FIXED_OFFSETS[upperTzStr]) {
+                    resolvedTzOffsetString = Config.TIMEZONE_FIXED_OFFSETS[upperTzStr];
+                } else if (Config.TIMEZONE_LOOKUP[upperTzStr]) {
                     const ianaZone = Config.TIMEZONE_LOOKUP[upperTzStr];
                     resolvedTzOffsetString = this._getOffsetStringForIANA(ianaZone, year, monthIndex, day, hour, minute);
                 } else {
@@ -1499,37 +1526,54 @@
                         const sign = offsetMatch[1];
                         const hOff = parseInt(offsetMatch[2], 10);
                         const mOffStr = offsetMatch[4];
-                        let mOff = 0;
-
-                        if (mOffStr) {
-                            mOff = parseInt(mOffStr, 10);
-                        } else if (!offsetMatch[3] && offsetMatch[2].length > 2) {
-                        }
-
+                        const mOff = mOffStr ? parseInt(mOffStr, 10) : 0;
 
                         if (hOff <= 14 && mOff <= 59) {
                             resolvedTzOffsetString = `GMT${sign}${String(hOff).padStart(2, '0')}:${String(mOff).padStart(2, '0')}`;
                         }
                     } else if (upperTzStr.match(/^(?:PACIFIC|MOUNTAIN|CENTRAL|EASTERN|ATLANTIC|ALASKA|HAWAII)(?:\s(?:STANDARD|DAYLIGHT))?(?:\sTIME)?$|^(?:GREENWICH MEAN|COORDINATED UNIVERSAL)(?:\sTIME)?$/)) {
-                        const fullTimeZoneLookup = [
-                            ['PACIFIC', 'America/Los_Angeles'],
-                            ['MOUNTAIN', 'America/Denver'],
-                            ['CENTRAL', 'America/Chicago'],
-                            ['EASTERN', 'America/New_York'],
-                            ['ATLANTIC', 'America/Halifax'],
-                            ['ALASKA', 'America/Anchorage'],
-                            ['HAWAII', 'Pacific/Honolulu'],
-                            ['GREENWICH MEAN', 'Etc/GMT'],
-                            ['COORDINATED UNIVERSAL', 'Etc/UTC'],
-                        ];
-                        const normalizedFullName = upperTzStr
-                            .replace(/\s+(STANDARD|DAYLIGHT|EUROPEAN)?\s*TIME$/u, '')
-                            .trim();
-                        const matchedFullTimeZone = fullTimeZoneLookup.find(([label]) =>
-                            normalizedFullName === label || upperTzStr.startsWith(`${label} `)
-                        );
-                        if (matchedFullTimeZone) {
-                            resolvedTzOffsetString = this._getOffsetStringForIANA(matchedFullTimeZone[1], year, monthIndex, day, hour, minute);
+                        const fixedFullTimeZoneLookup = {
+                            'PACIFIC STANDARD TIME': Config.TIMEZONE_FIXED_OFFSETS.PST,
+                            'PACIFIC DAYLIGHT TIME': Config.TIMEZONE_FIXED_OFFSETS.PDT,
+                            'MOUNTAIN STANDARD TIME': Config.TIMEZONE_FIXED_OFFSETS.MST,
+                            'MOUNTAIN DAYLIGHT TIME': Config.TIMEZONE_FIXED_OFFSETS.MDT,
+                            'CENTRAL STANDARD TIME': Config.TIMEZONE_FIXED_OFFSETS.CST,
+                            'CENTRAL DAYLIGHT TIME': Config.TIMEZONE_FIXED_OFFSETS.CDT,
+                            'EASTERN STANDARD TIME': Config.TIMEZONE_FIXED_OFFSETS.EST,
+                            'EASTERN DAYLIGHT TIME': Config.TIMEZONE_FIXED_OFFSETS.EDT,
+                            'ATLANTIC STANDARD TIME': Config.TIMEZONE_FIXED_OFFSETS.AST,
+                            'ATLANTIC DAYLIGHT TIME': Config.TIMEZONE_FIXED_OFFSETS.ADT,
+                            'ALASKA STANDARD TIME': Config.TIMEZONE_FIXED_OFFSETS.AKST,
+                            'ALASKA DAYLIGHT TIME': Config.TIMEZONE_FIXED_OFFSETS.AKDT,
+                            'HAWAII STANDARD TIME': Config.TIMEZONE_FIXED_OFFSETS.HST,
+                            'HAWAII DAYLIGHT TIME': Config.TIMEZONE_FIXED_OFFSETS.HDT,
+                            'GREENWICH MEAN TIME': Config.TIMEZONE_FIXED_OFFSETS.GMT,
+                            'COORDINATED UNIVERSAL TIME': Config.TIMEZONE_FIXED_OFFSETS.UTC,
+                        };
+
+                        if (fixedFullTimeZoneLookup[upperTzStr]) {
+                            resolvedTzOffsetString = fixedFullTimeZoneLookup[upperTzStr];
+                        } else {
+                            const fullTimeZoneLookup = [
+                                ['PACIFIC', 'America/Los_Angeles'],
+                                ['MOUNTAIN', 'America/Denver'],
+                                ['CENTRAL', 'America/Chicago'],
+                                ['EASTERN', 'America/New_York'],
+                                ['ATLANTIC', 'America/Halifax'],
+                                ['ALASKA', 'America/Anchorage'],
+                                ['HAWAII', 'Pacific/Honolulu'],
+                                ['GREENWICH MEAN', 'Etc/GMT'],
+                                ['COORDINATED UNIVERSAL', 'Etc/UTC'],
+                            ];
+                            const normalizedFullName = upperTzStr
+                                .replace(/\s+(STANDARD|DAYLIGHT|EUROPEAN)?\s*TIME$/u, '')
+                                .trim();
+                            const matchedFullTimeZone = fullTimeZoneLookup.find(([label]) =>
+                                normalizedFullName === label || upperTzStr.startsWith(`${label} `)
+                            );
+                            if (matchedFullTimeZone) {
+                                resolvedTzOffsetString = this._getOffsetStringForIANA(matchedFullTimeZone[1], year, monthIndex, day, hour, minute);
+                            }
                         }
                     }
                 }
