@@ -161,14 +161,14 @@ document.addEventListener('DOMContentLoaded', function() {
             '`': '&#96;'
         }[ch]));
 
-        const OPENABLE_URL_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+        const OPENABLE_URL_PROTOCOLS = new Set(['http:', 'https:']);
 
         const normalizeUrlForOpening = (rawUrl) => {
             if (typeof rawUrl !== 'string') return null;
             const trimmed = rawUrl.trim();
             if (!trimmed || trimmed.length > CONFIG.MAX_URL_LENGTH) return null;
 
-            const hasOpenableScheme = /^(?:https?:\/\/|file:\/\/)/i.test(trimmed);
+            const hasOpenableScheme = /^https?:\/\//i.test(trimmed);
             const protocolMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
 
             // Bare host:port values are accepted, but explicit unsafe schemes are rejected.
@@ -181,9 +181,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const candidate = hasOpenableScheme ? trimmed : `https://${trimmed}`;
             try {
                 const parsed = new URL(candidate);
-                if (!OPENABLE_URL_PROTOCOLS.has(parsed.protocol)) return null;
-                if (parsed.protocol !== 'file:' && !parsed.hostname) return null;
-                if (parsed.protocol !== 'file:' && (parsed.username || parsed.password)) return null;
+                if (!OPENABLE_URL_PROTOCOLS.has(parsed.protocol) || !parsed.hostname) return null;
+                if (parsed.username || parsed.password) return null;
                 return parsed.href;
             } catch (_) {
                 return null;
@@ -1011,9 +1010,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const updateButtonState = () => {
             const viewState = state.currentView;
-            const hasText = UI.urlInput && UI.urlInput.value.trim().length > 0;
-            const urls = UI.urlInput ? UI.urlInput.value.split('\n').map(u => u.trim()).filter(Boolean) : [];
-            const displayCount = UI.removeDuplicatesCheckbox && UI.removeDuplicatesCheckbox.checked ? [...new Set(urls)].length : urls.length;
+            const rawUrlsForDisplay = UI.urlInput ? UI.urlInput.value.split('\n') : [];
+            const hasText = rawUrlsForDisplay.some(url => url.trim().length > 0);
+            const displayCount = hasText ? prepareUrlsForRun(rawUrlsForDisplay).urls.length : 0;
 
             if (UI.startRunButton) {
                 UI.startRunButton.classList.remove(CONFIG.CSS.SUCCESS_BTN_CLASS);
@@ -1457,10 +1456,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 const tabs = await chrome.tabs.query(queryOptions);
                 let newUrls = tabs
                     .map(tab => tab.url)
-                    .filter(url => url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://')));
+                    .filter(url => url && (url.startsWith('http://') || url.startsWith('https://')));
 
                 if (newUrls.length === 0) {
-                    Toast.show('가져올 수 있는 탭이 없습니다. (http, https, file 프로토콜만 지원)', 'info');
+                    Toast.show('가져올 수 있는 탭이 없습니다. (http, https 프로토콜만 지원)', 'info');
                     return;
                 }
 
@@ -1624,7 +1623,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 .filter(Boolean);
 
             if (urls.length === 0) {
-                Toast.show('텍스트 파일에 유효한 URL이 없거나 지원하는 형식(http, https, file, 도메인 주소)이 아닙니다.', 'info');
+                Toast.show('텍스트 파일에 유효한 URL이 없거나 지원하는 형식(http, https, 도메인 주소)이 아닙니다.', 'info');
                 return;
             }
             const urlString = urls.join('\n');
@@ -1831,7 +1830,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             state.urlsToProcess = prepared.urls;
             if (state.urlsToProcess.length === 0) {
-                resetToIdle(CONFIG.TEXT.EMPTY_INPUT, true);
+                if (UI.progressStats) {
+                    UI.progressStats.textContent = CONFIG.TEXT.EMPTY_INPUT;
+                    UI.progressStats.className = CONFIG.CSS.ERROR_CLASS;
+                }
+                if (UI.progressBar) UI.progressBar.value = 0;
+                updateButtonState();
                 showSkippedUrlNotice(prepared);
                 return;
             }
@@ -1899,12 +1903,12 @@ document.addEventListener('DOMContentLoaded', function() {
             setView('complete');
         };
 
-        const handleStartRunButtonClick = () => {
+        const handleStartRunButtonClick = async () => {
             const viewState = state.currentView;
             if (viewState === 'input') {
                 startProcess();
             } else if (viewState === 'complete') {
-                resetToIdle();
+                await resetToIdle();
             }
         };
 
@@ -2228,6 +2232,7 @@ document.addEventListener('DOMContentLoaded', function() {
         UI: { TOAST_DURATION: 4000, SESSION_NAME_MAX_LENGTH: 200, SEARCH_DEBOUNCE_TIME: 200 },
         DEFAULTS: { SESSION_PREFIX: '' },
         PROTOCOLS: { SAFE: ['http:', 'https:'] },
+        LIMITS: { TAB_URL_MAX_LENGTH: 2048 },
         TIMING: { EXPORT_URL_REVOKE_DELAY: 60000 },
         STORAGE_KEYS: { SESSIONS: 'sessions' },
         ACTIONS: { RESTORE: 'restore', COPY: 'copy', UPDATE: 'update', RENAME: 'rename', PIN: 'pin', DELETE: 'delete' },
@@ -2367,10 +2372,13 @@ document.addEventListener('DOMContentLoaded', function() {
       };
       
       const isValidUrl = (url) => {
-        if (!url || typeof url !== 'string') return false;
+        if (!url || typeof url !== 'string' || url.length > CONSTANTS.LIMITS.TAB_URL_MAX_LENGTH) return false;
         try {
           const parsed = new URL(url);
-          return CONSTANTS.PROTOCOLS.SAFE.includes(parsed.protocol);
+          return CONSTANTS.PROTOCOLS.SAFE.includes(parsed.protocol) &&
+            Boolean(parsed.hostname) &&
+            !parsed.username &&
+            !parsed.password;
         } catch { return false; }
       };
 
