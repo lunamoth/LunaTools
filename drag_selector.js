@@ -185,12 +185,14 @@
         }
 
         #isElementVisible(element) {
-            if (element.offsetParent === null) return false;
+            const clientRects = element.getClientRects();
+            if (!clientRects || clientRects.length === 0) return false;
             const style = window.getComputedStyle(element);
-            if (style.visibility === 'hidden' || style.opacity === '0') return false;
-            const rect = element.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) return false;
-            return true;
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+            for (let i = 0; i < clientRects.length; i++) {
+                if (clientRects[i].width > 0 && clientRects[i].height > 0) return true;
+            }
+            return false;
         }
 
         #findAllLinks(rootNode) {

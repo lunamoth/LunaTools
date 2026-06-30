@@ -297,10 +297,66 @@ document.addEventListener('DOMContentLoaded', function() {
             return true;
         };
 
+        const parseHtmlFragmentWithNativeSanitizer = (html, sanitizerConfig) => {
+            const source = String(html ?? '');
+            const container = document.createElement('div');
+
+            if (typeof container.setHTML === 'function') {
+                const attempts = [];
+                const SanitizerCtor = globalThis.Sanitizer;
+                if (typeof SanitizerCtor === 'function') {
+                    attempts.push(() => {
+                        const sanitizer = new SanitizerCtor(sanitizerConfig);
+                        container.setHTML(source, { sanitizer });
+                    });
+                    attempts.push(() => {
+                        // Transitional implementations may accept a Sanitizer instance directly.
+                        const sanitizer = new SanitizerCtor(sanitizerConfig);
+                        container.setHTML(source, sanitizer);
+                    });
+                }
+                attempts.push(() => {
+                    container.setHTML(source, { sanitizer: sanitizerConfig });
+                });
+                attempts.push(() => {
+                    container.setHTML(source, { sanitizer: 'default' });
+                });
+                attempts.push(() => {
+                    container.setHTML(source);
+                });
+
+                for (const applyNativeSanitizer of attempts) {
+                    try {
+                        container.replaceChildren();
+                        applyNativeSanitizer();
+
+                        const nativeFragment = document.createDocumentFragment();
+                        while (container.firstChild) {
+                            nativeFragment.appendChild(container.firstChild);
+                        }
+                        return nativeFragment;
+                    } catch (_) {
+                        // Keep LunaTools' app-level allowlist sanitizer as the reliable fallback
+                        // for unsupported or incompatible Sanitizer API implementations.
+                    }
+                }
+            }
+
+            const template = document.createElement('template');
+            template.innerHTML = source;
+            return template.content;
+        };
+
+        const MODAL_HTML_SANITIZER_CONFIG = {
+            elements: ['strong', 'br', 'input'],
+            attributes: ['id', 'type', 'value', 'placeholder', 'maxlength', 'min', 'max', 'step', 'class', 'autocomplete'],
+            comments: false,
+            dataAttributes: false
+        };
+
         const createSafeModalFragment = (html) => {
             const fragment = document.createDocumentFragment();
-            const template = document.createElement('template');
-            template.innerHTML = String(html ?? '');
+            const sourceFragment = parseHtmlFragmentWithNativeSanitizer(html, MODAL_HTML_SANITIZER_CONFIG);
 
             const allowedTags = new Set(['STRONG', 'BR', 'INPUT']);
             const allowedInputAttributes = new Set(['id', 'value', 'placeholder', 'maxlength', 'min', 'max', 'step', 'class', 'autocomplete']);
@@ -347,7 +403,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return clone;
             };
 
-            Array.from(template.content.childNodes).forEach(child => {
+            Array.from(sourceFragment.childNodes).forEach(child => {
                 const safeChild = sanitizeNode(child);
                 if (safeChild) fragment.appendChild(safeChild);
             });
@@ -394,6 +450,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         button.textContent = buttonConfig.text;
                         button.className = buttonConfig.className || '';
                         if (buttonConfig.isDefaultCancel) {
+                            button.dataset.defaultAction = 'cancel';
                             button.style.backgroundColor = 'var(--bg-control)';
                             button.style.color = 'var(--text-secondary)';
                         } else if (buttonConfig.isDanger) {
@@ -410,24 +467,28 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 UI.modalOverlay.classList.add('visible');
                 const input = UI.modalBody.querySelector('input');
-                if (input) {
-                    setTimeout(() => input.focus(), 50);
-                    if (this._keydownListener) {
-                        document.removeEventListener('keydown', this._keydownListener);
-                    }
-                    this._keydownListener = (e) => {
-                        if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const confirmButton = UI.modalConfirmBtn.style.display !== 'none' ? UI.modalConfirmBtn : UI.modalFooter.querySelector('.custom-buttons button:not([style*="var(--bg-control)"])');
-                            if(confirmButton) confirmButton.click();
-                        } else if (e.key === 'Escape') {
-                            const cancelButton = UI.modalCancelBtn.style.display !== 'none' ? UI.modalCancelBtn : UI.modalFooter.querySelector('.custom-buttons button[style*="var(--bg-control)"]');
-                            if(cancelButton) cancelButton.click();
-                            else this.hide(undefined);
-                        }
-                    };
-                    document.addEventListener('keydown', this._keydownListener);
+                if (input) setTimeout(() => input.focus(), 50);
+                if (this._keydownListener) {
+                    document.removeEventListener('keydown', this._keydownListener);
                 }
+                this._keydownListener = (e) => {
+                    if (!UI.modalOverlay.classList.contains('visible') || e.isComposing) return;
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const confirmButton = UI.modalConfirmBtn.style.display !== 'none'
+                            ? UI.modalConfirmBtn
+                            : UI.modalFooter.querySelector('.custom-buttons button:not([data-default-action="cancel"])');
+                        if (confirmButton) confirmButton.click();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        const cancelButton = UI.modalCancelBtn.style.display !== 'none'
+                            ? UI.modalCancelBtn
+                            : UI.modalFooter.querySelector('.custom-buttons button[data-default-action="cancel"]');
+                        if (cancelButton) cancelButton.click();
+                        else this.hide(undefined);
+                    }
+                };
+                document.addEventListener('keydown', this._keydownListener);
                 return new Promise(resolve => { this.resolve = resolve; });
             },
             hide(result) {
@@ -958,7 +1019,7 @@ document.addEventListener('DOMContentLoaded', function() {
             clearTimeout(state.intervalId); state.intervalId = null;
 
             if(UI.urlInput) UI.urlInput.value = '';
-            if(UI.urlQueue) UI.urlQueue.innerHTML = '';
+            if(UI.urlQueue) UI.urlQueue.replaceChildren();
             if(UI.progressBar) UI.progressBar.value = 0;
             if (UI.savedListsDropdown) UI.savedListsDropdown.value = '';
             if(UI.progressStats) {
@@ -984,7 +1045,7 @@ document.addEventListener('DOMContentLoaded', function() {
             state.currentUrlIndex = 0;
             state.errorCount = 0;
 
-            if(UI.urlQueue) UI.urlQueue.innerHTML = '';
+            if(UI.urlQueue) UI.urlQueue.replaceChildren();
             if(UI.progressBar) UI.progressBar.value = 0;
             if(UI.progressStats) UI.progressStats.textContent = CONFIG.TEXT.STOPPED_BY_USER;
 
@@ -1017,10 +1078,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (UI.startRunButton) {
                 UI.startRunButton.classList.remove(CONFIG.CSS.SUCCESS_BTN_CLASS);
                 if (viewState === 'input') {
-                    UI.startRunButton.innerHTML = displayCount > 0 ? CONFIG.TEXT.RUN_COUNT(displayCount) : CONFIG.TEXT.RUN;
+                    UI.startRunButton.textContent = displayCount > 0 ? CONFIG.TEXT.RUN_COUNT(displayCount) : CONFIG.TEXT.RUN;
                     UI.startRunButton.disabled = displayCount === 0;
                 } else if (viewState === 'complete') {
-                     UI.startRunButton.innerHTML = CONFIG.TEXT.RESTART;
+                     UI.startRunButton.textContent = CONFIG.TEXT.RESTART;
                      UI.startRunButton.classList.add(CONFIG.CSS.SUCCESS_BTN_CLASS);
                      UI.startRunButton.disabled = false;
                 }
@@ -1028,18 +1089,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (UI.pauseResumeButton) {
                 if (viewState === 'running') {
-                    UI.pauseResumeButton.innerHTML = state.isPaused ? CONFIG.TEXT.RESUME : CONFIG.TEXT.PAUSE;
+                    UI.pauseResumeButton.textContent = state.isPaused ? CONFIG.TEXT.RESUME : CONFIG.TEXT.PAUSE;
                     UI.pauseResumeButton.disabled = false;
                 }
             }
 
             if (UI.saveListButton) {
                 if (state.loadedListName && state.isDirty) {
-                    UI.saveListButton.innerHTML = '🔄️';
+                    UI.saveListButton.textContent = '🔄️';
                     UI.saveListButton.title = '현재 목록 업데이트';
                     UI.saveListButton.disabled = false;
                 } else {
-                    UI.saveListButton.innerHTML = '💾';
+                    UI.saveListButton.textContent = '💾';
                     UI.saveListButton.title = '새 목록으로 저장 / 현재 목록 업데이트';
                     UI.saveListButton.disabled = !hasText;
                 }
@@ -1103,7 +1164,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const currentSelectionInDropdown = UI.savedListsDropdown ? UI.savedListsDropdown.value : '';
 
             if (UI.savedListsDropdown) {
-                UI.savedListsDropdown.innerHTML = `<option value="">${CONFIG.TEXT.SELECT_LIST_PLACEHOLDER}</option>`;
+                UI.savedListsDropdown.replaceChildren(new Option(CONFIG.TEXT.SELECT_LIST_PLACEHOLDER, ''));
                 listNames.sort().forEach(name => {
                     const urlCount = (lists[name] && lists[name].urls) ? lists[name].urls.split('\n').filter(Boolean).length : 0;
                     const option = document.createElement('option');
@@ -1866,8 +1927,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     span.textContent = url;
                     fragment.appendChild(span);
                 });
-                UI.urlQueue.innerHTML = '';
-                UI.urlQueue.appendChild(fragment);
+                UI.urlQueue.replaceChildren(fragment);
             }
 
             setView('running');
@@ -1902,7 +1962,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 UI.progressStats.className = state.errorCount > 0 ? CONFIG.CSS.ERROR_CLASS : CONFIG.CSS.COMPLETE_CLASS;
             }
             if (UI.progressBar) UI.progressBar.value = 100;
-            if (UI.urlQueue && state.errorCount === 0) UI.urlQueue.innerHTML = '';
+            if (UI.urlQueue && state.errorCount === 0) UI.urlQueue.replaceChildren();
             
             if (UI.playSoundCheckbox && UI.playSoundCheckbox.checked) {
                 SoundEffect.playSuccess();
@@ -2327,7 +2387,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const showToast = (message, duration = CONSTANTS.UI.TOAST_DURATION, undoCallback = null) => {
         clearTimeout(toastTimeout);
-        toastEl.innerHTML = '';
+        toastEl.replaceChildren();
         
         const messageSpan = document.createElement('span');
         messageSpan.textContent = message;
@@ -2487,14 +2547,15 @@ document.addEventListener('DOMContentLoaded', function() {
       const withLoadingState = async (elements, asyncFunc) => {
         const elementsArray = Array.isArray(elements) || elements instanceof NodeList ? Array.from(elements) : [elements];
         if (elementsArray.some(el => !el || el.disabled)) return;
-        elementsArray.forEach(el => el.disabled = true);
+        const previousDisabledStates = new Map(elementsArray.map(el => [el, el.disabled]));
+        elementsArray.forEach(el => { el.disabled = true; });
         pane.style.cursor = 'wait';
         try {
           await asyncFunc();
         } finally {
           elementsArray.forEach(el => {
             if (pane.contains(el)) {
-              el.disabled = false;
+              el.disabled = previousDisabledStates.get(el) ?? false;
             }
           });
           pane.style.cursor = 'default';

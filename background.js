@@ -662,10 +662,17 @@ class TabManager {
   }
 
   _removeWindowTabsFromCache(windowId) {
+    if (typeof windowId !== 'number') return;
+
+    const entriesToRemove = [];
     for (const [tabId, cachedInfo] of this.urlCache.entries()) {
       if (cachedInfo.windowId === windowId) {
-        this._removeUrlFromCache(tabId, cachedInfo.url);
+        entriesToRemove.push([tabId, cachedInfo.url]);
       }
+    }
+
+    for (const [tabId, cachedUrl] of entriesToRemove) {
+      this._removeUrlFromCache(tabId, cachedUrl);
     }
   }
 

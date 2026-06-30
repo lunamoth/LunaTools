@@ -533,13 +533,19 @@
       }
       findNavigationLinks() {
         if (this.cachedLinks) return this.cachedLinks;
-        const links = Array.from(document.querySelectorAll('a[rel]'));
+        const links = Array.from(document.querySelectorAll('a[rel][href], link[rel][href]'));
         let nextUrl = null;
         let prevUrl = null;
 
+        const isUsableRelElement = (element) => {
+          if (element.tagName === 'LINK') return true;
+          if (element.offsetParent) return true;
+          return element.getClientRects?.().length > 0;
+        };
+
         for (const link of links) {
           const safeHref = KB_NAV_Utils.normalizeNavigationUrl(link.getAttribute('href') || link.href);
-          if (!safeHref || safeHref === window.location.href || !link.offsetParent) continue;
+          if (!safeHref || safeHref === window.location.href || !isUsableRelElement(link)) continue;
 
           const relTokens = new Set(String(link.rel || link.getAttribute('rel') || '')
             .toLowerCase()
@@ -1130,7 +1136,7 @@
         AMOUNT_ABBREVIATION_REGEX_I: /^([\d\.,]+)\s*(BLN|MLN|TLN|BN|MN|TN|[BMKT])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/iu,
         ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^([\\d\.,]+)\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).sort((a, b) => b.length - a.length).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
         PLAIN_OZ_REGEX: /^([\d\.,]+)\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$/iu,
-        PURE_NUMBER_REGEX: /^[\d\.]+$/u,
+        PURE_NUMBER_REGEX: /^(?:\d+(?:\.\d*)?|\.\d+)$/u,
         TIME_EXTRACTION_PATTERN: new RegExp(
             '(?:' +
                 '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,\\s*(\\d{4}|\\d{2}))?)' +
@@ -1180,13 +1186,66 @@
             div.textContent = str;
             return div.innerHTML;
         },
+        parseHtmlFragmentWithNativeSanitizer: function(html, sanitizerConfig) {
+            const source = String(html ?? '');
+            const container = document.createElement('div');
+
+            if (typeof container.setHTML === 'function') {
+                const attempts = [];
+                const SanitizerCtor = globalThis.Sanitizer;
+                if (typeof SanitizerCtor === 'function') {
+                    attempts.push(() => {
+                        const sanitizer = new SanitizerCtor(sanitizerConfig);
+                        container.setHTML(source, { sanitizer });
+                    });
+                    attempts.push(() => {
+                        // Transitional implementations may accept a Sanitizer instance directly.
+                        const sanitizer = new SanitizerCtor(sanitizerConfig);
+                        container.setHTML(source, sanitizer);
+                    });
+                }
+                attempts.push(() => {
+                    container.setHTML(source, { sanitizer: sanitizerConfig });
+                });
+                attempts.push(() => {
+                    container.setHTML(source, { sanitizer: 'default' });
+                });
+                attempts.push(() => {
+                    container.setHTML(source);
+                });
+
+                for (const applyNativeSanitizer of attempts) {
+                    try {
+                        container.replaceChildren();
+                        applyNativeSanitizer();
+
+                        const nativeFragment = document.createDocumentFragment();
+                        while (container.firstChild) {
+                            nativeFragment.appendChild(container.firstChild);
+                        }
+                        return nativeFragment;
+                    } catch (_) {
+                        // Keep LunaTools' app-level allowlist sanitizer as the reliable fallback
+                        // for unsupported or incompatible Sanitizer API implementations.
+                    }
+                }
+            }
+
+            const template = document.createElement('template');
+            template.innerHTML = source;
+            return template.content;
+        },
         createSafeHtmlFragment: function(html) {
             const fragment = document.createDocumentFragment();
-            const template = document.createElement('template');
-            template.innerHTML = String(html ?? '');
+            const sourceFragment = Utils.parseHtmlFragmentWithNativeSanitizer(html, {
+                elements: ['div', 'span', 'b', 'br', 'small'],
+                attributes: ['class'],
+                comments: false,
+                dataAttributes: false
+            });
 
             const allowedTags = new Set(['DIV', 'SPAN', 'B', 'BR', 'SMALL']);
-            const allowedClasses = new Set(['converted-value', 'original-value', 'category-icon', 'title-suffix']);
+            const allowedClasses = new Set(['converted-value', 'original-value', 'category-icon', 'title-suffix', 'error-detail']);
 
             const sanitizeNode = (node) => {
                 if (node.nodeType === Node.TEXT_NODE) {
@@ -1212,17 +1271,11 @@
                     const safeClasses = Array.from(node.classList).filter(className => allowedClasses.has(className));
                     if (safeClasses.length > 0) clone.className = safeClasses.join(' ');
                 }
-                if (tagName === 'SMALL') {
-                    const color = node.style?.color;
-                    if (color && /^#[0-9a-f]{3,8}$/i.test(color.trim())) {
-                        clone.style.color = color.trim();
-                    }
-                }
                 clone.appendChild(childFragment);
                 return clone;
             };
 
-            Array.from(template.content.childNodes).forEach(child => {
+            Array.from(sourceFragment.childNodes).forEach(child => {
                 const safeChild = sanitizeNode(child);
                 if (safeChild) fragment.appendChild(safeChild);
             });
@@ -1254,10 +1307,23 @@
         },
         parseFloatLenient: function(inputStr) {
             if (inputStr === null || typeof inputStr === 'undefined') return null;
-            const str = String(inputStr).replace(/,/g, '');
-            if (str.trim() === "") return null;
-            const val = parseFloat(str);
-            return isNaN(val) ? null : val;
+            const str = String(inputStr).trim();
+            if (str === "") return null;
+
+            const plainNumberPattern = /^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[+-]?\d+)?$/iu;
+            const groupedNumberPattern = /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/u;
+            const numericPattern = str.includes(',') ? groupedNumberPattern : plainNumberPattern;
+            if (!numericPattern.test(str)) return null;
+
+            const val = Number(str.replace(/,/g, ''));
+            return Number.isFinite(val) ? val : null;
+        },
+        hasInvalidCommaGrouping: function(inputStr) {
+            if (inputStr === null || typeof inputStr === 'undefined') return false;
+            const numericSegments = String(inputStr).match(/\d[\d,]*(?:\.\d+)?/gu) || [];
+            return numericSegments.some(segment =>
+                segment.includes(',') && !/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/u.test(segment)
+            );
         },
         isInvalidString: function(str) {
             return typeof str !== 'string' || str.trim() === "";
@@ -1361,7 +1427,9 @@
         },
         parseKoreanNumericText: function(originalInputText) {
             if (Utils.isInvalidString(originalInputText)) return null;
-            const text = originalInputText.replace(/,/g, '').trim();
+            const trimmedInputText = originalInputText.trim();
+            if (Utils.hasInvalidCommaGrouping(trimmedInputText)) return null;
+            const text = trimmedInputText.replace(/,/g, '').trim();
             if (text === "영") return 0;
 
             if (REGEXES.PURE_NUMBER_REGEX.test(text)) {
@@ -1391,7 +1459,8 @@
         },
         parseAmountWithMagnitudeSuffixes: function(text) {
             if (Utils.isInvalidString(text)) return null;
-            const cleanText = text.replace(/,/g, '').trim();
+            const cleanText = text.trim();
+            if (Utils.hasInvalidCommaGrouping(cleanText)) return null;
 
             const abbreviationMatch = cleanText.match(REGEXES.AMOUNT_ABBREVIATION_REGEX_I);
             if (abbreviationMatch) {
@@ -2391,7 +2460,7 @@
 
                 return {
                     titleHtml: `<span class="category-icon">${UI_STRINGS.GENERAL_CURRENCY_ICON}</span> <b>${Utils.escapeHTML(currencyDetails.originalText)}</b> <span class="title-suffix">${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}</span>`,
-                    contentHtml: `${errMsgBase}<br><small style="color:#c0392b;">${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}</small>`,
+                    contentHtml: `${errMsgBase}<br><small class="error-detail">${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}</small>`,
                     copyText: `${currencyDetails.originalText} ${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}\n${errMsgBase}\n${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}`,
                     isError: true,
                     extractedMagnitudeText: currencyDetails.magnitudeAmountText
@@ -2501,7 +2570,8 @@
 		#${UI_STRINGS.POPUP_LAYER_ID} .converted-value { font-size: 1.2em; font-weight: 700; color: #0071e3; }
 		#${UI_STRINGS.POPUP_LAYER_ID} .original-value { font-weight: 400; color: #333; }
 		#${UI_STRINGS.POPUP_LAYER_ID} small { font-size: .8em; color: #585858; display: block; margin-top: 4px; }
-        @media (prefers-color-scheme: dark) { #${UI_STRINGS.POPUP_LAYER_ID} .converted-value { color: #0a84ff; } #${UI_STRINGS.POPUP_LAYER_ID} .original-value { color: #ccc; } #${UI_STRINGS.POPUP_LAYER_ID} small { color: #8e8e93; } }
+		#${UI_STRINGS.POPUP_LAYER_ID} small.error-detail { color: #c0392b; }
+        @media (prefers-color-scheme: dark) { #${UI_STRINGS.POPUP_LAYER_ID} .converted-value { color: #0a84ff; } #${UI_STRINGS.POPUP_LAYER_ID} .original-value { color: #ccc; } #${UI_STRINGS.POPUP_LAYER_ID} small { color: #8e8e93; } #${UI_STRINGS.POPUP_LAYER_ID} small.error-detail { color: #ff6b6b; } }
 		#${UI_STRINGS.POPUP_LAYER_ID} .category-icon { display: inline-block; margin-right: 6px; font-size: .95em; opacity: .8; }
 		#${UI_STRINGS.POPUP_LAYER_ID} .title-suffix { font-size: .85em; font-weight: 500; color: #6e6e73; }
 		@media (prefers-color-scheme: dark) { #${UI_STRINGS.POPUP_LAYER_ID} .title-suffix { color: #8e8e93; } }
@@ -2720,8 +2790,7 @@
             ROTATION_STEPS: 4,
             ROTATION_ANGLE_DEGREES: 90,
             SHORTCUT_KEY: 'KeyR',
-            VIDEO_SELECTORS: ['video:hover', 'video:not([paused])', 'video'],
-            EDITABLE_TAGS: new Set(['INPUT', 'TEXTAREA']),
+            EDITABLE_TAGS: new Set(['INPUT', 'TEXTAREA', 'SELECT']),
         };
 
         #rotationState = new WeakMap();
@@ -2736,15 +2805,45 @@
 
         #isTargetEditable(target) {
             if (!(target instanceof Element)) return false;
-            return target.isContentEditable || VideoRotator.#CONFIG.EDITABLE_TAGS.has(target.tagName);
+            const editableElement = target.closest('input, textarea, select, [contenteditable]');
+            return Boolean(editableElement && (
+                VideoRotator.#CONFIG.EDITABLE_TAGS.has(editableElement.tagName) ||
+                editableElement.isContentEditable ||
+                editableElement.getAttribute('contenteditable') === ''
+            ));
+        }
+
+        #isVideoVisible(video) {
+            if (!(video instanceof HTMLVideoElement)) return false;
+            const style = window.getComputedStyle(video);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+            const rect = video.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }
+
+        #isVideoInViewport(video) {
+            const rect = video.getBoundingClientRect();
+            return rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+        }
+
+        #scoreVideo(video) {
+            const rect = video.getBoundingClientRect();
+            let score = 0;
+            if (video.matches(':hover')) score += 1000;
+            if (!video.paused && !video.ended) score += 500;
+            if (this.#isVideoInViewport(video)) score += 200;
+            if (video.readyState > 0 || video.currentSrc) score += 100;
+            score += Math.min(rect.width * rect.height, 1_000_000) / 10_000;
+            return score;
         }
 
         #findPrioritizedVideo() {
-            for (const selector of VideoRotator.#CONFIG.VIDEO_SELECTORS) {
-                const videoElement = document.querySelector(selector);
-                if (videoElement) return videoElement;
-            }
-            return null;
+            const videos = Array.from(document.querySelectorAll('video'))
+                .filter(video => this.#isVideoVisible(video));
+            if (videos.length === 0) return null;
+
+            videos.sort((a, b) => this.#scoreVideo(b) - this.#scoreVideo(a));
+            return videos[0];
         }
 
         #calculateTransform(step, video) {
