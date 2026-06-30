@@ -59,7 +59,8 @@
                 Z_INDEX: 2147483646
             },
             TIMING: {
-                FADE_OUT_DURATION_MS: 250
+                FADE_OUT_DURATION_MS: 250,
+                DELAY_OPEN_INTERVAL_MS: 2000
             }
         };
 
@@ -76,6 +77,7 @@
         #allLinksOnPageCached = null;
         #domMutationObserver = null;
         #isTrustedSequence = false;
+        #activeDelayedOpenController = null;
 
         #listenerOptions = { capture: true, passive: false };
 
@@ -102,6 +104,7 @@
         destroy() {
             this.#removeEventListeners();
             if (this.#domMutationObserver) this.#domMutationObserver.disconnect();
+            this.#abortDelayedOpen();
             const styleElement = document.getElementById('drag-selector-styles');
             if (styleElement) styleElement.remove();
             this.#resetState();
@@ -354,20 +357,69 @@
             }
         }
 
-        async #performAction(links) {
-            if (links.size === 0) return;
-            const urls = Array.from(links, a => a.href);
+        #abortDelayedOpen() {
+            if (!this.#activeDelayedOpenController) return;
+            this.#activeDelayedOpenController.abort();
+            this.#activeDelayedOpenController = null;
+        }
 
-            if (this.#modifier === 'ctrl') {
+        #sleep(ms, signal) {
+            return new Promise(resolve => {
+                if (signal?.aborted) {
+                    resolve(false);
+                    return;
+                }
+
+                let timeoutId = null;
+                const cleanup = () => {
+                    if (timeoutId !== null) clearTimeout(timeoutId);
+                    signal?.removeEventListener('abort', onAbort);
+                };
+                const onAbort = () => {
+                    cleanup();
+                    resolve(false);
+                };
+
+                timeoutId = setTimeout(() => {
+                    cleanup();
+                    resolve(true);
+                }, ms);
+                signal?.addEventListener('abort', onAbort, { once: true });
+            });
+        }
+
+        async #performAction(links, modifier = this.#modifier) {
+            if (links.size === 0 || !modifier) return;
+            const urls = Array.from(links, a => a.href).filter(Boolean);
+            if (urls.length === 0) return;
+
+            if (modifier === 'ctrl') {
                 const copied = await this.#copyTextToClipboard(urls.join('\n'));
                 if (!copied) console.warn('LunaTools: 클립보드 복사 실패');
-            } else if (this.#modifier === 'shift') {
+            } else if (modifier === 'shift') {
                 this.#sendOpenTabsMessage(urls);
-            } else if (this.#modifier === 'alt') {
-                const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-                for (const url of urls) {
-                    this.#sendOpenTabsMessage([url]);
-                    await sleep(2000);
+            } else if (modifier === 'alt') {
+                this.#abortDelayedOpen();
+                const controller = new AbortController();
+                this.#activeDelayedOpenController = controller;
+
+                try {
+                    for (let index = 0; index < urls.length; index += 1) {
+                        if (controller.signal.aborted) break;
+                        this.#sendOpenTabsMessage([urls[index]]);
+
+                        if (index < urls.length - 1) {
+                            const completed = await this.#sleep(
+                                DragSelector.CONFIG.TIMING.DELAY_OPEN_INTERVAL_MS,
+                                controller.signal
+                            );
+                            if (!completed) break;
+                        }
+                    }
+                } finally {
+                    if (this.#activeDelayedOpenController === controller) {
+                        this.#activeDelayedOpenController = null;
+                    }
                 }
             }
         }
@@ -419,6 +471,7 @@
             ));
             if (isEditable) return;
             
+            this.#abortDelayedOpen();
             this.#modifier = modifier;
             this.#isTrustedSequence = true;
             this.#startPos = { x: e.clientX, y: e.clientY };
@@ -458,7 +511,7 @@
                 e.preventDefault();
                 e.stopPropagation();
                 const finalLinks = this.#getFinalSelectedLinks();
-                this.#performAction(finalLinks);
+                void this.#performAction(finalLinks, this.#modifier);
             }
             if (this.#modifier) {
                 this.#resetState();
@@ -466,12 +519,15 @@
         }
 
         #handleKeyDown(e) {
-            if (!e.isTrusted) return;
-            if (e.key === 'Escape' && this.#isDragging) {
+            if (!e.isTrusted || e.key !== 'Escape') return;
+
+            if (this.#isDragging || this.#activeDelayedOpenController) {
                 e.preventDefault();
                 e.stopPropagation();
-                this.#resetState();
             }
+
+            if (this.#isDragging) this.#resetState();
+            this.#abortDelayedOpen();
         }
 
         #handleKeyUp(e) {
@@ -484,6 +540,7 @@
         }
 
         #handleInteractionAbort() {
+            this.#abortDelayedOpen();
             if (this.#isTrustedSequence || this.#isDragging || this.#modifier) {
                 this.#resetState();
             }

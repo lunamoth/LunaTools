@@ -270,7 +270,13 @@
   if (window.self === window.top) {
     const KB_NAV_CONFIG = Object.freeze({
       cache: { MAX_SIZE: 100, MAX_AGE_MS: 30 * 60 * 1000 },
-      navigation: { RESET_DELAY_MS: 150, MIN_PAGE: 1, MAX_PAGE: 9999, DEBOUNCE_DELAY_MS: 100 },
+      navigation: {
+        RESET_DELAY_MS: 150,
+        MIN_PAGE: 1,
+        MAX_PAGE: 9999,
+        DEBOUNCE_DELAY_MS: 100,
+        ALLOWED_PROTOCOLS: new Set(['http:', 'https:'])
+      },
       observer: {
         TARGET_SELECTORS: ['nav[aria-label="pagination"]', '.pagination', '#pagination'],
         FALLBACK_TARGET_SELECTORS: ['main', '#main', '#content', 'article', 'body'],
@@ -325,6 +331,21 @@
           lastArgs = null;
         };
         return throttled;
+      },
+      normalizeNavigationUrl(candidateUrl) {
+        if (!candidateUrl) return null;
+
+        try {
+          const parsed = new URL(String(candidateUrl), window.location.href);
+          if (!KB_NAV_CONFIG.navigation.ALLOWED_PROTOCOLS.has(parsed.protocol) || !parsed.hostname) return null;
+          if (parsed.username || parsed.password) return null;
+          return parsed.href;
+        } catch (_) {
+          return null;
+        }
+      },
+      isSafeNavigableUrl(candidateUrl) {
+        return this.normalizeNavigationUrl(candidateUrl) !== null;
       }
     };
 
@@ -512,16 +533,24 @@
       }
       findNavigationLinks() {
         if (this.cachedLinks) return this.cachedLinks;
-        const links = Array.from(document.querySelectorAll('a[rel="next"], a[rel="prev"]'));
-        let nextLink = null;
-        let prevLink = null;
+        const links = Array.from(document.querySelectorAll('a[rel]'));
+        let nextUrl = null;
+        let prevUrl = null;
+
         for (const link of links) {
-          if (!link.href || link.href === window.location.href || !link.offsetParent) continue;
-          if (link.rel === 'next' && !nextLink) nextLink = link;
-          if (link.rel === 'prev' && !prevLink) prevLink = link;
-          if (nextLink && prevLink) break;
+          const safeHref = KB_NAV_Utils.normalizeNavigationUrl(link.getAttribute('href') || link.href);
+          if (!safeHref || safeHref === window.location.href || !link.offsetParent) continue;
+
+          const relTokens = new Set(String(link.rel || link.getAttribute('rel') || '')
+            .toLowerCase()
+            .split(/\s+/)
+            .filter(Boolean));
+          if (relTokens.has('next') && !nextUrl) nextUrl = safeHref;
+          if (relTokens.has('prev') && !prevUrl) prevUrl = safeHref;
+          if (nextUrl && prevUrl) break;
         }
-        this.cachedLinks = { nextLink, prevLink };
+
+        this.cachedLinks = { nextUrl, prevUrl };
         return this.cachedLinks;
       }
       destroy() {
@@ -574,6 +603,7 @@
           }
       }
       _handleKeyDown(event) {
+        if (!event.isTrusted) return;
         if (!KeyboardPageNavigator.NAV_KEYS_SET.has(event.key)) return;
         if (this._shouldIgnoreKeyEvent(event)) return;
         const direction = event.key === KeyboardPageNavigator.KEY_ARROW_RIGHT ? 1 : -1;
@@ -582,8 +612,8 @@
         if (this.urlPageFinder.shouldIgnoreUrl(currentUrl)) return;
 
         const targetUrl = this._determineTargetUrl(currentUrl, direction);
-        if (!targetUrl || targetUrl === currentUrl) return;
-        if (targetUrl.toLowerCase().startsWith('javascript:')) return;
+        const safeTargetUrl = KB_NAV_Utils.normalizeNavigationUrl(targetUrl);
+        if (!safeTargetUrl || safeTargetUrl === currentUrl) return;
 
         event.preventDefault();
         event.stopPropagation();
@@ -603,13 +633,14 @@
           return;
         }
         const targetUrl = this._determineTargetUrl(currentUrl, direction);
-        if (targetUrl && targetUrl !== currentUrl) {
-            if (targetUrl.toLowerCase().startsWith('javascript:')) {
-                this._resetNavigationFlagAfterDelay();
-                return;
-            }
+        const safeTargetUrl = KB_NAV_Utils.normalizeNavigationUrl(targetUrl);
+        if (safeTargetUrl && safeTargetUrl !== currentUrl) {
           this.isNavigating = true;
-          window.location.href = targetUrl;
+          try {
+            window.location.assign(safeTargetUrl);
+          } catch (_) {
+            this._resetNavigationFlagAfterDelay();
+          }
         } else {
           this._resetNavigationFlagAfterDelay();
         }
@@ -620,8 +651,8 @@
           return this.urlPageFinder.generateNewUrl(currentUrl, urlPatternInfo, direction);
         }
         const domLinks = this.domLinkFinder.findNavigationLinks();
-        if (direction > 0 && domLinks.nextLink) return domLinks.nextLink.href;
-        if (direction < 0 && domLinks.prevLink) return domLinks.prevLink.href;
+        if (direction > 0 && domLinks.nextUrl) return domLinks.nextUrl;
+        if (direction < 0 && domLinks.prevUrl) return domLinks.prevUrl;
         return null;
       }
       _resetNavigationFlagAfterDelay() {
@@ -917,6 +948,7 @@
     }
 
     _handleKeyDown(event) {
+      if (!event.isTrusted) return;
       if (!(event.ctrlKey && event.shiftKey && event.key.toUpperCase() === PictureInPictureHandler.PIP_KEY)) {
         return;
       }
@@ -930,7 +962,7 @@
       }
       event.preventDefault();
       event.stopPropagation();
-      this.toggle();
+      void this.toggle().catch(error => console.warn('LunaTools: PiP 전환 실패', error));
     }
 
     destroy() {
@@ -962,8 +994,13 @@
             { name: '만', value: 10000 }
         ],
         KOREAN_SUB_UNITS: [{ name: '천', value: 1000 }, { name: '백', value: 100 }],
-        // [수정됨] trillion, tn 추가
-        MAGNITUDE_WORDS_EN: { 'thousand': 1000, 'million': 1000000, 'billion': 1000000000, 'trillion': 1000000000000, 'tn': 1000000000000 },
+        // [수정됨] finance/press style suffixes(bn/bln/mn/mln/tn/tln) 추가
+        MAGNITUDE_WORDS_EN: {
+            'thousand': 1000, 'million': 1000000, 'billion': 1000000000, 'trillion': 1000000000000,
+            'mn': 1000000, 'mln': 1000000,
+            'bn': 1000000000, 'bln': 1000000000,
+            'tn': 1000000000000, 'tln': 1000000000000
+        },
         CURRENCY_FLAGS: {
             'USD': '🇺🇸', 'EUR': '🇪🇺', 'JPY': '🇯🇵', 'GBP': '🇬🇧', 'AUD': '🇦🇺', 'CAD': '🇨🇦', 'CHF': '🇨🇭', 'CNY': '🇨🇳', 'HKD': '🇭🇰', 'NZD': '🇳🇿', 'SEK': '🇸🇪', 'KRW': '🇰🇷', 'SGD': '🇸🇬', 'NOK': '🇳🇴', 'MXN': '🇲🇽', 'INR': '🇮🇳', 'ZAR': '🇿🇦', 'TRY': '🇹🇷', 'BRL': '🇧🇷', 'DKK': '🇩🇰', 'PLN': '🇵🇱', 'THB': '🇹🇭', 'IDR': '🇮🇩', 'HUF': '🇭🇺', 'CZK': '🇨🇿', 'ILS': '🇮🇱', 'PHP': '🇵🇭', 'MYR': '🇲🇾', 'RON': '🇷🇴', 'BGN': '🇧🇬', 'ISK': '🇮🇸',
         },
@@ -1090,8 +1127,8 @@
         KOREAN_NUMERALS_REGEX_G: new RegExp(Object.keys(Config.KOREAN_NUMERALS_MAP).join('|'), 'gu'),
         KOREAN_NUMERIC_CLEANUP_REGEX_GI: /[^0-9\.\s천백십]/giu,
         NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9억만천백십조일이삼사오육칠팔구영BMKbmk\.,\s]/giu,
-        AMOUNT_ABBREVIATION_REGEX_I: /^([\d\.,]+)\s*([BMKT])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/iu,
-        ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^([\\d\.,]+)\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
+        AMOUNT_ABBREVIATION_REGEX_I: /^([\d\.,]+)\s*(BLN|MLN|TLN|BN|MN|TN|[BMKT])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/iu,
+        ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^([\\d\.,]+)\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).sort((a, b) => b.length - a.length).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
         PLAIN_OZ_REGEX: /^([\d\.,]+)\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$/iu,
         PURE_NUMBER_REGEX: /^[\d\.]+$/u,
         TIME_EXTRACTION_PATTERN: new RegExp(
@@ -1367,9 +1404,9 @@
 
                 if (numVal !== null && isValidRemainder) {
                     let multiplier = 1;
-                    if (suffix === 'T') multiplier = 1e12;
-                    else if (suffix === 'B') multiplier = 1e9;
-                    else if (suffix === 'M') multiplier = 1e6;
+                    if (suffix === 'T' || suffix === 'TN' || suffix === 'TLN') multiplier = 1e12;
+                    else if (suffix === 'B' || suffix === 'BN' || suffix === 'BLN') multiplier = 1e9;
+                    else if (suffix === 'M' || suffix === 'MN' || suffix === 'MLN') multiplier = 1e6;
                     else if (suffix === 'K') multiplier = 1e3;
                     return numVal * multiplier;
                 }
@@ -1594,11 +1631,151 @@
     };
 
     const TextExtractor = {
+        _getCurrencyAmountPatternSource: function() {
+            const numeric = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`;
+            const magnitudeSuffix = String.raw`(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT])`;
+            const numericWithMagnitude = `${numeric}\\s*${magnitudeSuffix}`;
+            const koreanOrPlainNumber = String.raw`[\d,\.\s천백십조억만일이삼사오육칠팔구영]+`;
+            return `(?:${numericWithMagnitude}|${koreanOrPlainNumber})`;
+        },
+        _parseAmountCandidateText: function(amountText) {
+            if (Utils.isInvalidString(amountText)) return null;
+
+            const normalizedAmountText = amountText.trim();
+            const parsedWithMagnitude = NumberParser.parseAmountWithMagnitudeSuffixes(normalizedAmountText);
+            if (parsedWithMagnitude !== null) {
+                return { amount: parsedWithMagnitude, magnitudeAmountText: normalizedAmountText };
+            }
+
+            const parsedKoreanOrPlain = NumberParser.parseKoreanNumericText(normalizedAmountText);
+            if (parsedKoreanOrPlain !== null) {
+                return { amount: parsedKoreanOrPlain, magnitudeAmountText: null };
+            }
+
+            return null;
+        },
+        _normalizeCapturedAmountSpan: function(matchText, capturedText, baseOffset = 0) {
+            const captureOffsetInMatch = matchText.indexOf(capturedText);
+            if (captureOffsetInMatch < 0) return null;
+
+            const leadingWhitespaceLength = capturedText.length - capturedText.trimStart().length;
+            const trailingWhitespaceLength = capturedText.length - capturedText.trimEnd().length;
+            const amountText = capturedText.trim();
+            if (!amountText) return null;
+
+            return {
+                amountText,
+                startOffset: baseOffset + captureOffsetInMatch + leadingWhitespaceLength,
+                endOffset: baseOffset + captureOffsetInMatch + capturedText.length - trailingWhitespaceLength
+            };
+        },
+        _extractLeadingAmountCandidate: function(text) {
+            const source = TextExtractor._getCurrencyAmountPatternSource();
+            const leadingRegex = new RegExp(`^\\s*(${source})(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu');
+            const match = leadingRegex.exec(text);
+            if (!match) return null;
+
+            return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1]);
+        },
+        _extractTrailingAmountCandidate: function(text) {
+            const source = TextExtractor._getCurrencyAmountPatternSource();
+            const trailingRegex = new RegExp(`(${source})\\s*$`, 'iu');
+            const match = trailingRegex.exec(text);
+            if (!match) return null;
+
+            return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], match.index);
+        },
+        _getCurrencyExpressionStart: function(originalText, currencyStart, matchedCurrencyText) {
+            if (!/^[\$＄]$/u.test(matchedCurrencyText)) return currencyStart;
+
+            const beforeCurrency = originalText.slice(0, currencyStart);
+            const usdPrefixMatch = beforeCurrency.match(/(?:\bU\.?S\.?|\bUS)\s*$/iu);
+            return usdPrefixMatch ? currencyStart - usdPrefixMatch[0].length : currencyStart;
+        },
+        _buildCurrencyAmountCandidate: function(originalText, currencyCode, match, patternIndex) {
+            const matchedCurrencyText = match[0];
+            const currencyStart = match.index;
+            const currencyEnd = currencyStart + matchedCurrencyText.length;
+
+            const leadingAmountCandidate = TextExtractor._extractLeadingAmountCandidate(originalText.slice(currencyEnd));
+            if (leadingAmountCandidate) {
+                const parsedLeading = TextExtractor._parseAmountCandidateText(leadingAmountCandidate.amountText);
+                if (parsedLeading) {
+                    const expressionStart = TextExtractor._getCurrencyExpressionStart(originalText, currencyStart, matchedCurrencyText);
+                    const expressionEnd = currencyEnd + leadingAmountCandidate.endOffset;
+                    return {
+                        amount: parsedLeading.amount,
+                        currencyCode,
+                        originalText: originalText.slice(expressionStart, expressionEnd).trim(),
+                        matchedCurrencyText,
+                        magnitudeAmountText: parsedLeading.magnitudeAmountText,
+                        expressionStart,
+                        matchedCurrencyLength: matchedCurrencyText.length,
+                        patternIndex
+                    };
+                }
+            }
+
+            const trailingAmountCandidate = TextExtractor._extractTrailingAmountCandidate(originalText.slice(0, currencyStart));
+            if (trailingAmountCandidate) {
+                const parsedTrailing = TextExtractor._parseAmountCandidateText(trailingAmountCandidate.amountText);
+                if (parsedTrailing) {
+                    const expressionStart = trailingAmountCandidate.startOffset;
+                    const expressionEnd = currencyEnd;
+                    return {
+                        amount: parsedTrailing.amount,
+                        currencyCode,
+                        originalText: originalText.slice(expressionStart, expressionEnd).trim(),
+                        matchedCurrencyText,
+                        magnitudeAmountText: parsedTrailing.magnitudeAmountText,
+                        expressionStart,
+                        matchedCurrencyLength: matchedCurrencyText.length,
+                        patternIndex
+                    };
+                }
+            }
+
+            return null;
+        },
+        _extractCurrencyAmountFromContext: function(originalText) {
+            const candidates = [];
+
+            Config.CURRENCY_PATTERNS.forEach((pattern, patternIndex) => {
+                pattern.regex.lastIndex = 0;
+                let match;
+                while ((match = pattern.regex.exec(originalText)) !== null) {
+                    const candidate = TextExtractor._buildCurrencyAmountCandidate(originalText, pattern.code, match, patternIndex);
+                    if (candidate) candidates.push(candidate);
+                    if (match[0] === "") pattern.regex.lastIndex += 1;
+                }
+            });
+
+            if (candidates.length === 0) return null;
+
+            candidates.sort((a, b) =>
+                a.expressionStart - b.expressionStart ||
+                b.matchedCurrencyLength - a.matchedCurrencyLength ||
+                a.patternIndex - b.patternIndex
+            );
+
+            return candidates[0];
+        },
         extractCurrencyDetails: function(inputText) {
             if (Utils.isInvalidString(inputText)) {
                 return { amount: null, currencyCode: null, originalText: "", matchedCurrencyText: "", magnitudeAmountText: null };
             }
             const originalText = inputText.trim();
+            const contextualCurrencyAmount = TextExtractor._extractCurrencyAmountFromContext(originalText);
+            if (contextualCurrencyAmount) {
+                return {
+                    amount: contextualCurrencyAmount.amount,
+                    currencyCode: contextualCurrencyAmount.currencyCode,
+                    originalText: contextualCurrencyAmount.originalText,
+                    matchedCurrencyText: contextualCurrencyAmount.matchedCurrencyText,
+                    magnitudeAmountText: contextualCurrencyAmount.magnitudeAmountText
+                };
+            }
+
             let amountTextToParse = originalText;
             let currencyCode = null;
             let matchedCurrencyText = "";
@@ -1609,7 +1786,7 @@
                 if (match) {
                     currencyCode = pattern.code;
                     matchedCurrencyText = match[0];
-                    const firstOccurrenceIndex = originalText.indexOf(matchedCurrencyText);
+                    const firstOccurrenceIndex = match.index;
                     amountTextToParse = (originalText.substring(0, firstOccurrenceIndex) + originalText.substring(firstOccurrenceIndex + matchedCurrencyText.length)).trim();
                     break;
                 }
@@ -2558,6 +2735,7 @@
         }
 
         #isTargetEditable(target) {
+            if (!(target instanceof Element)) return false;
             return target.isContentEditable || VideoRotator.#CONFIG.EDITABLE_TAGS.has(target.tagName);
         }
 
@@ -2640,7 +2818,7 @@
         }
 
         #handleKeyDown(event) {
-            if (!this.#isShortcutPressed(event) || this.#isTargetEditable(event.target)) {
+            if (!event.isTrusted || !this.#isShortcutPressed(event) || this.#isTargetEditable(event.target)) {
                 return;
             }
 

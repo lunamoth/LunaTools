@@ -1454,9 +1454,16 @@ document.addEventListener('DOMContentLoaded', function() {
         const fetchAndApplyTabs = async (mode, queryOptions) => {
             try {
                 const tabs = await chrome.tabs.query(queryOptions);
-                let newUrls = tabs
-                    .map(tab => tab.url)
-                    .filter(url => url && (url.startsWith('http://') || url.startsWith('https://')));
+                let skippedTabs = 0;
+                let newUrls = tabs.reduce((urls, tab) => {
+                    const normalizedUrl = normalizeUrlForOpening(tab?.url || '');
+                    if (normalizedUrl) {
+                        urls.push(normalizedUrl);
+                    } else if (tab?.url) {
+                        skippedTabs += 1;
+                    }
+                    return urls;
+                }, []);
 
                 if (newUrls.length === 0) {
                     Toast.show('가져올 수 있는 탭이 없습니다. (http, https 프로토콜만 지원)', 'info');
@@ -1478,7 +1485,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     state.originalLoadedListUrls = null;
                 }
                 updateButtonState();
-                Toast.show(`${newUrls.length}개의 탭을 ${mode === 'overwrite' ? '가져왔습니다' : '추가했습니다'}.`, 'success');
+                const skippedSuffix = skippedTabs > 0 ? ` (지원하지 않는/민감한 URL ${skippedTabs}개 제외)` : '';
+                Toast.show(`${newUrls.length}개의 탭을 ${mode === 'overwrite' ? '가져왔습니다' : '추가했습니다'}${skippedSuffix}.`, 'success');
                 scheduleSetCardHeight();
             } catch (e) {
                 console.error('Error fetching tabs:', e);
