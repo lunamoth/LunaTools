@@ -91,7 +91,9 @@ document.addEventListener('DOMContentLoaded', function() {
             FADE_DURATION: 300,
             MAX_IMPORT_FILE_SIZE_BYTES: 10 * 1024 * 1024,
             MAX_URLS_PER_RUN: 300,
-            MAX_URL_LENGTH: 2048
+            MAX_URL_LENGTH: 2048,
+            EXPORT_URL_REVOKE_DELAY_MS: 60 * 1000,
+            DELAY_LOADING_NAVIGATION_WAIT_MS: 2500
         };
 
         const UI = Object.keys(CONFIG.SELECTOR).reduce((acc, key) => {
@@ -1597,7 +1599,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), CONFIG.EXPORT_URL_REVOKE_DELAY_MS);
             Toast.show('모든 목록을 내보냈습니다.', 'success');
         };
 
@@ -1770,29 +1772,62 @@ document.addEventListener('DOMContentLoaded', function() {
             event.target.value = '';
         };
 
+        const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        async function waitForTabUrlAssignment(tabId, expectedUrl) {
+            const deadline = Date.now() + CONFIG.DELAY_LOADING_NAVIGATION_WAIT_MS;
+            let latestTab = null;
+
+            while (Date.now() < deadline) {
+                latestTab = await chrome.tabs.get(tabId);
+                const candidateUrl = latestTab.pendingUrl || latestTab.url || '';
+                if (normalizeUrlForOpening(candidateUrl) === expectedUrl) {
+                    return latestTab;
+                }
+                await wait(100);
+            }
+
+            return latestTab || await chrome.tabs.get(tabId);
+        }
+
         async function createAndDiscardTab(url) {
+            const normalizedUrl = normalizeUrlForOpening(url);
+            if (!normalizedUrl) {
+                throw new Error('지원하지 않는 URL 형식입니다.');
+            }
+
             let tabId = null;
 
             try {
-                const newTab = await chrome.tabs.create({ active: false });
+                const newTab = await chrome.tabs.create({ url: normalizedUrl, active: false });
                 if (!Number.isInteger(newTab?.id)) {
                     throw new Error('새 탭의 식별자를 확인할 수 없습니다.');
                 }
                 tabId = newTab.id;
 
-                await chrome.tabs.update(tabId, { url });
-                const discardResult = await chrome.tabs.discard(tabId);
-                const verifiedTab = discardResult?.discarded === true
-                    ? discardResult
-                    : await chrome.tabs.get(tabId);
+                const tabWithTargetUrl = await waitForTabUrlAssignment(tabId, normalizedUrl);
 
-                if (verifiedTab?.discarded !== true) {
-                    throw new Error('탭을 지연 로딩 상태로 전환하지 못했습니다.');
+                try {
+                    const discardResult = await chrome.tabs.discard(tabId);
+                    const verifiedTab = discardResult?.discarded === true
+                        ? discardResult
+                        : await chrome.tabs.get(tabId);
+
+                    if (verifiedTab?.discarded !== true) {
+                        console.warn(`Tab ${tabId} was opened but could not be discarded immediately. Keeping it as an inactive tab.`);
+                    }
+
+                    return verifiedTab || tabWithTargetUrl || newTab;
+                } catch (discardError) {
+                    console.warn(`Discard failed for tab ${tabId}. Keeping the inactive tab instead:`, discardError);
+                    try {
+                        return await chrome.tabs.get(tabId);
+                    } catch (_) {
+                        return tabWithTargetUrl || newTab;
+                    }
                 }
-
-                return verifiedTab;
             } catch (error) {
-                console.error(`Error creating/discarding tab for ${url}:`, error);
+                console.error(`Error creating delay-loaded tab for ${normalizedUrl}:`, error);
                 if (Number.isInteger(tabId)) {
                     try {
                         await chrome.tabs.remove(tabId);

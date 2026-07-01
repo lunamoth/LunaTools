@@ -21,6 +21,8 @@ const CONTEXT_MENU_ID_MERGE_TABS = "lunaToolsMergeTabsContextMenu";
 const BADGE_ALERT_THRESHOLD = 100;
 const CURRENCY_CODE_REGEX = /^[A-Z]{3}$/;
 const MAX_OPEN_TABS_PER_MESSAGE = 100;
+const MAX_OPEN_TABS_REQUEST_URLS = 1000;
+const MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS = 200000;
 const MAX_OPEN_TAB_URL_LENGTH = 2048;
 const SAFE_WEB_PROTOCOLS = new Set(['http:', 'https:']);
 
@@ -65,7 +67,30 @@ function normalizeOpenTabsRequestUrls(rawUrls) {
   const seenUrls = new Set();
   const stats = { invalid: 0, duplicate: 0, overLimit: 0 };
 
-  for (const rawUrl of rawUrls) {
+  if (!Array.isArray(rawUrls)) {
+    return {
+      urls,
+      invalid: 1,
+      duplicate: 0,
+      overLimit: 0,
+      skipped: 1,
+      requestLimit: MAX_OPEN_TABS_REQUEST_URLS,
+      payloadCharLimit: MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS
+    };
+  }
+
+  const inputUrls = rawUrls.slice(0, MAX_OPEN_TABS_REQUEST_URLS);
+  stats.overLimit += Math.max(0, rawUrls.length - inputUrls.length);
+
+  let payloadChars = 0;
+  for (const rawUrl of inputUrls) {
+    const rawLength = typeof rawUrl === 'string' ? rawUrl.length : 0;
+    if (payloadChars + rawLength > MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS) {
+      stats.overLimit += 1;
+      continue;
+    }
+    payloadChars += rawLength;
+
     const normalizedUrl = normalizeOpenTabUrl(rawUrl);
     if (!normalizedUrl) {
       stats.invalid += 1;
@@ -91,7 +116,9 @@ function normalizeOpenTabsRequestUrls(rawUrls) {
     invalid: stats.invalid,
     duplicate: stats.duplicate,
     overLimit: stats.overLimit,
-    skipped: stats.invalid + stats.duplicate + stats.overLimit
+    skipped: stats.invalid + stats.duplicate + stats.overLimit,
+    requestLimit: MAX_OPEN_TABS_REQUEST_URLS,
+    payloadCharLimit: MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS
   };
 }
 
@@ -1332,4 +1359,14 @@ chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
 });
 
 chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
+  const cachedInfo = tabManager.urlCache.get(tabId);
+
+  if (!cachedInfo) return;
+
+  // A tab can be detached before it is attached to a new window. Removing the
+  // stale reverse-URL entry prevents duplicate-tab cleanup and window sorting
+  // from acting on the tab as if it still belonged to the old window.
+  if (!detachInfo || cachedInfo.windowId === detachInfo.oldWindowId) {
+    tabManager._removeUrlFromCache(tabId, cachedInfo.url);
+  }
 });

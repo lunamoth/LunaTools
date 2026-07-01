@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const STATUS_VISIBLE_DURATION = 3000;
     const MAX_RESTORE_FILE_SIZE = 10 * 1024 * 1024;
+    const BACKUP_URL_REVOKE_DELAY_MS = 60 * 1000;
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
     // --- Helper Functions ---
@@ -360,7 +361,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), BACKUP_URL_REVOKE_DELAY_MS);
 
             showStatus('데이터를 성공적으로 백업했습니다.');
         } catch (error) {
