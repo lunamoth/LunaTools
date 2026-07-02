@@ -1723,14 +1723,15 @@
 
             return null;
         },
-        _normalizeCapturedAmountSpan: function(matchText, capturedText, baseOffset = 0) {
+        _normalizeCapturedAmountSpan: function(matchText, capturedText, baseOffset = 0, amountTextOverride = capturedText) {
             const captureOffsetInMatch = matchText.indexOf(capturedText);
             if (captureOffsetInMatch < 0) return null;
 
             const leadingWhitespaceLength = capturedText.length - capturedText.trimStart().length;
             const trailingWhitespaceLength = capturedText.length - capturedText.trimEnd().length;
-            const amountText = capturedText.trim();
-            if (!amountText) return null;
+            const spanText = capturedText.trim();
+            const amountText = String(amountTextOverride ?? '').trim();
+            if (!spanText || !amountText) return null;
 
             return {
                 amountText,
@@ -1738,21 +1739,30 @@
                 endOffset: baseOffset + captureOffsetInMatch + capturedText.length - trailingWhitespaceLength
             };
         },
-        _extractLeadingAmountCandidate: function(text) {
+        _getOptionalCurrencySymbolAmountPrefixSource: function() {
+            return String.raw`(?:US\s*)?[\$＄]|C\$|A\$|HK\$|NZ\$|S\$|Mex\$|R\$|SFr\.?|RM|Rs\.?|Rp|[£￡¥￥₩€₹₺₱₪฿]|zł|Kč|Ft|лв`;
+        },
+        _extractLeadingAmountCandidate: function(text, { allowLeadingCurrencySymbol = false } = {}) {
             const source = TextExtractor._getCurrencyAmountPatternSource();
-            const leadingRegex = new RegExp(`^\\s*(${source})(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu');
+            const optionalSymbolPrefix = allowLeadingCurrencySymbol
+                ? `(?:(?:${TextExtractor._getOptionalCurrencySymbolAmountPrefixSource()})\\s*)?`
+                : '';
+            const leadingRegex = new RegExp(`^\\s*(${optionalSymbolPrefix}(${source}))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu');
             const match = leadingRegex.exec(text);
             if (!match) return null;
 
-            return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1]);
+            return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], 0, match[2]);
         },
-        _extractTrailingAmountCandidate: function(text) {
+        _extractTrailingAmountCandidate: function(text, { allowLeadingCurrencySymbol = false } = {}) {
             const source = TextExtractor._getCurrencyAmountPatternSource();
-            const trailingRegex = new RegExp(`(${source})\\s*$`, 'iu');
+            const optionalSymbolPrefix = allowLeadingCurrencySymbol
+                ? `(?:(?:${TextExtractor._getOptionalCurrencySymbolAmountPrefixSource()})\\s*)?`
+                : '';
+            const trailingRegex = new RegExp(`(${optionalSymbolPrefix}(${source}))\\s*$`, 'iu');
             const match = trailingRegex.exec(text);
             if (!match) return null;
 
-            return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], match.index);
+            return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], match.index, match[2]);
         },
         _getCurrencyExpressionStart: function(originalText, currencyStart, matchedCurrencyText) {
             if (!/^[\$＄]$/u.test(matchedCurrencyText)) return currencyStart;
@@ -1761,12 +1771,44 @@
             const usdPrefixMatch = beforeCurrency.match(/(?:\bU\.?S\.?|\bUS)\s*$/iu);
             return usdPrefixMatch ? currencyStart - usdPrefixMatch[0].length : currencyStart;
         },
+        _getCurrencyTokenStrength: function(originalText, currencyStart, matchedCurrencyText) {
+            const token = String(matchedCurrencyText || '').trim();
+            if (!token) return 0;
+
+            if (TextExtractor._getCurrencyExpressionStart(originalText, currencyStart, token) < currencyStart) {
+                return 4;
+            }
+            if (/[A-Za-z가-힣]/u.test(token)) return 4;
+            if (token.length > 1) return 3;
+            return 1;
+        },
+        _doCurrencyCandidatesOverlap: function(a, b) {
+            return a.expressionStart < b.expressionEnd && b.expressionStart < a.expressionEnd;
+        },
+        _compareCurrencyCandidates: function(a, b) {
+            if (TextExtractor._doCurrencyCandidatesOverlap(a, b)) {
+                return b.tokenStrength - a.tokenStrength ||
+                    (b.expressionEnd - b.expressionStart) - (a.expressionEnd - a.expressionStart) ||
+                    b.matchedCurrencyLength - a.matchedCurrencyLength ||
+                    a.patternIndex - b.patternIndex;
+            }
+
+            return a.expressionStart - b.expressionStart ||
+                b.tokenStrength - a.tokenStrength ||
+                b.matchedCurrencyLength - a.matchedCurrencyLength ||
+                a.patternIndex - b.patternIndex;
+        },
         _buildCurrencyAmountCandidate: function(originalText, currencyCode, match, patternIndex) {
             const matchedCurrencyText = match[0];
             const currencyStart = match.index;
             const currencyEnd = currencyStart + matchedCurrencyText.length;
+            const tokenStrength = TextExtractor._getCurrencyTokenStrength(originalText, currencyStart, matchedCurrencyText);
+            const allowLeadingCurrencySymbol = tokenStrength >= 3;
 
-            const leadingAmountCandidate = TextExtractor._extractLeadingAmountCandidate(originalText.slice(currencyEnd));
+            const leadingAmountCandidate = TextExtractor._extractLeadingAmountCandidate(
+                originalText.slice(currencyEnd),
+                { allowLeadingCurrencySymbol }
+            );
             if (leadingAmountCandidate) {
                 const parsedLeading = TextExtractor._parseAmountCandidateText(leadingAmountCandidate.amountText);
                 if (parsedLeading) {
@@ -1779,13 +1821,18 @@
                         matchedCurrencyText,
                         magnitudeAmountText: parsedLeading.magnitudeAmountText,
                         expressionStart,
+                        expressionEnd,
+                        tokenStrength,
                         matchedCurrencyLength: matchedCurrencyText.length,
                         patternIndex
                     };
                 }
             }
 
-            const trailingAmountCandidate = TextExtractor._extractTrailingAmountCandidate(originalText.slice(0, currencyStart));
+            const trailingAmountCandidate = TextExtractor._extractTrailingAmountCandidate(
+                originalText.slice(0, currencyStart),
+                { allowLeadingCurrencySymbol }
+            );
             if (trailingAmountCandidate) {
                 const parsedTrailing = TextExtractor._parseAmountCandidateText(trailingAmountCandidate.amountText);
                 if (parsedTrailing) {
@@ -1798,6 +1845,8 @@
                         matchedCurrencyText,
                         magnitudeAmountText: parsedTrailing.magnitudeAmountText,
                         expressionStart,
+                        expressionEnd,
+                        tokenStrength,
                         matchedCurrencyLength: matchedCurrencyText.length,
                         patternIndex
                     };
@@ -1821,11 +1870,7 @@
 
             if (candidates.length === 0) return null;
 
-            candidates.sort((a, b) =>
-                a.expressionStart - b.expressionStart ||
-                b.matchedCurrencyLength - a.matchedCurrencyLength ||
-                a.patternIndex - b.patternIndex
-            );
+            candidates.sort(TextExtractor._compareCurrencyCandidates);
 
             return candidates[0];
         },

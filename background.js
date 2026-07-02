@@ -74,16 +74,19 @@ function normalizeOpenTabsRequestUrls(rawUrls) {
       duplicate: 0,
       overLimit: 0,
       skipped: 1,
+      requested: 0,
       requestLimit: MAX_OPEN_TABS_REQUEST_URLS,
       payloadCharLimit: MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS
     };
   }
 
-  const inputUrls = rawUrls.slice(0, MAX_OPEN_TABS_REQUEST_URLS);
-  stats.overLimit += Math.max(0, rawUrls.length - inputUrls.length);
+  const requested = rawUrls.length;
+  const inputCount = Math.min(requested, MAX_OPEN_TABS_REQUEST_URLS);
+  stats.overLimit += Math.max(0, requested - inputCount);
 
   let payloadChars = 0;
-  for (const rawUrl of inputUrls) {
+  for (let index = 0; index < inputCount; index += 1) {
+    const rawUrl = rawUrls[index];
     const rawLength = typeof rawUrl === 'string' ? rawUrl.length : 0;
     if (payloadChars + rawLength > MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS) {
       stats.overLimit += 1;
@@ -117,6 +120,7 @@ function normalizeOpenTabsRequestUrls(rawUrls) {
     duplicate: stats.duplicate,
     overLimit: stats.overLimit,
     skipped: stats.invalid + stats.duplicate + stats.overLimit,
+    requested,
     requestLimit: MAX_OPEN_TABS_REQUEST_URLS,
     payloadCharLimit: MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS
   };
@@ -1192,8 +1196,25 @@ chrome.commands.onCommand.addListener((command, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === 'openTabsInNewTab' && Array.isArray(message.urls)) {
-    const request = normalizeOpenTabsRequestUrls(message.urls);
-    const { urls, skipped, invalid, duplicate, overLimit } = request;
+    let request;
+    try {
+      request = normalizeOpenTabsRequestUrls(message.urls);
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        opened: 0,
+        failed: 0,
+        skipped: 0,
+        invalid: 0,
+        duplicate: 0,
+        overLimit: 0,
+        requested: Array.isArray(message.urls) ? message.urls.length : 0,
+        limit: MAX_OPEN_TABS_PER_MESSAGE,
+        error: error?.message || 'Failed to normalize URL request.'
+      });
+      return false;
+    }
+    const { urls, skipped, invalid, duplicate, overLimit, requested } = request;
 
     if (urls.length === 0) {
       sendResponse({
@@ -1204,6 +1225,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         invalid,
         duplicate,
         overLimit,
+        requested,
         limit: MAX_OPEN_TABS_PER_MESSAGE,
         error: 'No valid http/https URLs were provided.'
       });
@@ -1222,7 +1244,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           invalid,
           duplicate,
           overLimit,
-          requested: message.urls.length,
+          requested,
           limit: MAX_OPEN_TABS_PER_MESSAGE
         });
       })
@@ -1235,7 +1257,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           invalid,
           duplicate,
           overLimit,
-          requested: message.urls.length,
+          requested,
           limit: MAX_OPEN_TABS_PER_MESSAGE,
           error: error?.message || String(error)
         });
