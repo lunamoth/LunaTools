@@ -689,6 +689,7 @@
   class PictureInPictureHandler {
     static PIP_RESTRICTED_ATTRIBUTES = ['disablePictureInPicture'];
     static PIP_KEY = 'P';
+    static EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
 
     constructor() {
       this._overrideStates = new WeakMap();
@@ -953,17 +954,27 @@
         }, { once: true });
     }
 
+    _isEditableEventTarget(target) {
+      if (!(target instanceof Element)) return false;
+
+      const editableElement = target.closest('input, textarea, select, [contenteditable], [role="textbox"]');
+      if (!editableElement) return false;
+
+      const tagName = editableElement.tagName?.toUpperCase();
+      if (PictureInPictureHandler.EDITABLE_TAGS.has(tagName)) return true;
+      if (editableElement.getAttribute('role') === 'textbox') return true;
+
+      const contentEditableValue = editableElement.getAttribute('contenteditable');
+      return editableElement.isContentEditable ||
+        (contentEditableValue !== null && contentEditableValue.toLowerCase() !== 'false');
+    }
+
     _handleKeyDown(event) {
       if (!event.isTrusted) return;
       if (!(event.ctrlKey && event.shiftKey && event.key.toUpperCase() === PictureInPictureHandler.PIP_KEY)) {
         return;
       }
-      const targetElement = event.target;
-      const isEditableContext = targetElement && (
-        targetElement.isContentEditable ||
-        ['INPUT', 'TEXTAREA', 'SELECT'].includes(targetElement.tagName?.toUpperCase())
-      );
-      if (isEditableContext) {
+      if (this._isEditableEventTarget(event.target)) {
         return;
       }
       event.preventDefault();

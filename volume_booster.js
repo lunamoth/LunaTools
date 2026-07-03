@@ -347,11 +347,24 @@
             this.#uiController.update(this.#isActivated, multiplier);
         }
 
+        #isEditableEventTarget(target) {
+            if (!(target instanceof Element)) return false;
+
+            const editableElement = target.closest('input, textarea, select, [contenteditable], [role="textbox"]');
+            if (!editableElement) return false;
+
+            const tagName = editableElement.tagName?.toUpperCase();
+            if (CONFIG.UI.IGNORED_TAGS.has(tagName)) return true;
+            if (editableElement.getAttribute('role') === 'textbox') return true;
+
+            const contentEditableValue = editableElement.getAttribute('contenteditable');
+            return editableElement.isContentEditable ||
+                (contentEditableValue !== null && contentEditableValue.toLowerCase() !== 'false');
+        }
+
         #handleKeyDown(e) {
             if (!e.isTrusted) return;
-            const activeEl = document.activeElement;
-            const isInput = activeEl && (CONFIG.UI.IGNORED_TAGS.has(activeEl.tagName) || activeEl.isContentEditable);
-            if (isInput || !e.altKey || e.key.toLowerCase() !== CONFIG.ACTIVATION_KEY) return;
+            if (this.#isEditableEventTarget(e.target) || !e.altKey || e.key.toLowerCase() !== CONFIG.ACTIVATION_KEY) return;
 
             e.preventDefault();
             e.stopPropagation();

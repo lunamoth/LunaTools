@@ -541,7 +541,44 @@ function isTabAccessError(error) {
 
 function isWindowAccessError(error) {
   const message = error?.message?.toLowerCase() || "";
-  return message.includes("no window with id");
+  return message.includes("no window with id") ||
+         message.includes("invalid window id") ||
+         message.includes("window not found");
+}
+
+async function createTabsForOpenRequest(urls, sender) {
+  const preferredWindowId = Number.isInteger(sender?.tab?.windowId) ? sender.tab.windowId : null;
+  let shouldUsePreferredWindow = preferredWindowId !== null;
+  let opened = 0;
+  let failed = 0;
+
+  for (const url of urls) {
+    const createProperties = { url, active: false };
+    if (shouldUsePreferredWindow) {
+      createProperties.windowId = preferredWindowId;
+    }
+
+    try {
+      await chrome.tabs.create(createProperties);
+      opened += 1;
+    } catch (error) {
+      if (shouldUsePreferredWindow && isWindowAccessError(error)) {
+        shouldUsePreferredWindow = false;
+        try {
+          await chrome.tabs.create({ url, active: false });
+          opened += 1;
+        } catch (fallbackError) {
+          failed += 1;
+          console.warn('LunaTools: URL 새 탭 열기 실패', fallbackError);
+        }
+      } else {
+        failed += 1;
+        console.warn('LunaTools: URL 새 탭 열기 실패', error);
+      }
+    }
+  }
+
+  return { opened, failed };
 }
 
 async function handleGestureAction(gesture, tabId) {
@@ -1232,10 +1269,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
-    Promise.allSettled(urls.map(url => chrome.tabs.create({ url, active: false })))
-      .then(results => {
-        const opened = results.filter(result => result.status === 'fulfilled').length;
-        const failed = results.length - opened;
+    createTabsForOpenRequest(urls, sender)
+      .then(({ opened, failed }) => {
         sendResponse({
           ok: failed === 0 && invalid === 0 && overLimit === 0,
           opened,

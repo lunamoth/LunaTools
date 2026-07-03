@@ -92,6 +92,7 @@ document.addEventListener('DOMContentLoaded', function() {
             MAX_IMPORT_FILE_SIZE_BYTES: 10 * 1024 * 1024,
             MAX_URLS_PER_RUN: 300,
             MAX_URL_LENGTH: 2048,
+            MAX_LIST_NAME_LENGTH: 200,
             EXPORT_URL_REVOKE_DELAY_MS: 60 * 1000,
             DELAY_LOADING_NAVIGATION_WAIT_MS: 2500
         };
@@ -255,16 +256,26 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+        const CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/;
         const isReservedObjectKey = (key) => RESERVED_OBJECT_KEYS.has(String(key));
+        const normalizeListName = (name) => String(name ?? '').trim().replace(/\s+/g, ' ');
+        const isValidListName = (name) => {
+            const normalizedName = normalizeListName(name);
+            return Boolean(normalizedName) &&
+                normalizedName.length <= CONFIG.MAX_LIST_NAME_LENGTH &&
+                !CONTROL_CHARACTER_REGEX.test(normalizedName) &&
+                !isReservedObjectKey(normalizedName);
+        };
 
         const toSafeListMap = (value) => {
             const safeMap = Object.create(null);
             if (!value || typeof value !== 'object' || Array.isArray(value)) return safeMap;
 
             for (const [key, list] of Object.entries(value)) {
-                if (isReservedObjectKey(key)) continue;
+                const normalizedName = normalizeListName(key);
+                if (!isValidListName(normalizedName)) continue;
                 if (!list || typeof list !== 'object' || Array.isArray(list) || typeof list.urls !== 'string') continue;
-                safeMap[key] = {
+                safeMap[normalizedName] = {
                     urls: list.urls,
                     createdAt: typeof list.createdAt === 'string' ? list.createdAt : new Date().toISOString()
                 };
@@ -280,10 +291,15 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             for (const [key, list] of Object.entries(value)) {
-                if (isReservedObjectKey(key) || !list || typeof list !== 'object' || Array.isArray(list) || typeof list.urls !== 'string') {
+                const normalizedName = normalizeListName(key);
+                if (!isValidListName(normalizedName)) {
+                    console.warn(`Skipping unsafe or invalid stored list name: ${key}`);
+                    continue;
+                }
+                if (!list || typeof list !== 'object' || Array.isArray(list) || typeof list.urls !== 'string') {
                     throw new Error(`저장된 URL 목록 '${key}'의 데이터가 손상되었습니다.`);
                 }
-                safeMap[key] = {
+                safeMap[normalizedName] = {
                     urls: list.urls,
                     createdAt: typeof list.createdAt === 'string' ? list.createdAt : new Date().toISOString()
                 };
@@ -292,7 +308,20 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const assertSafeListName = (name) => {
-            if (isReservedObjectKey(name)) {
+            const normalizedName = normalizeListName(name);
+            if (!normalizedName) {
+                Toast.show('목록 이름은 비워둘 수 없습니다.', 'error');
+                return false;
+            }
+            if (normalizedName.length > CONFIG.MAX_LIST_NAME_LENGTH) {
+                Toast.show(`목록 이름은 ${CONFIG.MAX_LIST_NAME_LENGTH}자를 초과할 수 없습니다.`, 'error');
+                return false;
+            }
+            if (CONTROL_CHARACTER_REGEX.test(normalizedName)) {
+                Toast.show('목록 이름에 제어 문자는 사용할 수 없습니다.', 'error');
+                return false;
+            }
+            if (isReservedObjectKey(normalizedName)) {
                 Toast.show('사용할 수 없는 목록 이름입니다. 다른 이름을 입력해주세요.', 'error');
                 return false;
             }
@@ -394,6 +423,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         const value = node.getAttribute(attr);
                         if (value !== null) input.setAttribute(attr, value);
                     }
+                    input.setAttribute('type', input.type);
                     return input;
                 }
 
@@ -1251,7 +1281,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         const rawListName = document.getElementById('modal-input')?.value;
 
                         if (result && rawListName) {
-                            const listName = rawListName.trim().replace(/\s+/g, ' ');
+                            const listName = normalizeListName(rawListName);
                             if (!listName) {
                                 Toast.show('목록 이름은 비워둘 수 없습니다. 현재 편집 내용은 유지됩니다.', 'error');
                             } else if (!assertSafeListName(listName)) {
@@ -1326,7 +1356,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
 
-            const listName = rawListName.trim().replace(/\s+/g, ' ');
+            const listName = normalizeListName(rawListName);
             if (!listName) {
                 Toast.show('목록 이름은 비워둘 수 없습니다.', 'error');
                 return false;
@@ -1470,7 +1500,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const rawNewName = document.getElementById('modal-input')?.value;
             if (!result || !rawNewName) return;
 
-            const newName = rawNewName.trim().replace(/\s+/g, ' ');
+            const newName = normalizeListName(rawNewName);
             if (!newName) {
                 Toast.show('목록 이름은 비워둘 수 없습니다.', 'error');
                 return;
@@ -1617,9 +1647,12 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             const validImportedLists = Object.create(null);
+            let skippedInvalidListNames = 0;
             for (const [key, importedList] of Object.entries(importedJson)) {
-                if (isReservedObjectKey(key)) {
-                    console.warn(`Skipping unsafe list name during import: ${key}`);
+                const normalizedName = normalizeListName(key);
+                if (!isValidListName(normalizedName)) {
+                    skippedInvalidListNames += 1;
+                    console.warn(`Skipping unsafe or invalid list name during import: ${key}`);
                     continue;
                 }
                 if (typeof importedList === 'object' &&
@@ -1627,7 +1660,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     !Array.isArray(importedList) &&
                     'urls' in importedList &&
                     typeof importedList.urls === 'string') {
-                    validImportedLists[key] = {
+                    validImportedLists[normalizedName] = {
                         urls: importedList.urls,
                         createdAt: typeof importedList.createdAt === 'string' ? importedList.createdAt : new Date().toISOString()
                     };
@@ -1671,7 +1704,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             if (applyImport && await saveLists(newListsData)) {
-                Toast.show('JSON 목록을 성공적으로 가져왔습니다.', 'success');
+                const skippedNameSuffix = skippedInvalidListNames > 0 ? ` (이름 오류 ${skippedInvalidListNames}개 제외)` : '';
+                Toast.show(`JSON 목록을 성공적으로 가져왔습니다.${skippedNameSuffix}`, 'success');
 
                 if (state.loadedListName && newListsData[state.loadedListName]) {
                     const persistedUrls = newListsData[state.loadedListName].urls;
