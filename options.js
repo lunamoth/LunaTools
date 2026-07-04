@@ -35,16 +35,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const STATUS_VISIBLE_DURATION = 3000;
     const MAX_RESTORE_FILE_SIZE = 10 * 1024 * 1024;
     const BACKUP_URL_REVOKE_DELAY_MS = 60 * 1000;
+    const MAX_SESSION_URL_LENGTH = 2048;
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+    let statusHideTimer = null;
 
     // --- Helper Functions ---
 
     const showStatus = (message, isError = false) => {
         if (!statusDiv) return;
+        if (statusHideTimer) clearTimeout(statusHideTimer);
         statusDiv.textContent = message;
         statusDiv.className = `status-toast liquid-glass ${isError ? 'error' : 'success'} show`;
-        setTimeout(() => {
+        statusHideTimer = setTimeout(() => {
             statusDiv.classList.remove('show');
+            statusHideTimer = null;
         }, STATUS_VISIBLE_DURATION);
     };
 
@@ -150,8 +154,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const normalizeSafeSessionUrl = (url) => {
         if (typeof url !== 'string') return null;
+        const trimmedUrl = url.trim();
+        if (!trimmedUrl || trimmedUrl.length > MAX_SESSION_URL_LENGTH) return null;
         try {
-            const parsed = new URL(url.trim());
+            const parsed = new URL(trimmedUrl);
             return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : null;
         } catch (_) {
             return null;

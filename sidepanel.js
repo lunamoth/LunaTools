@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             SELECTOR: {
                 MAIN_CONTAINER: '.main-container',
+                HEADER: '.header',
                 SECTION_CARD_CONTAINER: '.section-card-container',
                 URL_INPUT: '#urlInput', INTERVAL_INPUT: '#intervalInput', REMOVE_DUPLICATES_CHECKBOX: '#removeDuplicates',
                 SORT_URLS_BEFORE_RUN_CHECKBOX: '#sortUrlsBeforeRun',
@@ -940,9 +941,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 const mainContainerHeight = UI.mainContainer ? UI.mainContainer.clientHeight : window.innerHeight;
                 const headerHeight = UI.header ? getElementHeightWithMargins(UI.header) : 0;
-                const availableHeight = mainContainerHeight - headerHeight - (parseFloat(getComputedStyle(UI.mainContainer).gap) || 0) - (parseFloat(getComputedStyle(UI.mainContainer).paddingTop) || 0) - (parseFloat(getComputedStyle(UI.mainContainer).paddingBottom) || 0);
+                const mainContainerStyle = UI.mainContainer ? getComputedStyle(UI.mainContainer) : null;
+                const availableHeight = mainContainerHeight - headerHeight
+                    - (parseFloat(mainContainerStyle?.gap) || 0)
+                    - (parseFloat(mainContainerStyle?.paddingTop) || 0)
+                    - (parseFloat(mainContainerStyle?.paddingBottom) || 0);
 
-                newHeight = Math.min(newHeight, availableHeight);
+                newHeight = Math.min(newHeight, Math.max(cssMinHeight, availableHeight));
 
 
                 if (totalContentHeight > 0) {
@@ -2090,31 +2095,62 @@ document.addEventListener('DOMContentLoaded', function() {
             scheduleSetCardHeight();
         };
 
-        const saveOptions = () => {
+        const normalizeRunOptions = (rawOptions = {}) => {
+            const normalized = { ...CONFIG.DEFAULT_OPTIONS };
+            const interval = Number(rawOptions.interval);
+            if (Number.isFinite(interval) && interval >= 0.1) {
+                normalized.interval = interval;
+            }
+
+            for (const key of ['removeDuplicates', 'focusLock', 'delayLoading', 'sortUrlsBeforeRun', 'playSound']) {
+                if (typeof rawOptions[key] === 'boolean') {
+                    normalized[key] = rawOptions[key];
+                }
+            }
+            return normalized;
+        };
+
+        const saveOptions = async () => {
             if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox || !UI.playSoundCheckbox) return;
+            const options = normalizeRunOptions({
+                interval: UI.intervalInput.value,
+                removeDuplicates: UI.removeDuplicatesCheckbox.checked,
+                focusLock: UI.focusLockCheckbox.checked,
+                delayLoading: UI.delayLoadingCheckbox.checked,
+                sortUrlsBeforeRun: UI.sortUrlsBeforeRunCheckbox.checked,
+                playSound: UI.playSoundCheckbox.checked
+            });
+            UI.intervalInput.value = options.interval;
+
             try {
-                chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: {
-                    interval: parseFloat(UI.intervalInput.value),
-                    removeDuplicates: UI.removeDuplicatesCheckbox.checked,
-                    focusLock: UI.focusLockCheckbox.checked,
-                    delayLoading: UI.delayLoadingCheckbox.checked,
-                    sortUrlsBeforeRun: UI.sortUrlsBeforeRunCheckbox.checked,
-                    playSound: UI.playSoundCheckbox.checked
-                }});
-            } catch (e) { console.error('Failed to save options:', e); }
+                await chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: options });
+            } catch (e) {
+                console.error('Failed to save options:', e);
+                Toast.show('실행 옵션 저장에 실패했습니다. 저장 공간 또는 권한 상태를 확인해주세요.', 'error', 5000);
+            }
         };
         const loadOptions = async () => {
             if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox || !UI.playSoundCheckbox) return;
             try {
                 const data = await chrome.storage.local.get(CONFIG.STORAGE_KEY);
-                const options = { ...CONFIG.DEFAULT_OPTIONS, ...(data[CONFIG.STORAGE_KEY] || {}) };
+                const options = normalizeRunOptions(data[CONFIG.STORAGE_KEY]);
                 UI.intervalInput.value = options.interval;
                 UI.removeDuplicatesCheckbox.checked = options.removeDuplicates;
                 UI.focusLockCheckbox.checked = options.focusLock;
                 UI.delayLoadingCheckbox.checked = options.delayLoading;
                 UI.sortUrlsBeforeRunCheckbox.checked = options.sortUrlsBeforeRun;
                 UI.playSoundCheckbox.checked = options.playSound;
-            } catch (e) { console.error('Failed to load options:', e); }
+            } catch (e) {
+                console.error('Failed to load options:', e);
+                Toast.show('실행 옵션을 불러오지 못해 기본값을 사용합니다.', 'error', 5000);
+                const options = normalizeRunOptions();
+                UI.intervalInput.value = options.interval;
+                UI.removeDuplicatesCheckbox.checked = options.removeDuplicates;
+                UI.focusLockCheckbox.checked = options.focusLock;
+                UI.delayLoadingCheckbox.checked = options.delayLoading;
+                UI.sortUrlsBeforeRunCheckbox.checked = options.sortUrlsBeforeRun;
+                UI.playSoundCheckbox.checked = options.playSound;
+            }
         };
 
         async function initialize() {
@@ -3021,7 +3057,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (protectedTabIds.has(candidate.id)) continue;
             try {
               const liveTab = await chrome.tabs.get(candidate.id);
-              if (liveTab.url === candidate.url && isValidUrl(liveTab.url)) {
+              const committedUrl = typeof liveTab.url === 'string' ? liveTab.url : '';
+              const pendingUrl = typeof liveTab.pendingUrl === 'string' ? liveTab.pendingUrl : '';
+              const stillOnSnapshotUrl = committedUrl === candidate.url && (!pendingUrl || pendingUrl === candidate.url);
+              if (stillOnSnapshotUrl && isValidUrl(committedUrl)) {
                 verifiedIds.push(candidate.id);
               } else {
                 changedCount++;
