@@ -37,6 +37,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const BACKUP_URL_REVOKE_DELAY_MS = 60 * 1000;
     const MAX_SESSION_URL_LENGTH = 2048;
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+    const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+    const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+    const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
     let statusHideTimer = null;
 
     // --- Helper Functions ---
@@ -152,13 +155,35 @@ document.addEventListener('DOMContentLoaded', () => {
         return Object.fromEntries(Object.entries(normalized));
     };
 
+    const isValidBackupHostname = (hostname) => {
+        const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
+        if (!normalizedHostname || normalizedHostname.length > 253) return false;
+        if (normalizedHostname === 'localhost') return true;
+        if (IPV6_HOSTNAME_REGEX.test(normalizedHostname)) return true;
+
+        if (IPV4_HOSTNAME_REGEX.test(normalizedHostname)) {
+            return normalizedHostname.split('.').every(part => {
+                if (!/^\d+$/.test(part)) return false;
+                const numericPart = Number(part);
+                return Number.isInteger(numericPart) && numericPart >= 0 && numericPart <= 255;
+            });
+        }
+
+        const labels = normalizedHostname.split('.');
+        return labels.every(label => HOSTNAME_LABEL_REGEX.test(label));
+    };
+
     const normalizeSafeSessionUrl = (url) => {
         if (typeof url !== 'string') return null;
         const trimmedUrl = url.trim();
         if (!trimmedUrl || trimmedUrl.length > MAX_SESSION_URL_LENGTH) return null;
+        if (/^[\\/]/.test(trimmedUrl)) return null;
         try {
             const parsed = new URL(trimmedUrl);
-            return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : null;
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+            if (parsed.username || parsed.password) return null;
+            if (!isValidBackupHostname(parsed.hostname)) return null;
+            return parsed.href;
         } catch (_) {
             return null;
         }

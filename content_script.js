@@ -78,6 +78,29 @@
     return !structuredRule.search || currentUrl.search === structuredRule.search;
   }
 
+  const SITE_SETTINGS_RECHECK_INTERVAL_MS = 1000;
+  let siteSettingsUnloadHandler = null;
+  let siteSettingsRecheckerInitialized = false;
+  let lastSiteSettingsHref = '';
+
+  function setSiteLockEnabled(isEnabled) {
+    if (isEnabled) {
+      if (!siteSettingsUnloadHandler) {
+        siteSettingsUnloadHandler = (event) => {
+          event.preventDefault();
+          event.returnValue = '';
+        };
+        window.addEventListener('beforeunload', siteSettingsUnloadHandler);
+      }
+      return;
+    }
+
+    if (siteSettingsUnloadHandler) {
+      window.removeEventListener('beforeunload', siteSettingsUnloadHandler);
+      siteSettingsUnloadHandler = null;
+    }
+  }
+
   async function applySiteSettingsAndCheckIfBlocked() {
     if (window.self !== window.top) {
       return false;
@@ -86,7 +109,9 @@
     let currentUrl;
     try {
       currentUrl = new URL(window.location.href);
+      lastSiteSettingsHref = currentUrl.href;
     } catch (_) {
+      setSiteLockEnabled(false);
       return false;
     }
 
@@ -94,21 +119,53 @@
       const { lockedSites = [], blockedSites = [] } = await chrome.storage.sync.get(['lockedSites', 'blockedSites']);
 
       if (Array.isArray(blockedSites) && blockedSites.some(rule => matchesBlockedSiteRule(currentUrl, rule))) {
+        setSiteLockEnabled(false);
         window.location.replace('about:blank');
         return true;
       }
 
-      if (Array.isArray(lockedSites) && lockedSites.some(rule => matchesLockedSiteRule(currentUrl, rule))) {
-        const preventUnload = (event) => {
-          event.preventDefault();
-          event.returnValue = '';
-        };
-        window.addEventListener('beforeunload', preventUnload);
-      }
+      const shouldLock = Array.isArray(lockedSites) && lockedSites.some(rule => matchesLockedSiteRule(currentUrl, rule));
+      setSiteLockEnabled(shouldLock);
     } catch (e) {
     }
 
     return false;
+  }
+
+  function initializeSiteSettingsRechecks() {
+    if (siteSettingsRecheckerInitialized || window.self !== window.top) {
+      return;
+    }
+    siteSettingsRecheckerInitialized = true;
+    lastSiteSettingsHref = window.location.href;
+
+    const recheckSiteSettings = () => {
+      void applySiteSettingsAndCheckIfBlocked();
+    };
+
+    const recheckIfUrlChanged = () => {
+      const currentHref = window.location.href;
+      if (currentHref !== lastSiteSettingsHref) {
+        lastSiteSettingsHref = currentHref;
+        recheckSiteSettings();
+      }
+    };
+
+    window.addEventListener('pageshow', recheckSiteSettings, true);
+    window.addEventListener('popstate', recheckSiteSettings, true);
+    window.addEventListener('hashchange', recheckSiteSettings, true);
+    document.addEventListener('visibilitychange', recheckIfUrlChanged, true);
+    setInterval(recheckIfUrlChanged, SITE_SETTINGS_RECHECK_INTERVAL_MS);
+
+    try {
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'sync') return;
+        if (changes.lockedSites || changes.blockedSites) {
+          recheckSiteSettings();
+        }
+      });
+    } catch (_) {
+    }
   }
 
   const isBlocked = await applySiteSettingsAndCheckIfBlocked();
@@ -116,6 +173,8 @@
   if (isBlocked) {
     return;
   }
+
+  initializeSiteSettingsRechecks();
 
   class MouseGestureHandler {
     static MIN_DRAG_DISTANCE_SQ = 100;

@@ -25,6 +25,9 @@ const MAX_OPEN_TABS_REQUEST_URLS = 1000;
 const MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS = 200000;
 const MAX_OPEN_TAB_URL_LENGTH = 2048;
 const SAFE_WEB_PROTOCOLS = new Set(['http:', 'https:']);
+const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
 
 let exchangeRateRefreshPromise = null;
 
@@ -32,11 +35,31 @@ function normalizeCurrencyCode(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function isValidOpenTabHostname(hostname) {
+  const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
+  if (!normalizedHostname || normalizedHostname.length > 253) return false;
+  if (normalizedHostname === 'localhost') return true;
+  if (IPV6_HOSTNAME_REGEX.test(normalizedHostname)) return true;
+
+  if (IPV4_HOSTNAME_REGEX.test(normalizedHostname)) {
+    return normalizedHostname.split('.').every(part => {
+      if (!/^\d+$/.test(part)) return false;
+      const numericPart = Number(part);
+      return Number.isInteger(numericPart) && numericPart >= 0 && numericPart <= 255;
+    });
+  }
+
+  const labels = normalizedHostname.split('.');
+  return labels.every(label => HOSTNAME_LABEL_REGEX.test(label));
+}
+
 function normalizeOpenTabUrl(rawUrl) {
   if (typeof rawUrl !== 'string') return null;
 
   const trimmed = rawUrl.trim();
   if (!trimmed || trimmed.length > MAX_OPEN_TAB_URL_LENGTH) return null;
+  // Relative paths and protocol-relative URLs must not be reinterpreted as external domains.
+  if (/^[\\/]/.test(trimmed)) return null;
 
   const hasHttpScheme = /^https?:\/\//i.test(trimmed);
   const protocolMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
@@ -45,7 +68,9 @@ function normalizeOpenTabUrl(rawUrl) {
   // Other explicit non-web schemes (javascript:, data:, chrome:, file:, ...) must never be opened here.
   if (protocolMatch && !hasHttpScheme) {
     const candidateScheme = protocolMatch[1].toLowerCase();
-    const looksLikeBareHostWithPort = candidateScheme.includes('.') || candidateScheme === 'localhost';
+    const valueAfterColon = trimmed.slice(protocolMatch[0].length);
+    const looksLikeBareHostWithPort =
+      (candidateScheme.includes('.') || candidateScheme === 'localhost') && /^\d+(?:[/?#]|$)/.test(valueAfterColon);
     if (!looksLikeBareHostWithPort) return null;
   }
 
@@ -53,7 +78,7 @@ function normalizeOpenTabUrl(rawUrl) {
 
   try {
     const parsed = new URL(candidate);
-    if (!SAFE_WEB_PROTOCOLS.has(parsed.protocol) || !parsed.hostname) return null;
+    if (!SAFE_WEB_PROTOCOLS.has(parsed.protocol) || !isValidOpenTabHostname(parsed.hostname)) return null;
     // Avoid misleading URLs such as https://trusted.example@evil.example/.
     if (parsed.username || parsed.password) return null;
     return parsed.href;

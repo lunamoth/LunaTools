@@ -166,11 +166,34 @@ document.addEventListener('DOMContentLoaded', function() {
         }[ch]));
 
         const OPENABLE_URL_PROTOCOLS = new Set(['http:', 'https:']);
+        const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+        const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+        const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
+
+        const isValidOpenableHostname = (hostname) => {
+            const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
+            if (!normalizedHostname || normalizedHostname.length > 253) return false;
+            if (normalizedHostname === 'localhost') return true;
+            if (IPV6_HOSTNAME_REGEX.test(normalizedHostname)) return true;
+
+            if (IPV4_HOSTNAME_REGEX.test(normalizedHostname)) {
+                return normalizedHostname.split('.').every(part => {
+                    if (!/^\d+$/.test(part)) return false;
+                    const numericPart = Number(part);
+                    return Number.isInteger(numericPart) && numericPart >= 0 && numericPart <= 255;
+                });
+            }
+
+            const labels = normalizedHostname.split('.');
+            return labels.every(label => HOSTNAME_LABEL_REGEX.test(label));
+        };
 
         const normalizeUrlForOpening = (rawUrl) => {
             if (typeof rawUrl !== 'string') return null;
             const trimmed = rawUrl.trim();
             if (!trimmed || trimmed.length > CONFIG.MAX_URL_LENGTH) return null;
+            // Relative paths and protocol-relative URLs must not be reinterpreted as external domains.
+            if (/^[\\/]/.test(trimmed)) return null;
 
             const hasOpenableScheme = /^https?:\/\//i.test(trimmed);
             const protocolMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
@@ -178,14 +201,16 @@ document.addEventListener('DOMContentLoaded', function() {
             // Bare host:port values are accepted, but explicit unsafe schemes are rejected.
             if (protocolMatch && !hasOpenableScheme) {
                 const candidateScheme = protocolMatch[1].toLowerCase();
-                const looksLikeBareHostWithPort = candidateScheme.includes('.') || candidateScheme === 'localhost';
+                const valueAfterColon = trimmed.slice(protocolMatch[0].length);
+                const looksLikeBareHostWithPort =
+                    (candidateScheme.includes('.') || candidateScheme === 'localhost') && /^\d+(?:[/?#]|$)/.test(valueAfterColon);
                 if (!looksLikeBareHostWithPort) return null;
             }
 
             const candidate = hasOpenableScheme ? trimmed : `https://${trimmed}`;
             try {
                 const parsed = new URL(candidate);
-                if (!OPENABLE_URL_PROTOCOLS.has(parsed.protocol) || !parsed.hostname) return null;
+                if (!OPENABLE_URL_PROTOCOLS.has(parsed.protocol) || !isValidOpenableHostname(parsed.hostname)) return null;
                 if (parsed.username || parsed.password) return null;
                 return parsed.href;
             } catch (_) {
@@ -2544,16 +2569,45 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       };
       
-      const isValidUrl = (url) => {
-        if (!url || typeof url !== 'string' || url.length > CONSTANTS.LIMITS.TAB_URL_MAX_LENGTH) return false;
-        try {
-          const parsed = new URL(url);
-          return CONSTANTS.PROTOCOLS.SAFE.includes(parsed.protocol) &&
-            Boolean(parsed.hostname) &&
-            !parsed.username &&
-            !parsed.password;
-        } catch { return false; }
+      const SESSION_HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+      const SESSION_IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+      const SESSION_IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
+
+      const isValidSessionHostname = (hostname) => {
+        const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
+        if (!normalizedHostname || normalizedHostname.length > 253) return false;
+        if (normalizedHostname === 'localhost') return true;
+        if (SESSION_IPV6_HOSTNAME_REGEX.test(normalizedHostname)) return true;
+
+        if (SESSION_IPV4_HOSTNAME_REGEX.test(normalizedHostname)) {
+          return normalizedHostname.split('.').every(part => {
+            if (!/^\d+$/.test(part)) return false;
+            const numericPart = Number(part);
+            return Number.isInteger(numericPart) && numericPart >= 0 && numericPart <= 255;
+          });
+        }
+
+        const labels = normalizedHostname.split('.');
+        return labels.every(label => SESSION_HOSTNAME_LABEL_REGEX.test(label));
       };
+
+      const normalizeSessionUrl = (url) => {
+        if (typeof url !== 'string') return null;
+        const trimmedUrl = url.trim();
+        if (!trimmedUrl || trimmedUrl.length > CONSTANTS.LIMITS.TAB_URL_MAX_LENGTH) return null;
+        if (/^[\\/]/.test(trimmedUrl)) return null;
+        try {
+          const parsed = new URL(trimmedUrl);
+          if (!CONSTANTS.PROTOCOLS.SAFE.includes(parsed.protocol)) return null;
+          if (parsed.username || parsed.password) return null;
+          if (!isValidSessionHostname(parsed.hostname)) return null;
+          return parsed.href;
+        } catch (_) {
+          return null;
+        }
+      };
+
+      const isValidUrl = (url) => Boolean(normalizeSessionUrl(url));
 
       const isValidTab = (tab) => {
         if (!tab || typeof tab !== 'object' || Array.isArray(tab) || typeof tab.url !== 'string' || !isValidUrl(tab.url)) return false;
@@ -3299,9 +3353,13 @@ document.addEventListener('DOMContentLoaded', function() {
               .filter(isValidSession)
               .map(session => {
                 const clonedSession = JSON.parse(JSON.stringify(session));
+                clonedSession.tabs = clonedSession.tabs
+                  .map(tab => ({ ...tab, url: normalizeSessionUrl(tab.url) }))
+                  .filter(tab => Boolean(tab.url));
                 if (!hasOwn(clonedSession, 'isPinned')) clonedSession.isPinned = false;
                 return clonedSession;
-              });
+              })
+              .filter(session => Array.isArray(session.tabs) && session.tabs.length > 0);
 
             if (valid.length === 0) throw new Error(CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS);
 
