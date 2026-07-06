@@ -35,6 +35,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const STATUS_VISIBLE_DURATION = 3000;
     const MAX_RESTORE_FILE_SIZE = 10 * 1024 * 1024;
     const BACKUP_URL_REVOKE_DELAY_MS = 60 * 1000;
+    const BACKUP_FORMAT_VERSION = 2;
+    const BACKUP_SNAPSHOT_MODE = 'known-keys-full';
     const MAX_SESSION_URL_LENGTH = 2048;
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
     const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
@@ -257,6 +259,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    const getRestoreKeyScope = (rawBackupData, rawArea, knownKeys) => {
+        const isFullKnownKeysSnapshot = Number(rawBackupData.formatVersion) >= BACKUP_FORMAT_VERSION &&
+            rawBackupData.snapshotMode === BACKUP_SNAPSHOT_MODE;
+
+        if (isFullKnownKeysSnapshot) return [...knownKeys];
+        return knownKeys.filter(key => hasOwn(rawArea, key));
+    };
+
     const normalizeBackupData = (rawBackupData) => {
         if (!rawBackupData || typeof rawBackupData !== 'object') {
             throw new Error('유효하지 않은 백업 파일 형식입니다.');
@@ -272,11 +282,19 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error('유효하지 않은 백업 파일 형식입니다.');
         }
 
-        const normalizedSync = {
-            [STORAGE_KEYS.LOCKED]: normalizeStringArray(syncRaw[STORAGE_KEYS.LOCKED]),
-            [STORAGE_KEYS.BLOCKED]: normalizeStringArray(syncRaw[STORAGE_KEYS.BLOCKED]),
-            [STORAGE_KEYS.DISABLED_DRAG]: normalizeStringArray(syncRaw[STORAGE_KEYS.DISABLED_DRAG])
-        };
+        const syncKeysToReplace = getRestoreKeyScope(rawBackupData, syncRaw, SYNC_KEYS);
+        const localKeysToReplace = getRestoreKeyScope(rawBackupData, localRaw, LOCAL_KEYS);
+
+        const normalizedSync = {};
+        if (hasOwn(syncRaw, STORAGE_KEYS.LOCKED)) {
+            normalizedSync[STORAGE_KEYS.LOCKED] = normalizeStringArray(syncRaw[STORAGE_KEYS.LOCKED]);
+        }
+        if (hasOwn(syncRaw, STORAGE_KEYS.BLOCKED)) {
+            normalizedSync[STORAGE_KEYS.BLOCKED] = normalizeStringArray(syncRaw[STORAGE_KEYS.BLOCKED]);
+        }
+        if (hasOwn(syncRaw, STORAGE_KEYS.DISABLED_DRAG)) {
+            normalizedSync[STORAGE_KEYS.DISABLED_DRAG] = normalizeStringArray(syncRaw[STORAGE_KEYS.DISABLED_DRAG]);
+        }
 
         const normalizedLocal = {};
         if (hasOwn(localRaw, STORAGE_KEYS.MULTI_URL_OPTIONS)) {
@@ -291,7 +309,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         return {
             sync: normalizedSync,
-            local: normalizedLocal
+            local: normalizedLocal,
+            syncKeysToReplace,
+            localKeysToReplace
         };
     };
 
@@ -370,8 +390,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const localData = await chrome.storage.local.get(LOCAL_KEYS);
 
             const backupData = {
-                formatVersion: 1,
+                formatVersion: BACKUP_FORMAT_VERSION,
+                snapshotMode: BACKUP_SNAPSHOT_MODE,
                 extensionVersion: chrome.runtime.getManifest().version,
+                exportedAt: new Date().toISOString(),
                 sync: syncData,
                 local: localData
             };
@@ -432,8 +454,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 syncSnapshot = await chrome.storage.sync.get(SYNC_KEYS);
                 localSnapshot = await chrome.storage.local.get(LOCAL_KEYS);
 
-                await replaceKnownStorageKeys(chrome.storage.sync, SYNC_KEYS, backupData.sync);
-                await replaceKnownStorageKeys(chrome.storage.local, LOCAL_KEYS, backupData.local);
+                await replaceKnownStorageKeys(chrome.storage.sync, backupData.syncKeysToReplace, backupData.sync);
+                await replaceKnownStorageKeys(chrome.storage.local, backupData.localKeysToReplace, backupData.local);
                 
                 showStatus('데이터를 성공적으로 복원했습니다. 페이지가 새로고침됩니다.');
                 

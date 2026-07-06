@@ -1,15 +1,15 @@
 (function() {
+    'use strict';
 
     if (window.self !== window.top) {
         return;
     }
 
-    'use strict';
-
     const CONFIG = {
         VOLUME_MULTIPLIER: 3.0,
         ACTIVATION_KEY: 'v',
         DEBOUNCE_DELAY: 200,
+        MAX_PENDING_NODE_COUNT: 500,
         SAFE_MEDIA_PROTOCOLS: new Set(['blob:', 'data:', 'mediastream:']),
         UI: {
             INDICATOR_ID: 'sound-booster-indicator',
@@ -18,17 +18,6 @@
         }
     };
 
-    function debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
-    }
 
     class UIController {
         #indicatorElement = null;
@@ -123,6 +112,7 @@
         #audioContext = null;
         #sourceNodeMap = new WeakMap();
         #warnedUnsafeMedia = new WeakSet();
+        #hasSetupMedia = false;
         #userHasInteracted = false; 
 
         setUserInteracted() {
@@ -187,7 +177,7 @@
         }
 
         cleanupRemovedNodes(nodeList) {
-            if (!nodeList?.length) return;
+            if (!this.#hasSetupMedia || !nodeList?.length) return;
 
             for (const media of this.#findMediaInNodes(nodeList)) {
                 const audioComponents = this.#sourceNodeMap.get(media);
@@ -205,12 +195,7 @@
         #findMediaInNodes(nodeList) {
             const mediaElements = new Set();
             for (const node of nodeList) {
-                if (node.nodeType !== Node.ELEMENT_NODE) continue;
-                if (node.matches('video, audio')) mediaElements.add(node);
-                if (node.matches('source') && node.parentElement?.matches('video, audio')) {
-                    mediaElements.add(node.parentElement);
-                }
-                node.querySelectorAll('video, audio').forEach(el => mediaElements.add(el));
+                this.#findAllMediaElements(node).forEach(media => mediaElements.add(media));
             }
             return Array.from(mediaElements);
         }
@@ -276,6 +261,7 @@
                 const gainNode = this.#audioContext.createGain();
                 source.connect(gainNode).connect(this.#audioContext.destination);
                 const audioComponents = { source, gainNode, connected: true };
+                this.#hasSetupMedia = true;
                 this.#sourceNodeMap.set(mediaElement, audioComponents);
                 return audioComponents;
             } catch {
@@ -284,16 +270,43 @@
         }
 
         #findAllMediaElements(rootNode) {
-            const mediaElements = [];
+            const mediaElements = new Set();
             const nodesToScan = [rootNode];
+            const queuedShadowRoots = new WeakSet();
+
+            const collectElement = (element) => {
+                if (!element?.matches) return;
+
+                if (element.matches('video, audio')) mediaElements.add(element);
+                if (element.matches('source') && element.parentElement?.matches('video, audio')) {
+                    mediaElements.add(element.parentElement);
+                }
+                if (element.shadowRoot && !queuedShadowRoots.has(element.shadowRoot)) {
+                    queuedShadowRoots.add(element.shadowRoot);
+                    nodesToScan.push(element.shadowRoot);
+                }
+            };
+
             while (nodesToScan.length > 0) {
                 const currentNode = nodesToScan.pop();
-                mediaElements.push(...currentNode.querySelectorAll('video, audio'));
-                currentNode.querySelectorAll('*').forEach(element => {
-                    if (element.shadowRoot) nodesToScan.push(element.shadowRoot);
-                });
+                if (!currentNode) continue;
+
+                const isScannableRoot = currentNode.nodeType === Node.DOCUMENT_NODE ||
+                    currentNode.nodeType === Node.DOCUMENT_FRAGMENT_NODE ||
+                    currentNode.nodeType === Node.ELEMENT_NODE;
+                if (!isScannableRoot) continue;
+
+                if (currentNode.nodeType === Node.ELEMENT_NODE) collectElement(currentNode);
+
+                const treeWalker = document.createTreeWalker(currentNode, NodeFilter.SHOW_ELEMENT);
+                let element = treeWalker.nextNode();
+                while (element) {
+                    collectElement(element);
+                    element = treeWalker.nextNode();
+                }
             }
-            return mediaElements;
+
+            return Array.from(mediaElements);
         }
     }
 
@@ -304,26 +317,81 @@
             this.#toggleActivation.bind(this),
             CONFIG.UI
         );
-        #debouncedProcessNewNodes;
         #pendingAddedNodes = new Set();
-
-        constructor() {
-            this.#debouncedProcessNewNodes = debounce(
-                () => this.#flushPendingAddedNodes(),
-                CONFIG.DEBOUNCE_DELAY
-            );
-        }
+        #pendingScanTimer = null;
+        #isFlushingPendingNodes = false;
+        #needsFullDocumentScan = false;
 
         #queueAddedNodes(nodes) {
-            for (const node of nodes) this.#pendingAddedNodes.add(node);
-            this.#debouncedProcessNewNodes();
+            for (const node of nodes) {
+                if (!this.#shouldQueueAddedNode(node)) continue;
+
+                if (this.#pendingAddedNodes.size >= CONFIG.MAX_PENDING_NODE_COUNT) {
+                    this.#pendingAddedNodes.clear();
+                    this.#needsFullDocumentScan = true;
+                    break;
+                }
+                this.#pendingAddedNodes.add(node);
+            }
+
+            if (this.#pendingAddedNodes.size > 0 || this.#needsFullDocumentScan) {
+                this.#schedulePendingNodeScan();
+            }
+        }
+
+        #shouldQueueAddedNode(node) {
+            return node?.nodeType === Node.ELEMENT_NODE ||
+                node?.nodeType === Node.DOCUMENT_FRAGMENT_NODE ||
+                node?.nodeType === Node.DOCUMENT_NODE;
+        }
+
+        #shouldQueueAttributeTarget(target) {
+            return target instanceof Element && target.matches('video, audio, source');
+        }
+
+        #schedulePendingNodeScan() {
+            if (this.#pendingScanTimer !== null || this.#isFlushingPendingNodes) return;
+
+            this.#pendingScanTimer = window.setTimeout(() => {
+                this.#pendingScanTimer = null;
+                this.#flushPendingAddedNodes();
+            }, CONFIG.DEBOUNCE_DELAY);
+        }
+
+        #clearPendingNodeScan() {
+            if (this.#pendingScanTimer !== null) {
+                clearTimeout(this.#pendingScanTimer);
+                this.#pendingScanTimer = null;
+            }
+            this.#pendingAddedNodes.clear();
+            this.#needsFullDocumentScan = false;
         }
 
         async #flushPendingAddedNodes() {
-            if (this.#pendingAddedNodes.size === 0) return;
-            const nodes = Array.from(this.#pendingAddedNodes);
-            this.#pendingAddedNodes.clear();
-            await this.#audioProcessor.processNewNodes(nodes, this.#isActivated, CONFIG.VOLUME_MULTIPLIER);
+            if (this.#isFlushingPendingNodes) return;
+            if (!this.#isActivated) {
+                this.#clearPendingNodeScan();
+                return;
+            }
+            if (this.#pendingAddedNodes.size === 0 && !this.#needsFullDocumentScan) return;
+
+            this.#isFlushingPendingNodes = true;
+            try {
+                if (this.#needsFullDocumentScan) {
+                    this.#pendingAddedNodes.clear();
+                    this.#needsFullDocumentScan = false;
+                    await this.#audioProcessor.updateAllVolumes(this.#isActivated, CONFIG.VOLUME_MULTIPLIER);
+                } else {
+                    const nodes = Array.from(this.#pendingAddedNodes);
+                    this.#pendingAddedNodes.clear();
+                    await this.#audioProcessor.processNewNodes(nodes, this.#isActivated, CONFIG.VOLUME_MULTIPLIER);
+                }
+            } finally {
+                this.#isFlushingPendingNodes = false;
+                if ((this.#pendingAddedNodes.size > 0 || this.#needsFullDocumentScan) && this.#isActivated) {
+                    this.#schedulePendingNodeScan();
+                }
+            }
         }
 
         init() {
@@ -344,6 +412,7 @@
             this.#isActivated = !this.#isActivated;
             const multiplier = CONFIG.VOLUME_MULTIPLIER;
             await this.#audioProcessor.updateAllVolumes(this.#isActivated, multiplier);
+            if (!this.#isActivated) this.#clearPendingNodeScan();
             this.#uiController.update(this.#isActivated, multiplier);
         }
 
@@ -377,7 +446,9 @@
                 const removedNodes = [];
                 for (const mutation of mutationsList) {
                     if (mutation.type === 'attributes') {
-                        addedNodes.push(mutation.target);
+                        if (this.#shouldQueueAttributeTarget(mutation.target)) {
+                            addedNodes.push(mutation.target);
+                        }
                     } else {
                         addedNodes.push(...mutation.addedNodes);
                         removedNodes.push(...mutation.removedNodes);
@@ -385,9 +456,9 @@
                 }
 
                 if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
-                // Accumulate every mutation batch. A conventional debounce would
-                // retain only the final batch and leave earlier dynamic media unboosted.
-                if (addedNodes.length > 0) this.#queueAddedNodes(addedNodes);
+                // 동적 미디어 부스트는 기능이 켜져 있을 때만 필요합니다.
+                // 꺼져 있는 동안 추가된 미디어는 다음 활성화 시 전체 스캔에서 반영됩니다.
+                if (this.#isActivated && addedNodes.length > 0) this.#queueAddedNodes(addedNodes);
             });
 
             observer.observe(document.documentElement, {

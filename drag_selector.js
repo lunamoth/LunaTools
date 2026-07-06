@@ -1,4 +1,6 @@
 (() => {
+    'use strict';
+
     const normalizeHostname = (value) => String(value || '').trim().toLowerCase().replace(/\.+$/, '');
 
     const isLikelyHostRule = (entry) => (
@@ -555,28 +557,60 @@
         }
     }
 
+    const getCurrentHostname = () => {
+        try {
+            return window.location.hostname;
+        } catch {
+            return '';
+        }
+    };
+
+    const isDragDisabledForCurrentSite = (disabledDragSites) => {
+        const currentHostname = getCurrentHostname();
+        const disabledSites = Array.isArray(disabledDragSites) ? disabledDragSites : [];
+        return disabledSites.some(site => matchesHostnameRule(currentHostname, site));
+    };
+
     const initializeDragSelector = () => {
         if (!window.dragSelectorInstance) {
             window.dragSelectorInstance = new DragSelector();
         }
     };
 
+    const destroyDragSelector = () => {
+        if (!window.dragSelectorInstance) return;
+        window.dragSelectorInstance.destroy();
+        delete window.dragSelectorInstance;
+    };
+
+    const syncDragSelectorState = (disabledDragSites) => {
+        if (isDragDisabledForCurrentSite(disabledDragSites)) {
+            destroyDragSelector();
+        } else {
+            initializeDragSelector();
+        }
+    };
+
+    const loadAndSyncDragSelectorState = () => {
+        try {
+            chrome.storage.sync.get({ disabledDragSites: [] }, ({ disabledDragSites }) => {
+                if (chrome.runtime.lastError) {
+                    initializeDragSelector();
+                    return;
+                }
+                syncDragSelectorState(disabledDragSites);
+            });
+        } catch {
+            initializeDragSelector();
+        }
+    };
+
+    loadAndSyncDragSelectorState();
+
     try {
-        chrome.storage.sync.get({ disabledDragSites: [] }, ({ disabledDragSites }) => {
-            if (chrome.runtime.lastError) {
-                initializeDragSelector();
-                return;
-            }
-
-            const currentHostname = window.location.hostname;
-            const disabledSites = Array.isArray(disabledDragSites) ? disabledDragSites : [];
-            const isDragDisabled = disabledSites.some(site => matchesHostnameRule(currentHostname, site));
-
-            if (!isDragDisabled) {
-                initializeDragSelector();
-            }
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+            if (areaName !== 'sync' || !changes.disabledDragSites) return;
+            syncDragSelectorState(changes.disabledDragSites.newValue);
         });
-    } catch (e) {
-        initializeDragSelector();
-    }
+    } catch {}
 })();

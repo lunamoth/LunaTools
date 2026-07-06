@@ -1663,6 +1663,44 @@ document.addEventListener('DOMContentLoaded', function() {
             Toast.show('모든 목록을 내보냈습니다.', 'success');
         };
 
+        const normalizeImportedUrlListText = (urlsText) => {
+            const normalizedUrls = [];
+            const seenUrls = new Set();
+            const stats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
+
+            for (const rawLine of String(urlsText ?? '').split(/\r?\n/)) {
+                const trimmed = rawLine.trim();
+                if (!trimmed) continue;
+                if (trimmed.length > CONFIG.MAX_URL_LENGTH) {
+                    stats.tooLong += 1;
+                    continue;
+                }
+
+                const normalizedUrl = normalizeUrlForOpening(trimmed);
+                if (!normalizedUrl) {
+                    stats.invalid += 1;
+                    continue;
+                }
+                if (seenUrls.has(normalizedUrl)) {
+                    stats.duplicate += 1;
+                    continue;
+                }
+                if (normalizedUrls.length >= CONFIG.MAX_URLS_PER_RUN) {
+                    stats.overLimit += 1;
+                    continue;
+                }
+
+                seenUrls.add(normalizedUrl);
+                normalizedUrls.push(normalizedUrl);
+            }
+
+            return {
+                urls: normalizedUrls.length > 0 ? `${normalizedUrls.join('\n')}\n` : '',
+                count: normalizedUrls.length,
+                ...stats
+            };
+        };
+
         async function processJsonImport(jsonString) {
             let importedJson;
             try {
@@ -1678,6 +1716,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const validImportedLists = Object.create(null);
             let skippedInvalidListNames = 0;
+            let skippedInvalidListStructures = 0;
+            const skippedUrlStats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
+
             for (const [key, importedList] of Object.entries(importedJson)) {
                 const normalizedName = normalizeListName(key);
                 if (!isValidListName(normalizedName)) {
@@ -1690,11 +1731,24 @@ document.addEventListener('DOMContentLoaded', function() {
                     !Array.isArray(importedList) &&
                     'urls' in importedList &&
                     typeof importedList.urls === 'string') {
+                    const normalizedImport = normalizeImportedUrlListText(importedList.urls);
+                    skippedUrlStats.invalid += normalizedImport.invalid;
+                    skippedUrlStats.tooLong += normalizedImport.tooLong;
+                    skippedUrlStats.duplicate += normalizedImport.duplicate;
+                    skippedUrlStats.overLimit += normalizedImport.overLimit;
+
+                    if (!normalizedImport.urls) {
+                        skippedInvalidListStructures += 1;
+                        console.warn(`Skipping list with no valid importable URLs: ${key}`);
+                        continue;
+                    }
+
                     validImportedLists[normalizedName] = {
-                        urls: importedList.urls,
+                        urls: normalizedImport.urls,
                         createdAt: typeof importedList.createdAt === 'string' ? importedList.createdAt : new Date().toISOString()
                     };
                 } else {
+                    skippedInvalidListStructures += 1;
                     console.warn(`Skipping invalid list structure for key: ${key} during import.`);
                 }
             }
@@ -1734,8 +1788,14 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             if (applyImport && await saveLists(newListsData)) {
-                const skippedNameSuffix = skippedInvalidListNames > 0 ? ` (이름 오류 ${skippedInvalidListNames}개 제외)` : '';
-                Toast.show(`JSON 목록을 성공적으로 가져왔습니다.${skippedNameSuffix}`, 'success');
+                const skippedDetails = [];
+                const skippedUrlCount = skippedUrlStats.invalid + skippedUrlStats.tooLong +
+                    skippedUrlStats.duplicate + skippedUrlStats.overLimit;
+                if (skippedInvalidListNames > 0) skippedDetails.push(`이름 오류 ${skippedInvalidListNames}개`);
+                if (skippedInvalidListStructures > 0) skippedDetails.push(`무효 목록 ${skippedInvalidListStructures}개`);
+                if (skippedUrlCount > 0) skippedDetails.push(`URL ${skippedUrlCount}개`);
+                const skippedSuffix = skippedDetails.length > 0 ? ` (${skippedDetails.join(', ')} 제외)` : '';
+                Toast.show(`JSON 목록을 성공적으로 가져왔습니다.${skippedSuffix}`, 'success');
 
                 if (state.loadedListName && newListsData[state.loadedListName]) {
                     const persistedUrls = newListsData[state.loadedListName].urls;
