@@ -166,6 +166,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }[ch]));
 
         const OPENABLE_URL_PROTOCOLS = new Set(['http:', 'https:']);
+        const URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
         const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
         const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
         const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
@@ -191,7 +192,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const normalizeUrlForOpening = (rawUrl) => {
             if (typeof rawUrl !== 'string') return null;
             const trimmed = rawUrl.trim();
-            if (!trimmed || trimmed.length > CONFIG.MAX_URL_LENGTH) return null;
+            if (!trimmed || trimmed.length > CONFIG.MAX_URL_LENGTH || URL_CONTROL_CHARACTER_REGEX.test(trimmed)) return null;
             // Relative paths and protocol-relative URLs must not be reinterpreted as external domains.
             if (/^[\\/]/.test(trimmed)) return null;
 
@@ -211,6 +212,7 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 const parsed = new URL(candidate);
                 if (!OPENABLE_URL_PROTOCOLS.has(parsed.protocol) || !isValidOpenableHostname(parsed.hostname)) return null;
+                if (parsed.href.length > CONFIG.MAX_URL_LENGTH) return null;
                 if (parsed.username || parsed.password) return null;
                 return parsed.href;
             } catch (_) {
@@ -1813,15 +1815,17 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         async function processTextImport(textContent) {
-            const urls = textContent.split('\n')
-                .map(line => normalizeUrlForOpening(line))
-                .filter(Boolean);
+            const normalizedImport = normalizeImportedUrlListText(textContent);
+            const urlString = normalizedImport.urls.trimEnd();
+            const importedCount = normalizedImport.count;
 
-            if (urls.length === 0) {
+            if (importedCount === 0) {
                 Toast.show('텍스트 파일에 유효한 URL이 없거나 지원하는 형식(http, https, 도메인 주소)이 아닙니다.', 'info');
+                showSkippedUrlNotice(normalizedImport);
                 return;
             }
-            const urlString = urls.join('\n');
+
+            showSkippedUrlNotice(normalizedImport);
 
             if (UI.urlInput && UI.urlInput.value.trim() !== '') {
                 const choice = await Modal.show({
@@ -1836,17 +1840,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 if (choice === 'overwrite') {
                     if (UI.urlInput) UI.urlInput.value = urlString + '\n';
-                    Toast.show(`텍스트 파일에서 ${urls.length}개의 URL을 가져와 덮어썼습니다.`, 'success');
+                    Toast.show(`텍스트 파일에서 ${importedCount}개의 URL을 가져와 덮어썼습니다.`, 'success');
                 } else if (choice === 'append') {
                     if (UI.urlInput) UI.urlInput.value += (UI.urlInput.value.endsWith('\n') || UI.urlInput.value.trim() === '' ? '' : '\n') + urlString + '\n';
-                    Toast.show(`텍스트 파일에서 ${urls.length}개의 URL을 추가했습니다.`, 'success');
+                    Toast.show(`텍스트 파일에서 ${importedCount}개의 URL을 추가했습니다.`, 'success');
                 } else {
                     Toast.show('텍스트 파일 가져오기가 취소되었습니다.', 'info');
                     return;
                 }
             } else {
                 if (UI.urlInput) UI.urlInput.value = urlString + '\n';
-                Toast.show(`텍스트 파일에서 ${urls.length}개의 URL을 가져왔습니다.`, 'success');
+                Toast.show(`텍스트 파일에서 ${importedCount}개의 URL을 가져왔습니다.`, 'success');
             }
 
             state.isDirty = true;
@@ -2632,6 +2636,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const SESSION_HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
       const SESSION_IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
       const SESSION_IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
+      const SESSION_URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
 
       const isValidSessionHostname = (hostname) => {
         const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
@@ -2654,11 +2659,12 @@ document.addEventListener('DOMContentLoaded', function() {
       const normalizeSessionUrl = (url) => {
         if (typeof url !== 'string') return null;
         const trimmedUrl = url.trim();
-        if (!trimmedUrl || trimmedUrl.length > CONSTANTS.LIMITS.TAB_URL_MAX_LENGTH) return null;
+        if (!trimmedUrl || trimmedUrl.length > CONSTANTS.LIMITS.TAB_URL_MAX_LENGTH || SESSION_URL_CONTROL_CHARACTER_REGEX.test(trimmedUrl)) return null;
         if (/^[\\/]/.test(trimmedUrl)) return null;
         try {
           const parsed = new URL(trimmedUrl);
           if (!CONSTANTS.PROTOCOLS.SAFE.includes(parsed.protocol)) return null;
+          if (parsed.href.length > CONSTANTS.LIMITS.TAB_URL_MAX_LENGTH) return null;
           if (parsed.username || parsed.password) return null;
           if (!isValidSessionHostname(parsed.hostname)) return null;
           return parsed.href;

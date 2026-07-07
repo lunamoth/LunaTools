@@ -42,6 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
     const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
     const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
+    const SESSION_URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
     let statusHideTimer = null;
 
     // --- Helper Functions ---
@@ -178,11 +179,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const normalizeSafeSessionUrl = (url) => {
         if (typeof url !== 'string') return null;
         const trimmedUrl = url.trim();
-        if (!trimmedUrl || trimmedUrl.length > MAX_SESSION_URL_LENGTH) return null;
+        if (!trimmedUrl || trimmedUrl.length > MAX_SESSION_URL_LENGTH || SESSION_URL_CONTROL_CHARACTER_REGEX.test(trimmedUrl)) return null;
         if (/^[\\/]/.test(trimmedUrl)) return null;
         try {
             const parsed = new URL(trimmedUrl);
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+            if (parsed.href.length > MAX_SESSION_URL_LENGTH) return null;
             if (parsed.username || parsed.password) return null;
             if (!isValidBackupHostname(parsed.hostname)) return null;
             return parsed.href;

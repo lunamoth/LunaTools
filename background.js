@@ -25,6 +25,7 @@ const MAX_OPEN_TABS_REQUEST_URLS = 1000;
 const MAX_OPEN_TABS_REQUEST_PAYLOAD_CHARS = 200000;
 const MAX_OPEN_TAB_URL_LENGTH = 2048;
 const SAFE_WEB_PROTOCOLS = new Set(['http:', 'https:']);
+const URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
 const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
@@ -57,7 +58,7 @@ function normalizeOpenTabUrl(rawUrl) {
   if (typeof rawUrl !== 'string') return null;
 
   const trimmed = rawUrl.trim();
-  if (!trimmed || trimmed.length > MAX_OPEN_TAB_URL_LENGTH) return null;
+  if (!trimmed || trimmed.length > MAX_OPEN_TAB_URL_LENGTH || URL_CONTROL_CHARACTER_REGEX.test(trimmed)) return null;
   // Relative paths and protocol-relative URLs must not be reinterpreted as external domains.
   if (/^[\\/]/.test(trimmed)) return null;
 
@@ -79,6 +80,7 @@ function normalizeOpenTabUrl(rawUrl) {
   try {
     const parsed = new URL(candidate);
     if (!SAFE_WEB_PROTOCOLS.has(parsed.protocol) || !isValidOpenTabHostname(parsed.hostname)) return null;
+    if (parsed.href.length > MAX_OPEN_TAB_URL_LENGTH) return null;
     // Avoid misleading URLs such as https://trusted.example@evil.example/.
     if (parsed.username || parsed.password) return null;
     return parsed.href;
@@ -712,6 +714,11 @@ class TabManager {
   _addUrlToCache(tabId, parsedUrl, windowId) {
     if (!(parsedUrl instanceof URL) || typeof tabId !== 'number' || typeof windowId !== 'number') return;
 
+    const previousCacheEntry = this.urlCache.get(tabId);
+    if (previousCacheEntry?.url?.href && previousCacheEntry.url.href !== parsedUrl.href) {
+      this._removeTabIdFromReverseLookup(tabId, previousCacheEntry.url.href);
+    }
+
     this.urlCache.set(tabId, { url: parsedUrl, windowId });
 
     const urlKey = parsedUrl.href;
@@ -733,12 +740,26 @@ class TabManager {
 
   _removeUrlFromCache(tabId, urlInstanceOrString) {
     if (typeof tabId !== 'number') return;
-    
+
+    const cachedInfo = this.urlCache.get(tabId);
     this.urlCache.delete(tabId);
 
+    const urlKeysToClean = new Set();
     if (urlInstanceOrString) {
-        const urlKey = (urlInstanceOrString instanceof URL) ? urlInstanceOrString.href : urlInstanceOrString;
-        this._removeTabIdFromReverseLookup(tabId, urlKey);
+      urlKeysToClean.add((urlInstanceOrString instanceof URL) ? urlInstanceOrString.href : String(urlInstanceOrString));
+    }
+    if (cachedInfo?.url?.href) {
+      urlKeysToClean.add(cachedInfo.url.href);
+    }
+
+    if (urlKeysToClean.size > 0) {
+      urlKeysToClean.forEach(urlKey => this._removeTabIdFromReverseLookup(tabId, urlKey));
+      return;
+    }
+
+    // Defensive cleanup for rare navigation/replacement races where the caller no longer knows the cached URL.
+    for (const urlKey of Array.from(this.reverseUrlLookup.keys())) {
+      this._removeTabIdFromReverseLookup(tabId, urlKey);
     }
   }
 

@@ -1575,18 +1575,59 @@
     };
 
     const TimeDateParser = {
-        _getOffsetStringForIANA(ianaTimeZone, year, monthIndex, day, hour, minute) {
+        _parseGmtOffsetMinutes(offsetString) {
+            const match = String(offsetString || '').match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/i);
+            if (!match) return null;
+            const hours = parseInt(match[2], 10);
+            const minutes = match[3] ? parseInt(match[3], 10) : 0;
+            if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours > 14 || minutes > 59) return null;
+            const sign = match[1] === '-' ? -1 : 1;
+            return sign * ((hours * 60) + minutes);
+        },
+
+        _formatGmtOffsetMinutes(offsetMinutes) {
+            if (!Number.isFinite(offsetMinutes)) return null;
+            const sign = offsetMinutes < 0 ? '-' : '+';
+            const absoluteMinutes = Math.abs(offsetMinutes);
+            const hours = Math.floor(absoluteMinutes / 60);
+            const minutes = absoluteMinutes % 60;
+            return `GMT${sign}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        },
+
+        _getOffsetStringForInstant(ianaTimeZone, instant) {
             try {
-                const sampleDate = new Date(Date.UTC(year, monthIndex, day, hour, minute));
                 const formatter = new Intl.DateTimeFormat('en-US', {
                     timeZone: ianaTimeZone,
                     timeZoneName: 'longOffset',
                 });
-                const parts = formatter.formatToParts(sampleDate);
+                const parts = formatter.formatToParts(instant);
                 const offsetPart = parts.find(p => p.type === 'timeZoneName');
                 return offsetPart ? offsetPart.value : null;
             } catch (e) {  }
             return null;
+        },
+
+        _getOffsetStringForIANA(ianaTimeZone, year, monthIndex, day, hour, minute) {
+            const localWallClockAsUtcMs = Date.UTC(year, monthIndex, day, hour, minute);
+            let candidateInstantMs = localWallClockAsUtcMs;
+            let offsetString = null;
+
+            // Resolve the offset for the intended local wall-clock time, not merely for
+            // the same numeric fields interpreted as UTC. This avoids one-hour errors
+            // around daylight-saving transitions for dynamic aliases such as PT/ET.
+            for (let attempt = 0; attempt < 4; attempt += 1) {
+                offsetString = this._getOffsetStringForInstant(ianaTimeZone, new Date(candidateInstantMs));
+                const offsetMinutes = this._parseGmtOffsetMinutes(offsetString);
+                if (offsetMinutes === null) return offsetString;
+
+                const nextCandidateInstantMs = localWallClockAsUtcMs - (offsetMinutes * 60 * 1000);
+                if (Math.abs(nextCandidateInstantMs - candidateInstantMs) < 1000) {
+                    return this._formatGmtOffsetMinutes(offsetMinutes);
+                }
+                candidateInstantMs = nextCandidateInstantMs;
+            }
+
+            return offsetString;
         },
 
         _isValidDate(year, monthIndex, day) {
