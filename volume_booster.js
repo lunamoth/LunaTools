@@ -32,12 +32,24 @@
         }
 
         create() {
-            if (document.querySelector(`#${this.#indicatorId}`)) return;
-            this.#indicatorElement = document.createElement('div');
-            this.#indicatorElement.id = this.#indicatorId;
-            this.#indicatorElement.textContent = '🔊';
             const uiHost = document.body || document.documentElement;
             if (!uiHost) return;
+
+            const existingOwnedIndicator = document.getElementById(this.#indicatorId);
+            if (existingOwnedIndicator?.dataset?.lunatoolsVolumeBooster === 'indicator') {
+                this.#indicatorElement = existingOwnedIndicator;
+                this.update(false, 1);
+                return;
+            }
+
+            if (existingOwnedIndicator) {
+                this.#indicatorId = `${this.#indicatorId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+            }
+
+            this.#indicatorElement = document.createElement('div');
+            this.#indicatorElement.id = this.#indicatorId;
+            this.#indicatorElement.dataset.lunatoolsVolumeBooster = 'indicator';
+            this.#indicatorElement.textContent = '🔊';
             uiHost.appendChild(this.#indicatorElement);
 
             this.#injectStyles();
@@ -59,7 +71,7 @@
         }
 
         #injectStyles() {
-            const styleId = 'simple-volume-booster-styles';
+            const styleId = `${this.#indicatorId}-styles`;
             if (document.getElementById(styleId)) return;
             
             const style = document.createElement('style');
@@ -321,6 +333,7 @@
         #pendingScanTimer = null;
         #isFlushingPendingNodes = false;
         #needsFullDocumentScan = false;
+        #toggleInProgress = false;
 
         #queueAddedNodes(nodes) {
             for (const node of nodes) {
@@ -401,19 +414,26 @@
         }
 
         async #toggleActivation() {
-            this.#audioProcessor.setUserInteracted();
-            
-            const context = await this.#audioProcessor.ensureContextIsRunning();
-            if (!context) {
-                const newContext = await this.#audioProcessor.ensureContextIsRunning();
-                if(!newContext) return;
-            }
+            if (this.#toggleInProgress) return;
+            this.#toggleInProgress = true;
 
-            this.#isActivated = !this.#isActivated;
-            const multiplier = CONFIG.VOLUME_MULTIPLIER;
-            await this.#audioProcessor.updateAllVolumes(this.#isActivated, multiplier);
-            if (!this.#isActivated) this.#clearPendingNodeScan();
-            this.#uiController.update(this.#isActivated, multiplier);
+            try {
+                this.#audioProcessor.setUserInteracted();
+                
+                const context = await this.#audioProcessor.ensureContextIsRunning();
+                if (!context) {
+                    const newContext = await this.#audioProcessor.ensureContextIsRunning();
+                    if(!newContext) return;
+                }
+
+                this.#isActivated = !this.#isActivated;
+                const multiplier = CONFIG.VOLUME_MULTIPLIER;
+                await this.#audioProcessor.updateAllVolumes(this.#isActivated, multiplier);
+                if (!this.#isActivated) this.#clearPendingNodeScan();
+                this.#uiController.update(this.#isActivated, multiplier);
+            } finally {
+                this.#toggleInProgress = false;
+            }
         }
 
         #isEditableEventTarget(target) {
@@ -432,7 +452,7 @@
         }
 
         #handleKeyDown(e) {
-            if (!e.isTrusted) return;
+            if (!e.isTrusted || e.repeat) return;
             if (this.#isEditableEventTarget(e.target) || !e.altKey || e.key.toLowerCase() !== CONFIG.ACTIVATION_KEY) return;
 
             e.preventDefault();

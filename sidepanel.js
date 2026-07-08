@@ -285,8 +285,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
         const CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/;
+        const hasOwnListKey = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
         const isReservedObjectKey = (key) => RESERVED_OBJECT_KEYS.has(String(key));
         const normalizeListName = (name) => String(name ?? '').trim().replace(/\s+/g, ' ');
+        const generateUniqueListName = (baseName, usedNames) => {
+            const used = usedNames instanceof Set ? usedNames : new Set(usedNames || []);
+            const maxLength = CONFIG.MAX_LIST_NAME_LENGTH;
+            const fallbackName = 'URL 목록';
+            const normalizedBase = normalizeListName(baseName).slice(0, maxLength).trim() || fallbackName;
+
+            if (!used.has(normalizedBase)) return normalizedBase;
+
+            let counter = 2;
+            let candidate;
+            do {
+                const suffix = ` (${counter++})`;
+                const availableLength = Math.max(1, maxLength - suffix.length);
+                const truncatedBase = normalizedBase.slice(0, availableLength).trimEnd() || fallbackName.slice(0, availableLength);
+                candidate = `${truncatedBase}${suffix}`;
+            } while (used.has(candidate));
+
+            return candidate;
+        };
         const isValidListName = (name) => {
             const normalizedName = normalizeListName(name);
             return Boolean(normalizedName) &&
@@ -300,9 +320,12 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!value || typeof value !== 'object' || Array.isArray(value)) return safeMap;
 
             for (const [key, list] of Object.entries(value)) {
-                const normalizedName = normalizeListName(key);
+                let normalizedName = normalizeListName(key);
                 if (!isValidListName(normalizedName)) continue;
                 if (!list || typeof list !== 'object' || Array.isArray(list) || typeof list.urls !== 'string') continue;
+                if (hasOwnListKey(safeMap, normalizedName)) {
+                    normalizedName = generateUniqueListName(normalizedName, Object.keys(safeMap));
+                }
                 safeMap[normalizedName] = {
                     urls: list.urls,
                     createdAt: typeof list.createdAt === 'string' ? list.createdAt : new Date().toISOString()
@@ -326,6 +349,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 if (!list || typeof list !== 'object' || Array.isArray(list) || typeof list.urls !== 'string') {
                     throw new Error(`저장된 URL 목록 '${key}'의 데이터가 손상되었습니다.`);
+                }
+                if (hasOwnListKey(safeMap, normalizedName)) {
+                    throw new Error(`저장된 URL 목록 '${key}'의 이름이 다른 목록과 충돌합니다.`);
                 }
                 safeMap[normalizedName] = {
                     urls: list.urls,
@@ -1717,7 +1743,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             const validImportedLists = Object.create(null);
+            const importedListNames = new Set();
             let skippedInvalidListNames = 0;
+            let renamedDuplicateListNames = 0;
             let skippedInvalidListStructures = 0;
             const skippedUrlStats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
 
@@ -1745,7 +1773,14 @@ document.addEventListener('DOMContentLoaded', function() {
                         continue;
                     }
 
-                    validImportedLists[normalizedName] = {
+                    let finalName = normalizedName;
+                    if (importedListNames.has(finalName)) {
+                        finalName = generateUniqueListName(finalName, importedListNames);
+                        renamedDuplicateListNames += 1;
+                    }
+                    importedListNames.add(finalName);
+
+                    validImportedLists[finalName] = {
                         urls: normalizedImport.urls,
                         createdAt: typeof importedList.createdAt === 'string' ? importedList.createdAt : new Date().toISOString()
                     };
@@ -1793,9 +1828,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 const skippedDetails = [];
                 const skippedUrlCount = skippedUrlStats.invalid + skippedUrlStats.tooLong +
                     skippedUrlStats.duplicate + skippedUrlStats.overLimit;
-                if (skippedInvalidListNames > 0) skippedDetails.push(`이름 오류 ${skippedInvalidListNames}개`);
-                if (skippedInvalidListStructures > 0) skippedDetails.push(`무효 목록 ${skippedInvalidListStructures}개`);
-                if (skippedUrlCount > 0) skippedDetails.push(`URL ${skippedUrlCount}개`);
+                if (skippedInvalidListNames > 0) skippedDetails.push(`이름 오류 ${skippedInvalidListNames}개 제외`);
+                if (renamedDuplicateListNames > 0) skippedDetails.push(`중복 이름 ${renamedDuplicateListNames}개 자동 변경`);
+                if (skippedInvalidListStructures > 0) skippedDetails.push(`무효 목록 ${skippedInvalidListStructures}개 제외`);
+                if (skippedUrlCount > 0) skippedDetails.push(`URL ${skippedUrlCount}개 제외`);
                 const skippedSuffix = skippedDetails.length > 0 ? ` (${skippedDetails.join(', ')} 제외)` : '';
                 Toast.show(`JSON 목록을 성공적으로 가져왔습니다.${skippedSuffix}`, 'success');
 

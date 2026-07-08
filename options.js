@@ -38,11 +38,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const BACKUP_FORMAT_VERSION = 2;
     const BACKUP_SNAPSHOT_MODE = 'known-keys-full';
     const MAX_SESSION_URL_LENGTH = 2048;
+    const MAX_LIST_NAME_LENGTH = 200;
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
     const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
     const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
     const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
-    const SESSION_URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
+    const CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
+    const SESSION_URL_CONTROL_CHARACTER_REGEX = CONTROL_CHARACTER_REGEX;
     let statusHideTimer = null;
 
     // --- Helper Functions ---
@@ -109,6 +111,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
     const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    const normalizeListName = (name) => String(name ?? '').trim().replace(/\s+/g, ' ');
+    const isValidListName = (name) => {
+        const normalizedName = normalizeListName(name);
+        return Boolean(normalizedName) &&
+            normalizedName.length <= MAX_LIST_NAME_LENGTH &&
+            !CONTROL_CHARACTER_REGEX.test(normalizedName) &&
+            !RESERVED_OBJECT_KEYS.has(normalizedName);
+    };
 
     const cloneJsonValue = (value) => JSON.parse(JSON.stringify(value));
 
@@ -144,13 +154,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const normalized = Object.create(null);
         for (const [name, list] of Object.entries(value)) {
-            if (RESERVED_OBJECT_KEYS.has(name) || !isRecord(list) || typeof list.urls !== 'string') {
+            const normalizedName = normalizeListName(name);
+            if (!isValidListName(normalizedName) || !isRecord(list) || typeof list.urls !== 'string') {
                 throw new Error(`URL 목록 '${name}'의 데이터가 올바르지 않습니다.`);
+            }
+            if (hasOwn(normalized, normalizedName)) {
+                throw new Error(`URL 목록 '${name}'의 이름이 다른 목록과 충돌합니다.`);
             }
             if (hasOwn(list, 'createdAt') && typeof list.createdAt !== 'string') {
                 throw new Error(`URL 목록 '${name}'의 생성 시각 데이터가 올바르지 않습니다.`);
             }
-            normalized[name] = {
+            normalized[normalizedName] = {
                 urls: list.urls,
                 createdAt: typeof list.createdAt === 'string' ? list.createdAt : new Date().toISOString()
             };

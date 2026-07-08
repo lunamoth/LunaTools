@@ -752,6 +752,7 @@
 
     constructor() {
       this._overrideStates = new WeakMap();
+      this._isToggling = false;
       this._boundHandleKeyDown = this._handleKeyDown.bind(this);
       this._initializeEventListeners();
     }
@@ -950,60 +951,67 @@
     }
 
     async toggle() {
-      if (document.pictureInPictureElement) {
-        const activeVideo = document.pictureInPictureElement;
-        try {
-          await document.exitPictureInPicture();
-        } catch (error) {
-        }
-        if (document.pictureInPictureElement !== activeVideo) {
-          this._restoreVideoState(activeVideo, this._overrideStates.get(activeVideo));
-        }
-        return;
-      }
-
-      const targetVideo = this._findBestVideoCandidate();
-      if (!targetVideo) {
-        return;
-      }
-
-      await this._ensureVideoReady(targetVideo);
-      const overrideState = this._captureVideoState(targetVideo);
-      this._overrideStates.set(targetVideo, overrideState);
-      this._removePiPRestrictions(targetVideo);
-      let enteredPictureInPicture = false;
+      if (this._isToggling) return;
+      this._isToggling = true;
 
       try {
-        if (targetVideo.paused && (targetVideo.videoWidth < 100 || targetVideo.videoHeight < 100)) {
-            try {
-                overrideState.playbackChanged = true;
-                targetVideo.muted = true;
-                await targetVideo.play();
-            } catch(playError) {
-            }
+        if (document.pictureInPictureElement) {
+          const activeVideo = document.pictureInPictureElement;
+          try {
+            await document.exitPictureInPicture();
+          } catch (error) {
+          }
+          if (document.pictureInPictureElement !== activeVideo) {
+            this._restoreVideoState(activeVideo, this._overrideStates.get(activeVideo));
+          }
+          return;
         }
 
-        await targetVideo.requestPictureInPicture();
-        enteredPictureInPicture = true;
-        this._addLeavePiPListener(targetVideo, overrideState);
-      } catch (initialError) {
-        const isPipDisabledError = initialError.name === 'InvalidStateError' &&
-                                   (initialError.message.includes('disablePictureInPicture') ||
-                                    initialError.message.toLowerCase().includes('picture-in-picture is disabled'));
+        const targetVideo = this._findBestVideoCandidate();
+        if (!targetVideo) {
+          return;
+        }
 
-        if (isPipDisabledError) {
-            try {
-                await this._attemptEnterPiPWithOverrides(targetVideo);
-                enteredPictureInPicture = true;
-                this._addLeavePiPListener(targetVideo, overrideState);
-            } catch (finalAttemptError) {
-            }
-        } else {
+        await this._ensureVideoReady(targetVideo);
+        const overrideState = this._captureVideoState(targetVideo);
+        this._overrideStates.set(targetVideo, overrideState);
+        this._removePiPRestrictions(targetVideo);
+        let enteredPictureInPicture = false;
+
+        try {
+          if (targetVideo.paused && (targetVideo.videoWidth < 100 || targetVideo.videoHeight < 100)) {
+              try {
+                  overrideState.playbackChanged = true;
+                  targetVideo.muted = true;
+                  await targetVideo.play();
+              } catch(playError) {
+              }
+          }
+
+          await targetVideo.requestPictureInPicture();
+          enteredPictureInPicture = true;
+          this._addLeavePiPListener(targetVideo, overrideState);
+        } catch (initialError) {
+          const isPipDisabledError = initialError.name === 'InvalidStateError' &&
+                                     (initialError.message.includes('disablePictureInPicture') ||
+                                      initialError.message.toLowerCase().includes('picture-in-picture is disabled'));
+
+          if (isPipDisabledError) {
+              try {
+                  await this._attemptEnterPiPWithOverrides(targetVideo);
+                  enteredPictureInPicture = true;
+                  this._addLeavePiPListener(targetVideo, overrideState);
+              } catch (finalAttemptError) {
+              }
+          } else {
+          }
+        } finally {
+          if (!enteredPictureInPicture) {
+            this._restoreVideoState(targetVideo, overrideState);
+          }
         }
       } finally {
-        if (!enteredPictureInPicture) {
-          this._restoreVideoState(targetVideo, overrideState);
-        }
+        this._isToggling = false;
       }
     }
 
@@ -1029,7 +1037,7 @@
     }
 
     _handleKeyDown(event) {
-      if (!event.isTrusted) return;
+      if (!event.isTrusted || event.repeat) return;
       if (!(event.ctrlKey && event.shiftKey && event.key.toUpperCase() === PictureInPictureHandler.PIP_KEY)) {
         return;
       }
@@ -3073,7 +3081,7 @@
         }
 
         #handleKeyDown(event) {
-            if (!event.isTrusted || !this.#isShortcutPressed(event) || this.#isTargetEditable(event.target)) {
+            if (!event.isTrusted || event.repeat || !this.#isShortcutPressed(event) || this.#isTargetEditable(event.target)) {
                 return;
             }
 
