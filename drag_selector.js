@@ -60,6 +60,10 @@
                 AUTO_SCROLL_SPEED: 15,
                 Z_INDEX: 2147483646
             },
+            LIMITS: {
+                MAX_URLS_PER_ACTION: 100,
+                MAX_URL_LENGTH: 2048
+            },
             TIMING: {
                 FADE_OUT_DURATION_MS: 250,
                 DELAY_OPEN_INTERVAL_MS: 2000
@@ -310,9 +314,53 @@
         #updateIndicatorText() {
             const config = DragSelector.CONFIG.MODIFIERS[this.#modifier];
             const count = this.#highlightedLinks.size;
+            const maxUrls = DragSelector.CONFIG.LIMITS.MAX_URLS_PER_ACTION;
             if (this.#indicatorLabel) {
-                this.#indicatorLabel.textContent = count > 0 ? `${count}개 ${config.label}` : config.label;
+                this.#indicatorLabel.textContent = count > maxUrls
+                    ? `${count}개 선택됨 · 최대 ${maxUrls}개 ${config.label}`
+                    : count > 0 ? `${count}개 ${config.label}` : config.label;
             }
+        }
+
+        #normalizeActionUrls(links) {
+            const urls = [];
+            const seenUrls = new Set();
+            let skipped = 0;
+            const { MAX_URLS_PER_ACTION, MAX_URL_LENGTH } = DragSelector.CONFIG.LIMITS;
+
+            for (const link of links) {
+                const href = typeof link?.href === 'string' ? link.href.trim() : '';
+                if (!href || href.length > MAX_URL_LENGTH) {
+                    skipped += 1;
+                    continue;
+                }
+
+                try {
+                    const parsed = new URL(href);
+                    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || !parsed.hostname) {
+                        skipped += 1;
+                        continue;
+                    }
+
+                    const normalizedUrl = parsed.href;
+                    if (normalizedUrl.length > MAX_URL_LENGTH || seenUrls.has(normalizedUrl)) {
+                        skipped += 1;
+                        continue;
+                    }
+
+                    if (urls.length >= MAX_URLS_PER_ACTION) {
+                        skipped += 1;
+                        continue;
+                    }
+
+                    seenUrls.add(normalizedUrl);
+                    urls.push(normalizedUrl);
+                } catch (_) {
+                    skipped += 1;
+                }
+            }
+
+            return { urls, skipped };
         }
 
         async #copyTextToClipboard(text) {
@@ -394,8 +442,11 @@
 
         async #performAction(links, modifier = this.#modifier) {
             if (links.size === 0 || !modifier) return;
-            const urls = Array.from(links, a => a.href).filter(Boolean);
+            const { urls, skipped } = this.#normalizeActionUrls(links);
             if (urls.length === 0) return;
+            if (skipped > 0) {
+                console.warn(`LunaTools: 선택한 링크 중 ${skipped}개를 안전 제한 또는 중복으로 제외했습니다.`);
+            }
 
             if (modifier === 'ctrl') {
                 const copied = await this.#copyTextToClipboard(urls.join('\n'));

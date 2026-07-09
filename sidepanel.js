@@ -2530,7 +2530,14 @@ document.addEventListener('DOMContentLoaded', function() {
         UI: { TOAST_DURATION: 4000, SESSION_NAME_MAX_LENGTH: 200, SEARCH_DEBOUNCE_TIME: 200 },
         DEFAULTS: { SESSION_PREFIX: '' },
         PROTOCOLS: { SAFE: ['http:', 'https:'] },
-        LIMITS: { TAB_URL_MAX_LENGTH: 2048 },
+        LIMITS: {
+            TAB_URL_MAX_LENGTH: 2048,
+            MAX_IMPORT_SESSIONS: 500,
+            MAX_TABS_PER_IMPORTED_SESSION: 300,
+            MAX_IMPORT_TOTAL_TABS: 5000,
+            MAX_RESTORE_TABS: 300,
+            RESTORE_CONFIRM_TAB_THRESHOLD: 50
+        },
         TIMING: { EXPORT_URL_REVOKE_DELAY: 60000 },
         STORAGE_KEYS: { SESSIONS: 'sessions' },
         ACTIONS: { RESTORE: 'restore', COPY: 'copy', UPDATE: 'update', RENAME: 'rename', PIN: 'pin', DELETE: 'delete' },
@@ -2548,6 +2555,10 @@ document.addEventListener('DOMContentLoaded', function() {
             IMPORT_FILE_TOO_LARGE: '❌ 파일이 너무 큽니다 (최대 10MB)',
             IMPORT_FILE_READ_ERROR: '❌ 파일을 읽는 중 오류가 발생했습니다.', IMPORT_INVALID_FORMAT: '❌ 잘못된 파일 형식입니다.',
             IMPORT_NO_VALID_SESSIONS: '유효한 세션이 없습니다.',
+            IMPORT_TOO_MANY_SESSIONS: (max) => `가져오기 제한 초과: 세션은 최대 ${max}개까지 가져올 수 있습니다.`,
+            IMPORT_TOO_MANY_TABS_IN_SESSION: (max) => `가져오기 제한 초과: 세션당 탭은 최대 ${max}개까지 가져올 수 있습니다.`,
+            IMPORT_TOO_MANY_TOTAL_TABS: (max) => `가져오기 제한 초과: 전체 가져오기 탭은 최대 ${max}개까지 허용됩니다.`,
+            RESTORE_TOO_MANY_TABS: (max) => `복원 제한 초과: 한 번에 복원할 수 있는 탭은 최대 ${max}개입니다.`,
             SESSION_DATA_CORRUPTED: '저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 기존 데이터를 보호하기 위해 저장·편집 작업을 중단했습니다.',
             SESSION_DATA_WARNING: '⚠️ 저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 유효한 세션만 표시하며, 기존 데이터 보호를 위해 저장·편집을 차단합니다.',
             SESSION_SAVED_AND_TABS_CLOSED: (name, count) => `✅ '${escapeHtml(name)}'으로 저장하고 ${count}개의 탭을 닫았습니다.`,
@@ -2558,6 +2569,7 @@ document.addEventListener('DOMContentLoaded', function() {
             createSessionSavedMessage: (name) => `💾 '${escapeHtml(name)}' 세션을 저장했습니다.`,
             createSessionRestoreStartedMessage: (name) => `🚀 '${escapeHtml(name)}' 복원을 시작합니다...`,
             createConfirmUpdateMessage: (name) => `'${escapeHtml(name)}' 세션을 현재 열린 모든 창의 탭으로 덮어씁니까?`,
+            createConfirmLargeRestoreMessage: (name, count) => `'${escapeHtml(name)}' 세션은 ${count}개의 탭을 새 창으로 엽니다. 계속하시겠습니까?`,
             createNameTooLongMessage: (max) => `⚠️ 이름은 ${max}자를 초과할 수 없습니다.`,
             createNameAlreadyExistsMessage: (name) => `⚠️ '${escapeHtml(name)}' 이름이 이미 존재합니다.`,
             createNameChangedMessage: (name) => `✅ 이름이 '${escapeHtml(name)}'(으)로 변경되었습니다.`,
@@ -2643,6 +2655,7 @@ document.addEventListener('DOMContentLoaded', function() {
       
       const escapeHtml = (str) => String(str).replace(/[&<>"'\/]/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;', '/': '&#x2F;' }[s]));
       const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+      const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
       
       const writeTextToClipboard = async (text) => {
         try {
@@ -2673,6 +2686,25 @@ document.addEventListener('DOMContentLoaded', function() {
       const SESSION_IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
       const SESSION_IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
       const SESSION_URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
+      const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
+
+      const normalizeSessionGroupInfo = (value) => {
+        if (value === null || value === undefined) return null;
+        if (!isRecord(value)) return null;
+
+        const normalized = {};
+        if (hasOwn(value, 'title') && typeof value.title === 'string') {
+          normalized.title = value.title.slice(0, CONSTANTS.UI.SESSION_NAME_MAX_LENGTH);
+        }
+        if (hasOwn(value, 'color') && SUPPORTED_TAB_GROUP_COLORS.has(value.color)) {
+          normalized.color = value.color;
+        }
+        if (hasOwn(value, 'collapsed') && typeof value.collapsed === 'boolean') {
+          normalized.collapsed = value.collapsed;
+        }
+
+        return Object.keys(normalized).length > 0 ? normalized : null;
+      };
 
       const isValidSessionHostname = (hostname) => {
         const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
@@ -2971,7 +3003,7 @@ document.addEventListener('DOMContentLoaded', function() {
               pinned: Boolean(tab.pinned),
               groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
               groupInfo: Number.isInteger(tab.groupId) && tab.groupId > -1
-                ? allTabGroups.find(g => g.id === tab.groupId) || null
+                ? normalizeSessionGroupInfo(allTabGroups.find(g => g.id === tab.groupId) || null)
                 : null,
               windowId: Number.isInteger(tab.windowId) ? tab.windowId : undefined
             })),
@@ -2987,8 +3019,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const getTabsToSave = async (scope) => (await getTabsSnapshot(scope)).tabs;
       
-      const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
-
       const restoreTabGroupsForWindow = async (createdTabs, windowId) => {
         if (!chrome.tabs?.group || !chrome.tabGroups?.update) return;
 
@@ -3006,10 +3036,11 @@ document.addEventListener('DOMContentLoaded', function() {
           if (!tabIds.length) continue;
           try {
             const newGroupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
+            const groupInfo = normalizeSessionGroupInfo(info);
             const updateProperties = {};
-            if (info && typeof info.title === 'string') updateProperties.title = info.title;
-            if (info && SUPPORTED_TAB_GROUP_COLORS.has(info.color)) updateProperties.color = info.color;
-            if (info && typeof info.collapsed === 'boolean') updateProperties.collapsed = info.collapsed;
+            if (groupInfo && typeof groupInfo.title === 'string') updateProperties.title = groupInfo.title;
+            if (groupInfo && SUPPORTED_TAB_GROUP_COLORS.has(groupInfo.color)) updateProperties.color = groupInfo.color;
+            if (groupInfo && typeof groupInfo.collapsed === 'boolean') updateProperties.collapsed = groupInfo.collapsed;
             if (Object.keys(updateProperties).length > 0) {
               await chrome.tabGroups.update(newGroupId, updateProperties);
             }
@@ -3025,6 +3056,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (validTabs.length === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
+        }
+        if (validTabs.length > CONSTANTS.LIMITS.MAX_RESTORE_TABS) {
+          throw new Error(CONSTANTS.MESSAGES.RESTORE_TOO_MANY_TABS(CONSTANTS.LIMITS.MAX_RESTORE_TABS));
         }
 
         const tabsByWindow = new Map();
@@ -3258,6 +3292,19 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
           return;
         }
+        const validTabCount = session.tabs.filter(tab => isValidTab(tab)).length;
+        if (validTabCount === 0) {
+          showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
+          return;
+        }
+        if (validTabCount > CONSTANTS.LIMITS.MAX_RESTORE_TABS) {
+          showToast(`❌ ${CONSTANTS.MESSAGES.RESTORE_TOO_MANY_TABS(CONSTANTS.LIMITS.MAX_RESTORE_TABS)}`);
+          return;
+        }
+        if (validTabCount >= CONSTANTS.LIMITS.RESTORE_CONFIRM_TAB_THRESHOLD &&
+            !confirm(CONSTANTS.MESSAGES.createConfirmLargeRestoreMessage(session.name, validTabCount))) {
+          return;
+        }
         showToast(CONSTANTS.MESSAGES.createSessionRestoreStartedMessage(session.name));
         try {
           await restoreSessionTabs(session);
@@ -3432,6 +3479,67 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       };
 
+      const normalizeImportedTab = (tab) => {
+        if (!isRecord(tab)) return null;
+        const normalizedUrl = normalizeSessionUrl(tab.url);
+        if (!normalizedUrl) return null;
+        if ((hasOwn(tab, 'title') && typeof tab.title !== 'string') ||
+            (hasOwn(tab, 'pinned') && typeof tab.pinned !== 'boolean') ||
+            (hasOwn(tab, 'groupId') && !Number.isInteger(tab.groupId)) ||
+            (hasOwn(tab, 'windowId') && !Number.isInteger(tab.windowId))) {
+          return null;
+        }
+
+        const normalizedTab = { url: normalizedUrl };
+        if (hasOwn(tab, 'title')) normalizedTab.title = tab.title;
+        if (hasOwn(tab, 'pinned')) normalizedTab.pinned = tab.pinned;
+        if (hasOwn(tab, 'groupId')) normalizedTab.groupId = tab.groupId;
+        if (hasOwn(tab, 'windowId')) normalizedTab.windowId = tab.windowId;
+        if (hasOwn(tab, 'groupInfo')) normalizedTab.groupInfo = normalizeSessionGroupInfo(tab.groupInfo);
+        return normalizedTab;
+      };
+
+      const normalizeImportedSessions = (imported) => {
+        if (!Array.isArray(imported)) throw new Error('Invalid format');
+        if (imported.length > CONSTANTS.LIMITS.MAX_IMPORT_SESSIONS) {
+          throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_SESSIONS(CONSTANTS.LIMITS.MAX_IMPORT_SESSIONS));
+        }
+
+        const valid = [];
+        let totalTabCount = 0;
+        for (const session of imported) {
+          if (!isRecord(session)) continue;
+          const sessionName = typeof session.name === 'string' ? session.name.trim() : '';
+          if ((typeof session.id !== 'number' && typeof session.id !== 'string') ||
+              !sessionName ||
+              sessionName.length > CONSTANTS.UI.SESSION_NAME_MAX_LENGTH ||
+              (hasOwn(session, 'isPinned') && typeof session.isPinned !== 'boolean') ||
+              !Array.isArray(session.tabs) ||
+              session.tabs.length === 0) {
+            continue;
+          }
+          if (session.tabs.length > CONSTANTS.LIMITS.MAX_TABS_PER_IMPORTED_SESSION) {
+            throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_TABS_IN_SESSION(CONSTANTS.LIMITS.MAX_TABS_PER_IMPORTED_SESSION));
+          }
+
+          const tabs = session.tabs.map(normalizeImportedTab).filter(Boolean);
+          if (tabs.length === 0) continue;
+          totalTabCount += tabs.length;
+          if (totalTabCount > CONSTANTS.LIMITS.MAX_IMPORT_TOTAL_TABS) {
+            throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_TOTAL_TABS(CONSTANTS.LIMITS.MAX_IMPORT_TOTAL_TABS));
+          }
+
+          valid.push({
+            id: session.id,
+            name: sessionName,
+            tabs,
+            isPinned: hasOwn(session, 'isPinned') ? session.isPinned : false
+          });
+        }
+
+        return valid;
+      };
+
       const handleImport = () => {
         const file = importFileInput.files[0];
         if (!file) return;
@@ -3449,19 +3557,7 @@ document.addEventListener('DOMContentLoaded', function() {
         reader.onload = async (e) => {
           try {
             const imported = JSON.parse(e.target.result);
-            if (!Array.isArray(imported)) throw new Error('Invalid format');
-
-            const valid = imported
-              .filter(isValidSession)
-              .map(session => {
-                const clonedSession = JSON.parse(JSON.stringify(session));
-                clonedSession.tabs = clonedSession.tabs
-                  .map(tab => ({ ...tab, url: normalizeSessionUrl(tab.url) }))
-                  .filter(tab => Boolean(tab.url));
-                if (!hasOwn(clonedSession, 'isPinned')) clonedSession.isPinned = false;
-                return clonedSession;
-              })
-              .filter(session => Array.isArray(session.tabs) && session.tabs.length > 0);
+            const valid = normalizeImportedSessions(imported);
 
             if (valid.length === 0) throw new Error(CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS);
 
@@ -3481,8 +3577,8 @@ document.addEventListener('DOMContentLoaded', function() {
           } catch (error) {
             const message = String(error?.message || '');
             showToast(
-              message.startsWith('저장 공간')
-                ? `❌ ${escapeHtml(message)}`
+              message.startsWith('저장 공간') || message.startsWith('가져오기 제한 초과') || message === CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS
+                ? `❌ ${message}`
                 : CONSTANTS.MESSAGES.IMPORT_INVALID_FORMAT
             );
           } finally {

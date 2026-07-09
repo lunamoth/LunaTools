@@ -39,6 +39,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const BACKUP_SNAPSHOT_MODE = 'known-keys-full';
     const MAX_SESSION_URL_LENGTH = 2048;
     const MAX_LIST_NAME_LENGTH = 200;
+    const MAX_BACKUP_SESSION_COUNT = 500;
+    const MAX_BACKUP_TABS_PER_SESSION = 300;
+    const MAX_BACKUP_TOTAL_SESSION_TABS = 5000;
+    const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
     const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
     const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
@@ -120,7 +124,6 @@ document.addEventListener('DOMContentLoaded', () => {
             !RESERVED_OBJECT_KEYS.has(normalizedName);
     };
 
-    const cloneJsonValue = (value) => JSON.parse(JSON.stringify(value));
 
     const normalizeMultiUrlOptions = (value) => {
         if (!isRecord(value)) {
@@ -207,21 +210,44 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    const isValidSessionGroupInfo = (value) => (
-        value === null ||
-        (
-            isRecord(value) &&
-            (!hasOwn(value, 'title') || typeof value.title === 'string') &&
-            (!hasOwn(value, 'color') || typeof value.color === 'string') &&
-            (!hasOwn(value, 'collapsed') || typeof value.collapsed === 'boolean')
-        )
-    );
+    const normalizeSessionGroupInfo = (value, contextMessage) => {
+        if (value === null || value === undefined) return null;
+        if (!isRecord(value)) {
+            throw new Error(`${contextMessage}의 탭 그룹 데이터가 올바르지 않습니다.`);
+        }
+
+        const normalized = {};
+        if (hasOwn(value, 'title')) {
+            if (typeof value.title !== 'string') {
+                throw new Error(`${contextMessage}의 탭 그룹 제목 데이터가 올바르지 않습니다.`);
+            }
+            normalized.title = value.title.slice(0, 200);
+        }
+        if (hasOwn(value, 'color')) {
+            if (typeof value.color !== 'string') {
+                throw new Error(`${contextMessage}의 탭 그룹 색상 데이터가 올바르지 않습니다.`);
+            }
+            if (SUPPORTED_TAB_GROUP_COLORS.has(value.color)) normalized.color = value.color;
+        }
+        if (hasOwn(value, 'collapsed')) {
+            if (typeof value.collapsed !== 'boolean') {
+                throw new Error(`${contextMessage}의 탭 그룹 접힘 상태 데이터가 올바르지 않습니다.`);
+            }
+            normalized.collapsed = value.collapsed;
+        }
+
+        return Object.keys(normalized).length > 0 ? normalized : null;
+    };
 
     const normalizeSessions = (value) => {
         if (!Array.isArray(value)) {
             throw new Error('세션 데이터의 형식이 올바르지 않습니다.');
         }
+        if (value.length > MAX_BACKUP_SESSION_COUNT) {
+            throw new Error(`세션 데이터가 너무 큽니다. 세션은 최대 ${MAX_BACKUP_SESSION_COUNT}개까지 복원할 수 있습니다.`);
+        }
 
+        let totalTabCount = 0;
         return value.map((session, sessionIndex) => {
             const sessionName = typeof session?.name === 'string' ? session.name.trim() : '';
             const validSession = isRecord(session) &&
@@ -230,6 +256,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 sessionName.length <= 200 &&
                 Array.isArray(session.tabs) &&
                 session.tabs.length > 0;
+
+            if (validSession && session.tabs.length > MAX_BACKUP_TABS_PER_SESSION) {
+                throw new Error(`${sessionIndex + 1}번째 세션의 탭 수가 너무 많습니다. 세션당 최대 ${MAX_BACKUP_TABS_PER_SESSION}개까지 복원할 수 있습니다.`);
+            }
+            if (validSession) {
+                totalTabCount += session.tabs.length;
+                if (totalTabCount > MAX_BACKUP_TOTAL_SESSION_TABS) {
+                    throw new Error(`세션 탭 데이터가 너무 큽니다. 전체 탭은 최대 ${MAX_BACKUP_TOTAL_SESSION_TABS}개까지 복원할 수 있습니다.`);
+                }
+            }
 
             if (!validSession) {
                 throw new Error(`${sessionIndex + 1}번째 세션의 형식이 올바르지 않습니다.`);
@@ -245,8 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     (!hasOwn(tab, 'title') || typeof tab.title === 'string') &&
                     (!hasOwn(tab, 'pinned') || typeof tab.pinned === 'boolean') &&
                     (!hasOwn(tab, 'groupId') || Number.isInteger(tab.groupId)) &&
-                    (!hasOwn(tab, 'windowId') || Number.isInteger(tab.windowId)) &&
-                    (!hasOwn(tab, 'groupInfo') || isValidSessionGroupInfo(tab.groupInfo));
+                    (!hasOwn(tab, 'windowId') || Number.isInteger(tab.windowId));
 
                 if (!validTab) {
                     throw new Error(`${sessionIndex + 1}번째 세션의 ${tabIndex + 1}번째 탭 데이터가 올바르지 않습니다.`);
@@ -257,7 +292,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (hasOwn(tab, 'pinned')) normalizedTab.pinned = tab.pinned;
                 if (hasOwn(tab, 'groupId')) normalizedTab.groupId = tab.groupId;
                 if (hasOwn(tab, 'windowId')) normalizedTab.windowId = tab.windowId;
-                if (hasOwn(tab, 'groupInfo')) normalizedTab.groupInfo = cloneJsonValue(tab.groupInfo);
+                if (hasOwn(tab, 'groupInfo')) {
+                    normalizedTab.groupInfo = normalizeSessionGroupInfo(tab.groupInfo, `${sessionIndex + 1}번째 세션의 ${tabIndex + 1}번째 탭`);
+                }
                 return normalizedTab;
             });
 
