@@ -2535,6 +2535,7 @@ document.addEventListener('DOMContentLoaded', function() {
             MAX_IMPORT_SESSIONS: 500,
             MAX_TABS_PER_IMPORTED_SESSION: 300,
             MAX_IMPORT_TOTAL_TABS: 5000,
+            MAX_SAVE_TABS: 300,
             MAX_RESTORE_TABS: 300,
             RESTORE_CONFIRM_TAB_THRESHOLD: 50
         },
@@ -2559,6 +2560,7 @@ document.addEventListener('DOMContentLoaded', function() {
             IMPORT_TOO_MANY_TABS_IN_SESSION: (max) => `가져오기 제한 초과: 세션당 탭은 최대 ${max}개까지 가져올 수 있습니다.`,
             IMPORT_TOO_MANY_TOTAL_TABS: (max) => `가져오기 제한 초과: 전체 가져오기 탭은 최대 ${max}개까지 허용됩니다.`,
             RESTORE_TOO_MANY_TABS: (max) => `복원 제한 초과: 한 번에 복원할 수 있는 탭은 최대 ${max}개입니다.`,
+            SAVE_TOO_MANY_TABS: (max) => `저장 제한 초과: 한 세션에 저장할 수 있는 탭은 최대 ${max}개입니다.`,
             SESSION_DATA_CORRUPTED: '저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 기존 데이터를 보호하기 위해 저장·편집 작업을 중단했습니다.',
             SESSION_DATA_WARNING: '⚠️ 저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 유효한 세션만 표시하며, 기존 데이터 보호를 위해 저장·편집을 차단합니다.',
             SESSION_SAVED_AND_TABS_CLOSED: (name, count) => `✅ '${escapeHtml(name)}'으로 저장하고 ${count}개의 탭을 닫았습니다.`,
@@ -2743,21 +2745,41 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const isValidUrl = (url) => Boolean(normalizeSessionUrl(url));
 
-      const isValidTab = (tab) => {
-        if (!tab || typeof tab !== 'object' || Array.isArray(tab) || typeof tab.url !== 'string' || !isValidUrl(tab.url)) return false;
-        const titleOk = !hasOwn(tab, 'title') || typeof tab.title === 'string';
-        const pinnedOk = !hasOwn(tab, 'pinned') || typeof tab.pinned === 'boolean';
-        const groupOk = !hasOwn(tab, 'groupId') || Number.isInteger(tab.groupId);
-        const windowOk = !hasOwn(tab, 'windowId') || Number.isInteger(tab.windowId);
-        const groupInfo = tab.groupInfo;
-        const groupInfoOk = !hasOwn(tab, 'groupInfo') || groupInfo === null || (
-          groupInfo && typeof groupInfo === 'object' && !Array.isArray(groupInfo) &&
-          (!hasOwn(groupInfo, 'title') || typeof groupInfo.title === 'string') &&
-          (!hasOwn(groupInfo, 'color') || typeof groupInfo.color === 'string') &&
-          (!hasOwn(groupInfo, 'collapsed') || typeof groupInfo.collapsed === 'boolean')
-        );
-        return titleOk && pinnedOk && groupOk && windowOk && groupInfoOk;
+      const normalizeSessionTab = (tab) => {
+        if (!isRecord(tab) || typeof tab.url !== 'string') return null;
+
+        const normalizedUrl = normalizeSessionUrl(tab.url);
+        if (!normalizedUrl) return null;
+
+        if ((hasOwn(tab, 'title') && typeof tab.title !== 'string') ||
+            (hasOwn(tab, 'pinned') && typeof tab.pinned !== 'boolean') ||
+            (hasOwn(tab, 'groupId') && !Number.isInteger(tab.groupId)) ||
+            (hasOwn(tab, 'windowId') && !Number.isInteger(tab.windowId))) {
+          return null;
+        }
+
+        if (hasOwn(tab, 'groupInfo')) {
+          const groupInfo = tab.groupInfo;
+          const groupInfoOk = groupInfo === null || (
+            isRecord(groupInfo) &&
+            (!hasOwn(groupInfo, 'title') || typeof groupInfo.title === 'string') &&
+            (!hasOwn(groupInfo, 'color') || typeof groupInfo.color === 'string') &&
+            (!hasOwn(groupInfo, 'collapsed') || typeof groupInfo.collapsed === 'boolean')
+          );
+          if (!groupInfoOk) return null;
+        }
+
+        const normalizedTab = { url: normalizedUrl };
+        if (hasOwn(tab, 'title')) normalizedTab.title = tab.title;
+        if (hasOwn(tab, 'pinned')) normalizedTab.pinned = tab.pinned;
+        if (hasOwn(tab, 'groupId')) normalizedTab.groupId = tab.groupId;
+        if (hasOwn(tab, 'windowId')) normalizedTab.windowId = tab.windowId;
+        if (hasOwn(tab, 'groupInfo')) normalizedTab.groupInfo = normalizeSessionGroupInfo(tab.groupInfo);
+
+        return normalizedTab;
       };
+
+      const isValidTab = (tab) => Boolean(normalizeSessionTab(tab));
 
       const isValidSession = (session) => {
         return session &&
@@ -2995,10 +3017,12 @@ document.addEventListener('DOMContentLoaded', function() {
             showToast(CONSTANTS.MESSAGES.GET_TAB_GROUPS_FAILED);
           }
 
-          const validTabs = tabs.filter(tab => tab.url && isValidUrl(tab.url));
+          const validTabEntries = tabs
+            .map(tab => ({ tab, normalizedUrl: normalizeSessionUrl(tab?.url || '') }))
+            .filter(({ normalizedUrl }) => Boolean(normalizedUrl));
           return {
-            tabs: validTabs.map(tab => ({
-              url: tab.url,
+            tabs: validTabEntries.map(({ tab, normalizedUrl }) => ({
+              url: normalizedUrl,
               title: typeof tab.title === 'string' ? tab.title : '',
               pinned: Boolean(tab.pinned),
               groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
@@ -3007,9 +3031,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 : null,
               windowId: Number.isInteger(tab.windowId) ? tab.windowId : undefined
             })),
-            closingCandidates: validTabs
-              .filter(tab => Number.isInteger(tab.id))
-              .map(tab => ({ id: tab.id, url: tab.url }))
+            closingCandidates: validTabEntries
+              .filter(({ tab }) => Number.isInteger(tab.id))
+              .map(({ tab, normalizedUrl }) => ({ id: tab.id, url: normalizedUrl }))
           };
         } catch (error) {
           showToast(CONSTANTS.MESSAGES.GET_TABS_FAILED);
@@ -3018,6 +3042,12 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const getTabsToSave = async (scope) => (await getTabsSnapshot(scope)).tabs;
+
+      const canSaveTabCount = (tabCount) => {
+        if (tabCount <= CONSTANTS.LIMITS.MAX_SAVE_TABS) return true;
+        showToast(`❌ ${CONSTANTS.MESSAGES.SAVE_TOO_MANY_TABS(CONSTANTS.LIMITS.MAX_SAVE_TABS)}`);
+        return false;
+      };
       
       const restoreTabGroupsForWindow = async (createdTabs, windowId) => {
         if (!chrome.tabs?.group || !chrome.tabGroups?.update) return;
@@ -3052,7 +3082,7 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const restoreSessionTabs = async (session) => {
-        const validTabs = session.tabs.filter(tab => isValidTab(tab));
+        const validTabs = session.tabs.map(normalizeSessionTab).filter(Boolean);
         if (validTabs.length === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
@@ -3168,6 +3198,7 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
         }
+        if (!canSaveTabCount(tabs.length)) return;
 
         const saved = await updateAndSaveSessions(
           (sessions) => {
@@ -3205,6 +3236,7 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
         }
+        if (!canSaveTabCount(initialSnapshot.tabs.length)) return;
 
         if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(initialSnapshot.tabs.length))) return;
 
@@ -3215,6 +3247,7 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
         }
+        if (!canSaveTabCount(snapshot.tabs.length)) return;
 
         const requestedName = sessionInput.value.trim();
         let savedSession;
@@ -3247,10 +3280,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (protectedTabIds.has(candidate.id)) continue;
             try {
               const liveTab = await chrome.tabs.get(candidate.id);
-              const committedUrl = typeof liveTab.url === 'string' ? liveTab.url : '';
-              const pendingUrl = typeof liveTab.pendingUrl === 'string' ? liveTab.pendingUrl : '';
+              const committedUrl = normalizeSessionUrl(typeof liveTab.url === 'string' ? liveTab.url : '');
+              const pendingUrl = normalizeSessionUrl(typeof liveTab.pendingUrl === 'string' ? liveTab.pendingUrl : '');
               const stillOnSnapshotUrl = committedUrl === candidate.url && (!pendingUrl || pendingUrl === candidate.url);
-              if (stillOnSnapshotUrl && isValidUrl(committedUrl)) {
+              if (stillOnSnapshotUrl) {
                 verifiedIds.push(candidate.id);
               } else {
                 changedCount++;
@@ -3292,7 +3325,7 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
           return;
         }
-        const validTabCount = session.tabs.filter(tab => isValidTab(tab)).length;
+        const validTabCount = session.tabs.map(normalizeSessionTab).filter(Boolean).length;
         if (validTabCount === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
@@ -3479,25 +3512,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       };
 
-      const normalizeImportedTab = (tab) => {
-        if (!isRecord(tab)) return null;
-        const normalizedUrl = normalizeSessionUrl(tab.url);
-        if (!normalizedUrl) return null;
-        if ((hasOwn(tab, 'title') && typeof tab.title !== 'string') ||
-            (hasOwn(tab, 'pinned') && typeof tab.pinned !== 'boolean') ||
-            (hasOwn(tab, 'groupId') && !Number.isInteger(tab.groupId)) ||
-            (hasOwn(tab, 'windowId') && !Number.isInteger(tab.windowId))) {
-          return null;
-        }
-
-        const normalizedTab = { url: normalizedUrl };
-        if (hasOwn(tab, 'title')) normalizedTab.title = tab.title;
-        if (hasOwn(tab, 'pinned')) normalizedTab.pinned = tab.pinned;
-        if (hasOwn(tab, 'groupId')) normalizedTab.groupId = tab.groupId;
-        if (hasOwn(tab, 'windowId')) normalizedTab.windowId = tab.windowId;
-        if (hasOwn(tab, 'groupInfo')) normalizedTab.groupInfo = normalizeSessionGroupInfo(tab.groupInfo);
-        return normalizedTab;
-      };
+      const normalizeImportedTab = (tab) => normalizeSessionTab(tab);
 
       const normalizeImportedSessions = (imported) => {
         if (!Array.isArray(imported)) throw new Error('Invalid format');
