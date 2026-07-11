@@ -1,3 +1,4 @@
+// 이 앱은 여러 창/탭에서 여러 사이드 패널 (여러 URL 열기, 세션 매니저) 을 열고 동시에 편집하는 것 자체를 지원하지 않고, 가정하지도 않습니다.
 document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
@@ -3674,7 +3675,10 @@ document.addEventListener('DOMContentLoaded', function() {
         window.addEventListener('pagehide', cleanup);
       };
 
-      initialize();
+      initialize().catch((error) => {
+        console.error('LunaTools Session Manager initialization failed:', error);
+        showToast('❌ 세션 관리자 초기화에 실패했습니다. 패널을 다시 열어주세요.', CONSTANTS.UI.TOAST_DURATION * 2);
+      });
     });
 
     // Initialize both apps within their respective panes

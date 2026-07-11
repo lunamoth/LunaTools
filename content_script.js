@@ -82,6 +82,11 @@
   let siteSettingsUnloadHandler = null;
   let siteSettingsRecheckerInitialized = false;
   let lastSiteSettingsHref = '';
+  let siteSettingsCheckGeneration = 0;
+
+  function isCurrentSiteSettingsCheck(checkGeneration, checkedHref) {
+    return checkGeneration === siteSettingsCheckGeneration && window.location.href === checkedHref;
+  }
 
   function setSiteLockEnabled(isEnabled) {
     if (isEnabled) {
@@ -106,17 +111,28 @@
       return false;
     }
 
+    const checkGeneration = ++siteSettingsCheckGeneration;
     let currentUrl;
     try {
       currentUrl = new URL(window.location.href);
       lastSiteSettingsHref = currentUrl.href;
     } catch (_) {
-      setSiteLockEnabled(false);
+      if (checkGeneration === siteSettingsCheckGeneration) {
+        setSiteLockEnabled(false);
+      }
       return false;
     }
 
+    const checkedHref = currentUrl.href;
+
     try {
       const { lockedSites = [], blockedSites = [] } = await chrome.storage.sync.get(['lockedSites', 'blockedSites']);
+
+      // A storage read can finish after an SPA navigation or a newer settings check.
+      // Never apply a result that was calculated for an earlier URL/state.
+      if (!isCurrentSiteSettingsCheck(checkGeneration, checkedHref)) {
+        return false;
+      }
 
       if (Array.isArray(blockedSites) && blockedSites.some(rule => matchesBlockedSiteRule(currentUrl, rule))) {
         setSiteLockEnabled(false);
@@ -166,6 +182,10 @@
       });
     } catch (_) {
     }
+
+    // The URL may have changed while the document-start storage read was pending,
+    // before the SPA listeners above existed. Revalidate the current URL once now.
+    recheckSiteSettings();
   }
 
   const isBlocked = await applySiteSettingsAndCheckIfBlocked();
@@ -331,6 +351,7 @@
       cache: { MAX_SIZE: 100, MAX_AGE_MS: 30 * 60 * 1000 },
       navigation: {
         RESET_DELAY_MS: 150,
+        NAVIGATION_FALLBACK_RESET_MS: 2000,
         MIN_PAGE: 1,
         MAX_PAGE: 9999,
         DEBOUNCE_DELAY_MS: 100,
@@ -637,6 +658,7 @@
         this.urlPageFinder = new KB_NAV_UrlPageFinder();
         this.domLinkFinder = new KB_NAV_DomLinkFinder();
         this.isNavigating = false;
+        this.navigationResetTimer = null;
         this._debouncedProcessKey = KB_NAV_Utils.debounce(
           this._processNavigationKey.bind(this),
           KB_NAV_CONFIG.navigation.DEBOUNCE_DELAY_MS
@@ -648,19 +670,26 @@
           this._handleKeyDown = this._handleKeyDown.bind(this);
           this._handlePageShow = this._handlePageShow.bind(this);
           this._handlePageHide = this._handlePageHide.bind(this);
+          this._handleNavigationSettled = this._handleNavigationSettled.bind(this);
       }
       _initializeEventListeners() {
         document.addEventListener('keydown', this._handleKeyDown);
         window.addEventListener('pageshow', this._handlePageShow);
         window.addEventListener('pagehide', this._handlePageHide);
+        window.addEventListener('hashchange', this._handleNavigationSettled);
+        window.addEventListener('popstate', this._handleNavigationSettled);
       }
       _handlePageShow(event) {
         if (event.persisted) {
-          this.isNavigating = false;
+          this._handleNavigationSettled();
           this.urlPageFinder.clearCache();
           this.domLinkFinder.destroy();
           this.domLinkFinder = new KB_NAV_DomLinkFinder();
         }
+      }
+      _handleNavigationSettled() {
+        this._clearNavigationResetTimer();
+        this.isNavigating = false;
       }
       _handlePageHide(event) {
           if (!event.persisted) {
@@ -703,6 +732,10 @@
           this.isNavigating = true;
           try {
             window.location.assign(safeTargetUrl);
+            // Full-document navigation destroys this context. Same-document
+            // navigation fires hashchange/popstate. If navigation is cancelled,
+            // this fallback prevents a permanent keyboard-navigation lock.
+            this._resetNavigationFlagAfterDelay(KB_NAV_CONFIG.navigation.NAVIGATION_FALLBACK_RESET_MS);
           } catch (_) {
             this._resetNavigationFlagAfterDelay();
           }
@@ -720,15 +753,26 @@
         if (direction < 0 && domLinks.prevUrl) return domLinks.prevUrl;
         return null;
       }
-      _resetNavigationFlagAfterDelay() {
-         setTimeout(() => {
-            this.isNavigating = false;
-         }, KB_NAV_CONFIG.navigation.RESET_DELAY_MS);
+      _clearNavigationResetTimer() {
+        if (this.navigationResetTimer !== null) {
+          clearTimeout(this.navigationResetTimer);
+          this.navigationResetTimer = null;
+        }
+      }
+      _resetNavigationFlagAfterDelay(delayMs = KB_NAV_CONFIG.navigation.RESET_DELAY_MS) {
+        this._clearNavigationResetTimer();
+        this.navigationResetTimer = setTimeout(() => {
+          this.navigationResetTimer = null;
+          this.isNavigating = false;
+        }, delayMs);
       }
       destroy() {
         document.removeEventListener('keydown', this._handleKeyDown);
         window.removeEventListener('pageshow', this._handlePageShow);
         window.removeEventListener('pagehide', this._handlePageHide);
+        window.removeEventListener('hashchange', this._handleNavigationSettled);
+        window.removeEventListener('popstate', this._handleNavigationSettled);
+        this._clearNavigationResetTimer();
         this._debouncedProcessKey.cancel();
         if (this.urlPageFinder) this.urlPageFinder.destroy();
         if (this.domLinkFinder) this.domLinkFinder.destroy();
