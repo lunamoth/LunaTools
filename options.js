@@ -38,10 +38,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const BACKUP_FORMAT_VERSION = 2;
     const BACKUP_SNAPSHOT_MODE = 'known-keys-full';
     const MAX_SESSION_URL_LENGTH = 2048;
+    const MAX_SESSION_ID_LENGTH = 256;
     const MAX_LIST_NAME_LENGTH = 200;
     const MAX_BACKUP_SESSION_COUNT = 500;
     const MAX_BACKUP_TABS_PER_SESSION = 300;
-    const MAX_BACKUP_TOTAL_SESSION_TABS = 5000;
+    const MAX_BACKUP_TOTAL_SESSION_TABS = 10000;
     const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
     const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
@@ -116,6 +117,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
     const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
     const normalizeListName = (name) => String(name ?? '').trim().replace(/\s+/g, ' ');
+    const isValidSessionId = (id) => {
+        if (typeof id === 'number') return Number.isFinite(id);
+        if (typeof id !== 'string') return false;
+        return id.trim().length > 0 && id.length <= MAX_SESSION_ID_LENGTH && !CONTROL_CHARACTER_REGEX.test(id);
+    };
     const isValidListName = (name) => {
         const normalizedName = normalizeListName(name);
         return Boolean(normalizedName) &&
@@ -251,7 +257,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return value.map((session, sessionIndex) => {
             const sessionName = typeof session?.name === 'string' ? session.name.trim() : '';
             const validSession = isRecord(session) &&
-                (typeof session.id === 'number' || typeof session.id === 'string') &&
+                isValidSessionId(session.id) &&
                 sessionName.length > 0 &&
                 sessionName.length <= 200 &&
                 Array.isArray(session.tabs) &&

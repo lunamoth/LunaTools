@@ -1013,9 +1013,14 @@ class TabManager {
     let tabToKeep = liveExistingTab;
     let tabToRemove = liveCurrentTab;
 
-    // URL이 방금 바뀐 탭은 기존 URL 탭보다 나중에 중복 상태가 된 탭입니다.
-    // 단순한 완료/새로고침 이벤트라면 생성 순서를 사용해 더 오래된 탭을 보존합니다.
-    if (!currentBecameDuplicate && this._compareTabAge(liveCurrentTab, liveExistingTab) <= 0) {
+    // 고정 탭은 사용자가 명시적으로 보존한 작업 공간이므로 일반 탭보다 항상 우선합니다.
+    // 두 탭의 고정 상태가 같을 때만 기존의 탐색 시점/생성 순서 규칙을 적용합니다.
+    if (Boolean(liveCurrentTab.pinned) !== Boolean(liveExistingTab.pinned)) {
+      if (liveCurrentTab.pinned) {
+        tabToKeep = liveCurrentTab;
+        tabToRemove = liveExistingTab;
+      }
+    } else if (!currentBecameDuplicate && this._compareTabAge(liveCurrentTab, liveExistingTab) <= 0) {
       tabToKeep = liveCurrentTab;
       tabToRemove = liveExistingTab;
     }

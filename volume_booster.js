@@ -124,6 +124,8 @@
         #audioContext = null;
         #sourceNodeMap = new WeakMap();
         #warnedUnsafeMedia = new WeakSet();
+        #disconnectedMediaRefs = new Set();
+        #disconnectedMediaRefByElement = new WeakMap();
         #hasSetupMedia = false;
         #userHasInteracted = false; 
 
@@ -188,6 +190,43 @@
             this.#applyVolume(newMediaElements, volume, context, isActivated);
         }
 
+        #trackDisconnectedMedia(mediaElement) {
+            if (this.#disconnectedMediaRefByElement.has(mediaElement)) return;
+            const mediaRef = new WeakRef(mediaElement);
+            this.#disconnectedMediaRefByElement.set(mediaElement, mediaRef);
+            this.#disconnectedMediaRefs.add(mediaRef);
+        }
+
+        #forgetDisconnectedMedia(mediaElement) {
+            const mediaRef = this.#disconnectedMediaRefByElement.get(mediaElement);
+            if (!mediaRef) return;
+            this.#disconnectedMediaRefs.delete(mediaRef);
+            this.#disconnectedMediaRefByElement.delete(mediaElement);
+        }
+
+        async reconnectDisconnectedMedia() {
+            if (!this.#hasSetupMedia || this.#disconnectedMediaRefs.size === 0) return;
+
+            const context = await this.#getOrCreateAudioContext();
+            if (!context) return;
+
+            // 추가된 DOM 전체를 다시 스캔하지 않고, 실제로 끊겼던 소수의 미디어만 확인합니다.
+            for (const mediaRef of Array.from(this.#disconnectedMediaRefs)) {
+                const mediaElement = mediaRef.deref();
+                if (!mediaElement) {
+                    this.#disconnectedMediaRefs.delete(mediaRef);
+                    continue;
+                }
+                if (!mediaElement.isConnected) continue;
+
+                const audioComponents = this.#setup(mediaElement, false);
+                if (audioComponents?.connected) {
+                    audioComponents.gainNode.gain.setTargetAtTime(1.0, context.currentTime, 0.05);
+                    this.#forgetDisconnectedMedia(mediaElement);
+                }
+            }
+        }
+
         cleanupRemovedNodes(nodeList) {
             if (!this.#hasSetupMedia || !nodeList?.length) return;
 
@@ -200,6 +239,7 @@
                         gainNode.disconnect();
                     } catch {}
                     audioComponents.connected = false;
+                    this.#trackDisconnectedMedia(media);
                 }
             }
         }
@@ -256,6 +296,7 @@
                         existingComponents.source.connect(existingComponents.gainNode);
                         existingComponents.gainNode.connect(this.#audioContext.destination);
                         existingComponents.connected = true;
+                        this.#forgetDisconnectedMedia(mediaElement);
                     } catch {}
                 }
                 return existingComponents;
@@ -476,9 +517,15 @@
                 }
 
                 if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
-                // 동적 미디어 부스트는 기능이 켜져 있을 때만 필요합니다.
-                // 꺼져 있는 동안 추가된 미디어는 다음 활성화 시 전체 스캔에서 반영됩니다.
-                if (this.#isActivated && addedNodes.length > 0) this.#queueAddedNodes(addedNodes);
+                if (addedNodes.length > 0) {
+                    if (this.#isActivated) {
+                        this.#queueAddedNodes(addedNodes);
+                    } else {
+                        // 이미 Web Audio로 라우팅된 요소는 제거 시 graph가 끊깁니다.
+                        // 같은 요소가 OFF 상태에서 재삽입되어도 무음으로 남지 않게 복구합니다.
+                        void this.#audioProcessor.reconnectDisconnectedMedia().catch(() => {});
+                    }
+                }
             });
 
             observer.observe(document.documentElement, {

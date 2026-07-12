@@ -524,8 +524,14 @@
       }
       _initializeObserver() {
         this._findObserverTarget();
-        this.observer = new MutationObserver(() => {
-          if (this.isObserving) this._debouncedInvalidateCache();
+        this.observer = new MutationObserver((mutations) => {
+          if (!this.isObserving) return;
+          if (mutations.some(mutation => mutation.type === 'attributes')) {
+            this._debouncedInvalidateCache.cancel();
+            this.cachedLinks = null;
+            return;
+          }
+          this._debouncedInvalidateCache();
         });
         this.startObserving();
       }
@@ -543,7 +549,12 @@
       startObserving() {
         if (this.observer && this.observerTarget && !this.isObserving) {
           try {
-            this.observer.observe(this.observerTarget, { childList: true, subtree: true });
+            this.observer.observe(this.observerTarget, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['href', 'rel', 'hidden']
+            });
             this.isObserving = true;
             if (this.stopLifecycleTimer) clearTimeout(this.stopLifecycleTimer);
             this._setupObserverDeactivationTimer();
@@ -682,14 +693,14 @@
       _handlePageShow(event) {
         if (event.persisted) {
           this._handleNavigationSettled();
-          this.urlPageFinder.clearCache();
-          this.domLinkFinder.destroy();
-          this.domLinkFinder = new KB_NAV_DomLinkFinder();
         }
       }
       _handleNavigationSettled() {
         this._clearNavigationResetTimer();
         this.isNavigating = false;
+        this.urlPageFinder.clearCache();
+        this.domLinkFinder.destroy();
+        this.domLinkFinder = new KB_NAV_DomLinkFinder();
       }
       _handlePageHide(event) {
           if (!event.persisted) {
@@ -1287,6 +1298,7 @@
         popupContentContainer: null,
         lastSelectionRect: null,
         closePopupTimeout: null,
+        conversionGeneration: 0,
     };
 
     const Utils = {
@@ -2856,6 +2868,8 @@
             });
         },
         close: function() {
+            // 닫기 이후 완료되는 느린 환율 요청이 팝업을 다시 열지 못하게 무효화합니다.
+            AppState.conversionGeneration += 1;
             if (AppState.currentPopupElement) {
                 AppState.currentPopupElement.classList.remove(UI_STRINGS.POPUP_VISIBLE_CLASS);
                 clearTimeout(AppState.closePopupTimeout);
@@ -2943,12 +2957,14 @@
 	
     const EventHandlers = {
         handleUnifiedConvertAction: async function() {
+            const conversionGeneration = ++AppState.conversionGeneration;
             const selection = window.getSelection();
             const selectedText = selection ? selection.toString().trim() : "";
             if (Utils.isInvalidString(selectedText)) { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') PopupUI.close(); return; }
             const previewText = Utils.getPreviewText(selectedText);
             PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.CONVERTING_MESSAGE_PREFIX}${Utils.escapeHTML(previewText)}${UI_STRINGS.CONVERTING_MESSAGE_SUFFIX}</div>` }], false, true);
             const { resultsArray, conversionAttempted } = await Converter.fetchAndProcessConversions(selectedText);
+            if (conversionGeneration !== AppState.conversionGeneration) return;
             if (resultsArray.length > 0) { const hasError = resultsArray.some(res => res.isError); PopupUI.display(resultsArray, hasError, false); }
             else if (conversionAttempted) { PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_NO_VALID_CONVERSION(previewText)}</div>` }], true, false); }
             else { PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_CANNOT_FIND_CONVERTIBLE(previewText)}</div>` }], true, false); }

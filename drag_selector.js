@@ -84,6 +84,7 @@
         #domMutationObserver = null;
         #isTrustedSequence = false;
         #activeDelayedOpenController = null;
+        #lastObservedScrollY = null;
 
         #listenerOptions = { capture: true, passive: false };
 
@@ -250,13 +251,24 @@
         #handleAutoScroll() {
             const { clientY } = this.#lastMouseEvent;
             const C = DragSelector.CONFIG.BEHAVIOR;
+            const scrollYBeforeRequest = window.scrollY;
+
+            // 이전 프레임 이후 실제로 이동한 만큼만 원점을 보정합니다.
+            // 경계에서 scrollBy()가 0px 이동하거나 smooth-scroll이 지연되어도 오차가 누적되지 않습니다.
+            if (Number.isFinite(this.#lastObservedScrollY)) {
+                this.#startPos.y -= scrollYBeforeRequest - this.#lastObservedScrollY;
+            }
+
             let scrollAmount = 0;
             if (clientY < C.AUTO_SCROLL_ZONE) scrollAmount = -C.AUTO_SCROLL_SPEED;
             else if (clientY > window.innerHeight - C.AUTO_SCROLL_ZONE) scrollAmount = C.AUTO_SCROLL_SPEED;
             if (scrollAmount !== 0) {
                 window.scrollBy(0, scrollAmount);
-                this.#startPos.y -= scrollAmount;
             }
+
+            const scrollYAfterRequest = window.scrollY;
+            this.#startPos.y -= scrollYAfterRequest - scrollYBeforeRequest;
+            this.#lastObservedScrollY = scrollYAfterRequest;
         }
 
         #updateVisuals() {
@@ -508,6 +520,7 @@
             this.#lastMouseEvent = null;
             this.#indicatorLabel = null;
             this.#isTrustedSequence = false;
+            this.#lastObservedScrollY = null;
         }
         
         #handleMouseDown(e) {
@@ -531,6 +544,7 @@
             this.#isTrustedSequence = true;
             this.#startPos = { x: e.clientX, y: e.clientY };
             this.#lastMouseEvent = e;
+            this.#lastObservedScrollY = window.scrollY;
         }
 
         #handleMouseMove(e) {

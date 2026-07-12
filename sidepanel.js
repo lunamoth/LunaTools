@@ -1748,7 +1748,6 @@ document.addEventListener('DOMContentLoaded', function() {
             let skippedInvalidListNames = 0;
             let renamedDuplicateListNames = 0;
             let skippedInvalidListStructures = 0;
-            const skippedUrlStats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
 
             for (const [key, importedList] of Object.entries(importedJson)) {
                 const normalizedName = normalizeListName(key);
@@ -1762,18 +1761,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     !Array.isArray(importedList) &&
                     'urls' in importedList &&
                     typeof importedList.urls === 'string') {
-                    const normalizedImport = normalizeImportedUrlListText(importedList.urls);
-                    skippedUrlStats.invalid += normalizedImport.invalid;
-                    skippedUrlStats.tooLong += normalizedImport.tooLong;
-                    skippedUrlStats.duplicate += normalizedImport.duplicate;
-                    skippedUrlStats.overLimit += normalizedImport.overLimit;
-
-                    if (!normalizedImport.urls) {
-                        skippedInvalidListStructures += 1;
-                        console.warn(`Skipping list with no valid importable URLs: ${key}`);
-                        continue;
-                    }
-
                     let finalName = normalizedName;
                     if (importedListNames.has(finalName)) {
                         finalName = generateUniqueListName(finalName, importedListNames);
@@ -1782,7 +1769,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     importedListNames.add(finalName);
 
                     validImportedLists[finalName] = {
-                        urls: normalizedImport.urls,
+                        // JSON 내보내기 파일은 백업이므로 중복·빈 줄·300개 초과 항목을 포함한 원문을 보존합니다.
+                        // 실행 시의 안전 검증과 300개 제한은 prepareUrlsForRun()에서 별도로 적용합니다.
+                        urls: importedList.urls,
                         createdAt: typeof importedList.createdAt === 'string' ? importedList.createdAt : new Date().toISOString()
                     };
                 } else {
@@ -1827,12 +1816,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (applyImport && await saveLists(newListsData)) {
                 const skippedDetails = [];
-                const skippedUrlCount = skippedUrlStats.invalid + skippedUrlStats.tooLong +
-                    skippedUrlStats.duplicate + skippedUrlStats.overLimit;
                 if (skippedInvalidListNames > 0) skippedDetails.push(`이름 오류 ${skippedInvalidListNames}개 제외`);
                 if (renamedDuplicateListNames > 0) skippedDetails.push(`중복 이름 ${renamedDuplicateListNames}개 자동 변경`);
                 if (skippedInvalidListStructures > 0) skippedDetails.push(`무효 목록 ${skippedInvalidListStructures}개 제외`);
-                if (skippedUrlCount > 0) skippedDetails.push(`URL ${skippedUrlCount}개 제외`);
                 const skippedSuffix = skippedDetails.length > 0 ? ` (${skippedDetails.join(', ')} 제외)` : '';
                 Toast.show(`JSON 목록을 성공적으로 가져왔습니다.${skippedSuffix}`, 'success');
 
@@ -2535,10 +2521,11 @@ document.addEventListener('DOMContentLoaded', function() {
             TAB_URL_MAX_LENGTH: 2048,
             MAX_IMPORT_SESSIONS: 500,
             MAX_TABS_PER_IMPORTED_SESSION: 300,
-            MAX_IMPORT_TOTAL_TABS: 5000,
+            MAX_IMPORT_TOTAL_TABS: 10000,
             MAX_SAVE_TABS: 300,
             MAX_RESTORE_TABS: 300,
-            RESTORE_CONFIRM_TAB_THRESHOLD: 50
+            RESTORE_CONFIRM_TAB_THRESHOLD: 50,
+            SESSION_ID_MAX_LENGTH: 256
         },
         TIMING: { EXPORT_URL_REVOKE_DELAY: 60000 },
         STORAGE_KEYS: { SESSIONS: 'sessions' },
@@ -2782,11 +2769,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const isValidTab = (tab) => Boolean(normalizeSessionTab(tab));
 
+      const isValidSessionId = (id) => {
+        if (typeof id === 'number') return Number.isFinite(id);
+        if (typeof id !== 'string') return false;
+        return id.trim().length > 0 &&
+          id.length <= CONSTANTS.LIMITS.SESSION_ID_MAX_LENGTH &&
+          !SESSION_URL_CONTROL_CHARACTER_REGEX.test(id);
+      };
+
       const isValidSession = (session) => {
         return session &&
           typeof session === 'object' &&
           !Array.isArray(session) &&
-          (typeof session.id === 'number' || typeof session.id === 'string') &&
+          isValidSessionId(session.id) &&
           typeof session.name === 'string' &&
           session.name.trim().length > 0 &&
           session.name.length <= CONSTANTS.UI.SESSION_NAME_MAX_LENGTH &&
@@ -3526,7 +3521,7 @@ document.addEventListener('DOMContentLoaded', function() {
         for (const session of imported) {
           if (!isRecord(session)) continue;
           const sessionName = typeof session.name === 'string' ? session.name.trim() : '';
-          if ((typeof session.id !== 'number' && typeof session.id !== 'string') ||
+          if (!isValidSessionId(session.id) ||
               !sessionName ||
               sessionName.length > CONSTANTS.UI.SESSION_NAME_MAX_LENGTH ||
               (hasOwn(session, 'isPinned') && typeof session.isPinned !== 'boolean') ||
@@ -3685,4 +3680,3 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeApp(lunaToolsApp, 'multi-url-opener-pane');
     initializeApp(tabHaikuApp, 'session-manager-pane');
 });
-
