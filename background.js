@@ -1130,7 +1130,11 @@ class TabManager {
 
           for (const tabDetail of pinnedTabsToMove) {
               try {
-                  const movedTab = await chrome.tabs.move(tabDetail.id, { windowId: targetWindowId, index: nextPinnedInsertIndex });
+                  let movedTab = await chrome.tabs.move(tabDetail.id, { windowId: targetWindowId, index: nextPinnedInsertIndex });
+                  if (movedTab?.pinned === false && typeof movedTab.id === 'number') {
+                      const repinnedTab = await chrome.tabs.update(movedTab.id, { pinned: true });
+                      if (repinnedTab) movedTab = repinnedTab;
+                  }
                   nextPinnedInsertIndex += 1;
                   processMovedTabForCache(movedTab);
               } catch (err) {

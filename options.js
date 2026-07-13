@@ -33,16 +33,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const LOCAL_KEYS = [STORAGE_KEYS.MULTI_URL_OPTIONS, STORAGE_KEYS.SAVED_URL_LISTS, STORAGE_KEYS.SESSIONS];
     
     const STATUS_VISIBLE_DURATION = 3000;
-    const MAX_RESTORE_FILE_SIZE = 10 * 1024 * 1024;
+    const MAX_RESTORE_FILE_SIZE = 32 * 1024 * 1024;
     const BACKUP_URL_REVOKE_DELAY_MS = 60 * 1000;
     const BACKUP_FORMAT_VERSION = 2;
     const BACKUP_SNAPSHOT_MODE = 'known-keys-full';
     const MAX_SESSION_URL_LENGTH = 2048;
     const MAX_SESSION_ID_LENGTH = 256;
     const MAX_LIST_NAME_LENGTH = 200;
-    const MAX_BACKUP_SESSION_COUNT = 500;
+    const MAX_BACKUP_SESSION_COUNT = 250000;
     const MAX_BACKUP_TABS_PER_SESSION = 300;
-    const MAX_BACKUP_TOTAL_SESSION_TABS = 10000;
+    const MAX_BACKUP_TOTAL_SESSION_TABS = 550000;
     const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
     const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
@@ -457,7 +457,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 local: localData
             };
 
-            const jsonString = JSON.stringify(backupData, null, 2);
+            const jsonString = JSON.stringify(backupData);
             const blob = new Blob([jsonString], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             
@@ -487,7 +487,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!file) return;
 
         if (file.size > MAX_RESTORE_FILE_SIZE) {
-            showStatus('복원 실패: 백업 파일이 너무 큽니다. (최대 10MB)', true);
+            showStatus('복원 실패: 백업 파일이 너무 큽니다. (최대 32MiB)', true);
             if (restoreFileInput) restoreFileInput.value = '';
             return;
         }

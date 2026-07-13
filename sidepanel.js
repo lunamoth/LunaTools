@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 interval: 2, removeDuplicates: true, focusLock: true, delayLoading: false, sortUrlsBeforeRun: true, playSound: true
             },
             FADE_DURATION: 300,
-            MAX_IMPORT_FILE_SIZE_BYTES: 10 * 1024 * 1024,
+            MAX_IMPORT_FILE_SIZE_BYTES: 32 * 1024 * 1024,
             MAX_URLS_PER_RUN: 300,
             MAX_URL_LENGTH: 2048,
             MAX_LIST_NAME_LENGTH: 200,
@@ -345,8 +345,7 @@ document.addEventListener('DOMContentLoaded', function() {
             for (const [key, list] of Object.entries(value)) {
                 const normalizedName = normalizeListName(key);
                 if (!isValidListName(normalizedName)) {
-                    console.warn(`Skipping unsafe or invalid stored list name: ${key}`);
-                    continue;
+                    throw new Error(`저장된 URL 목록 '${key}'의 이름이 올바르지 않습니다.`);
                 }
                 if (!list || typeof list !== 'object' || Array.isArray(list) || typeof list.urls !== 'string') {
                     throw new Error(`저장된 URL 목록 '${key}'의 데이터가 손상되었습니다.`);
@@ -1675,7 +1674,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 Toast.show('내보낼 목록이 없습니다.', 'error');
                 return;
             }
-            const dataStr = JSON.stringify(lists, null, 2);
+            const dataStr = JSON.stringify(lists);
             const blob = new Blob([dataStr], {type: "application/json"});
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1891,7 +1890,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const processImportedFile = (file) => {
             if (!file) return;
             if (file.size > CONFIG.MAX_IMPORT_FILE_SIZE_BYTES) {
-                Toast.show('가져오기 파일은 10MB를 초과할 수 없습니다.', 'error', 5000);
+                Toast.show('가져오기 파일은 32MiB를 초과할 수 없습니다.', 'error', 5000);
                 return;
             }
             const reader = new FileReader();
@@ -2519,9 +2518,10 @@ document.addEventListener('DOMContentLoaded', function() {
         PROTOCOLS: { SAFE: ['http:', 'https:'] },
         LIMITS: {
             TAB_URL_MAX_LENGTH: 2048,
-            MAX_IMPORT_SESSIONS: 500,
+            MAX_IMPORT_SESSIONS: 250000,
             MAX_TABS_PER_IMPORTED_SESSION: 300,
-            MAX_IMPORT_TOTAL_TABS: 10000,
+            MAX_IMPORT_TOTAL_TABS: 550000,
+            MAX_IMPORT_FILE_SIZE_BYTES: 32 * 1024 * 1024,
             MAX_SAVE_TABS: 300,
             MAX_RESTORE_TABS: 300,
             RESTORE_CONFIRM_TAB_THRESHOLD: 50,
@@ -2541,7 +2541,7 @@ document.addEventListener('DOMContentLoaded', function() {
             PIN_FAILED: '고정 실패', NO_URLS_TO_COPY: '⚠️ 복사할 URL이 없습니다.', URLS_COPIED: '📋 모든 URL을 클립보드에 복사했습니다.',
             COPY_FAILED: '❌ 클립보드 복사에 실패했습니다.', NO_SESSIONS_TO_EXPORT: '⚠️ 내보낼 세션이 없습니다.',
             EXPORT_SUCCESS: '📤 모든 세션을 내보냈습니다.', EXPORT_FAILED: '❌ 세션 내보내기에 실패했습니다.',
-            IMPORT_FILE_TOO_LARGE: '❌ 파일이 너무 큽니다 (최대 10MB)',
+            IMPORT_FILE_TOO_LARGE: '❌ 파일이 너무 큽니다 (최대 32MiB)',
             IMPORT_FILE_READ_ERROR: '❌ 파일을 읽는 중 오류가 발생했습니다.', IMPORT_INVALID_FORMAT: '❌ 잘못된 파일 형식입니다.',
             IMPORT_NO_VALID_SESSIONS: '유효한 세션이 없습니다.',
             IMPORT_TOO_MANY_SESSIONS: (max) => `가져오기 제한 초과: 세션은 최대 ${max}개까지 가져올 수 있습니다.`,
@@ -3479,7 +3479,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const handleExport = () => {
         if (allSessions.length === 0) { showToast(CONSTANTS.MESSAGES.NO_SESSIONS_TO_EXPORT); return; }
-        const dataStr = JSON.stringify(allSessions, null, 2);
+        const dataStr = JSON.stringify(allSessions);
         const blob = new Blob([dataStr], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const now = new Date();
@@ -3554,7 +3554,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const handleImport = () => {
         const file = importFileInput.files[0];
         if (!file) return;
-        if (file.size > 10 * 1024 * 1024) {
+        if (file.size > CONSTANTS.LIMITS.MAX_IMPORT_FILE_SIZE_BYTES) {
           showToast(CONSTANTS.MESSAGES.IMPORT_FILE_TOO_LARGE);
           importFileInput.value = '';
           return;

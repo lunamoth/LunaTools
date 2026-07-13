@@ -611,6 +611,9 @@
         if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tagName)) {
           return !element.disabled;
         }
+        if (['VIDEO', 'AUDIO', 'CANVAS', 'IFRAME', 'EMBED', 'OBJECT'].includes(tagName)) {
+          return true;
+        }
 
         const role = String(element.getAttribute?.('role') || '').toLowerCase();
         const arrowKeyRoles = new Set([

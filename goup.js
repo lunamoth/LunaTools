@@ -1,6 +1,10 @@
 (function () {
     'use strict';
 
+    if (window.self !== window.top) {
+        return;
+    }
+
     const OriginalURL = URL;
     const originalLocation = window.location;
     const { assign: locationAssign } = window.location;
@@ -183,6 +187,8 @@
 
             const next = new OriginalURL(u.href);
             next.hostname = h;
+            next.username = '';
+            next.password = '';
             next.pathname = '/';
             next.search = ''; next.hash = '';
             return next.href;
@@ -245,6 +251,10 @@
 
                 const next = new OriginalURL(cur.href);
                 next.hostname = rootHost;
+                if (cur.hostname !== rootHost) {
+                    next.username = '';
+                    next.password = '';
+                }
                 next.pathname = '/';
                 next.search = ''; next.hash = '';
                 return this.#exec(next.href);
