@@ -126,6 +126,8 @@
         #warnedUnsafeMedia = new WeakSet();
         #disconnectedMediaRefs = new Set();
         #disconnectedMediaRefByElement = new WeakMap();
+        #pendingDetachedCleanupByElement = new WeakMap();
+        #pendingDetachedMediaRefs = new Set();
         #hasSetupMedia = false;
         #userHasInteracted = false; 
 
@@ -177,6 +179,26 @@
                 context,
                 isActivated
             );
+            this.#applyVolumeToDetachedMedia(volume, context);
+        }
+
+        #applyVolumeToDetachedMedia(volume, context) {
+            for (const mediaRef of Array.from(this.#pendingDetachedMediaRefs)) {
+                const mediaElement = mediaRef.deref();
+                if (!mediaElement) {
+                    this.#pendingDetachedMediaRefs.delete(mediaRef);
+                    continue;
+                }
+
+                if (mediaElement.isConnected) {
+                    this.#cancelPendingDetachedCleanup(mediaElement);
+                }
+
+                const audioComponents = this.#sourceNodeMap.get(mediaElement);
+                if (audioComponents?.connected) {
+                    audioComponents.gainNode.gain.setTargetAtTime(volume, context.currentTime, 0.05);
+                }
+            }
         }
 
         async processNewNodes(nodeList, isActivated, multiplier) {
@@ -188,6 +210,21 @@
 
             const volume = isActivated ? multiplier : 1.0;
             this.#applyVolume(newMediaElements, volume, context, isActivated);
+        }
+
+        handleAddedNodes(nodeList, isActivated, multiplier) {
+            if (!this.#hasSetupMedia || !this.#audioContext || !nodeList?.length) return;
+
+            const volume = isActivated ? multiplier : 1.0;
+            for (const media of this.#findMediaInNodes(nodeList)) {
+                if (!media.isConnected) continue;
+
+                this.#cancelPendingDetachedCleanup(media);
+                const audioComponents = this.#setup(media, false);
+                if (audioComponents?.connected) {
+                    audioComponents.gainNode.gain.setTargetAtTime(volume, this.#audioContext.currentTime, 0.05);
+                }
+            }
         }
 
         #trackDisconnectedMedia(mediaElement) {
@@ -227,19 +264,63 @@
             }
         }
 
+        #cancelPendingDetachedCleanup(mediaElement) {
+            const pendingCleanup = this.#pendingDetachedCleanupByElement.get(mediaElement);
+            if (!pendingCleanup) return;
+
+            mediaElement.removeEventListener('pause', pendingCleanup.cleanup);
+            mediaElement.removeEventListener('ended', pendingCleanup.cleanup);
+            this.#pendingDetachedMediaRefs.delete(pendingCleanup.mediaRef);
+            this.#pendingDetachedCleanupByElement.delete(mediaElement);
+        }
+
+        #disconnectMedia(mediaElement, audioComponents) {
+            if (!audioComponents?.connected) return;
+
+            this.#cancelPendingDetachedCleanup(mediaElement);
+            const { source, gainNode } = audioComponents;
+            try {
+                source.disconnect();
+                gainNode.disconnect();
+            } catch {}
+            audioComponents.connected = false;
+            this.#trackDisconnectedMedia(mediaElement);
+        }
+
+        #scheduleDetachedCleanup(mediaElement, audioComponents) {
+            if (this.#pendingDetachedCleanupByElement.has(mediaElement)) return;
+
+            const cleanup = () => {
+                if (mediaElement.isConnected) {
+                    this.#cancelPendingDetachedCleanup(mediaElement);
+                    return;
+                }
+                if (!mediaElement.paused && !mediaElement.ended) return;
+
+                this.#disconnectMedia(mediaElement, audioComponents);
+            };
+
+            const mediaRef = new WeakRef(mediaElement);
+            this.#pendingDetachedCleanupByElement.set(mediaElement, { cleanup, mediaRef });
+            this.#pendingDetachedMediaRefs.add(mediaRef);
+            mediaElement.addEventListener('pause', cleanup);
+            mediaElement.addEventListener('ended', cleanup);
+
+            // 제거 직후 상태가 바뀐 경우에도 pause/ended 이벤트를 놓치지 않습니다.
+            if (mediaElement.paused || mediaElement.ended) cleanup();
+        }
+
         cleanupRemovedNodes(nodeList) {
             if (!this.#hasSetupMedia || !nodeList?.length) return;
 
             for (const media of this.#findMediaInNodes(nodeList)) {
                 const audioComponents = this.#sourceNodeMap.get(media);
                 if (audioComponents && !media.isConnected && audioComponents.connected) {
-                    const { source, gainNode } = audioComponents;
-                    try {
-                        source.disconnect();
-                        gainNode.disconnect();
-                    } catch {}
-                    audioComponents.connected = false;
-                    this.#trackDisconnectedMedia(media);
+                    if (!media.paused && !media.ended) {
+                        this.#scheduleDetachedCleanup(media, audioComponents);
+                    } else {
+                        this.#disconnectMedia(media, audioComponents);
+                    }
                 }
             }
         }
@@ -518,11 +599,16 @@
 
                 if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
                 if (addedNodes.length > 0) {
+                    this.#audioProcessor.handleAddedNodes(
+                        addedNodes,
+                        this.#isActivated,
+                        CONFIG.VOLUME_MULTIPLIER
+                    );
                     if (this.#isActivated) {
                         this.#queueAddedNodes(addedNodes);
                     } else {
-                        // 이미 Web Audio로 라우팅된 요소는 제거 시 graph가 끊깁니다.
-                        // 같은 요소가 OFF 상태에서 재삽입되어도 무음으로 남지 않게 복구합니다.
+                        // 일시정지/종료 후 정리된 요소가 OFF 상태에서 재삽입되어도
+                        // 끊긴 graph와 기본 gain을 즉시 복구합니다.
                         void this.#audioProcessor.reconnectDisconnectedMedia().catch(() => {});
                     }
                 }

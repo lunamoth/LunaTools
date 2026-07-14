@@ -691,13 +691,9 @@ class TabManager {
     const url = tab?.url;
     const pendingUrl = tab?.pendingUrl;
 
-    if (url && (url.startsWith('http:') || url.startsWith('https:'))) {
-      return url;
-    }
-    if (pendingUrl && (pendingUrl.startsWith('http:') || pendingUrl.startsWith('https:'))) {
-      return pendingUrl;
-    }
-    return url || pendingUrl || null;
+    // pendingUrl은 아직 커밋되지 않은 실제 이동 대상이고, url은 마지막으로 커밋된 주소입니다.
+    // 로딩 중 탭을 이동할 때 이전 주소를 중복으로 오인해 닫지 않도록 pendingUrl을 우선합니다.
+    return pendingUrl || url || null;
   }
 
   _tryParseUrl(urlString) {

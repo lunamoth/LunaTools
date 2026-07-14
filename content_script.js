@@ -35,7 +35,8 @@
       return {
         hostname,
         pathname,
-        search: allowPath ? parsed.search : ''
+        search: allowPath ? parsed.search : '',
+        hash: allowPath && parsed.hash ? parsed.hash.replace(/\/+$/, '') : ''
       };
     } catch (_) {
       return null;
@@ -75,7 +76,19 @@
       }
     }
 
-    return !structuredRule.search || currentUrl.search === structuredRule.search;
+    if (structuredRule.search && currentUrl.search !== structuredRule.search) {
+      return false;
+    }
+
+    if (structuredRule.hash) {
+      const currentHash = currentUrl.hash.replace(/\/+$/, '');
+      const expectedHash = structuredRule.hash;
+      if (currentHash !== expectedHash && !currentHash.startsWith(`${expectedHash}/`)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   const SITE_SETTINGS_RECHECK_INTERVAL_MS = 1000;
@@ -367,8 +380,8 @@
       },
       patterns: {
         url: [
-          /[?&]page=(\d{1,4})/i, /[?&]po=(\d{1,4})/i, /[?&]p=(\d{1,4})/i,
-          /page\/(\d{1,4})/i,
+          /[?&]page=(\d{1,4})(?=[&#]|$)/i, /[?&]po=(\d{1,4})(?=[&#]|$)/i, /[?&]p=(\d{1,4})(?=[&#]|$)/i,
+          /page\/(\d{1,4})(?=[/?#]|$)/i,
           /\/(\d{1,4})(?:[/?#]|$)/i
         ],
         ignore: [
@@ -536,19 +549,18 @@
         this.startObserving();
       }
       _findObserverTarget() {
-        const selectors = [...KB_NAV_CONFIG.observer.TARGET_SELECTORS, ...KB_NAV_CONFIG.observer.FALLBACK_TARGET_SELECTORS];
-        for (const selector of selectors) {
-          const element = document.querySelector(selector);
-          if (element) {
-            this.observerTarget = element;
-            return;
-          }
-        }
-        this.observerTarget = document.body;
+        // A pagination element can be replaced wholesale by an SPA. Observe a
+        // stable document root so removal and replacement both invalidate links.
+        this.observerTarget = document.documentElement || document.body;
       }
       startObserving() {
+        if (!this.observerTarget?.isConnected) {
+          this._findObserverTarget();
+        }
         if (this.observer && this.observerTarget && !this.isObserving) {
           try {
+            // Mutations may have happened while the lifecycle observer was off.
+            this.cachedLinks = null;
             this.observer.observe(this.observerTarget, {
               childList: true,
               subtree: true,
@@ -1885,6 +1897,36 @@
             const koreanOrPlainNumber = String.raw`[\d,\.\s천백십조억만일이삼사오육칠팔구영]+`;
             return `(?:${numericWithMagnitude}|${koreanOrPlainNumber})`;
         },
+        _isStrictCurrencyAmountText: function(amountText) {
+            if (Utils.isInvalidString(amountText)) return false;
+            const source = TextExtractor._getCurrencyAmountPatternSource();
+            return new RegExp(`^(?:${source})$`, 'iu').test(amountText.trim());
+        },
+        _isValidCurrencyTokenMatch: function(originalText, currencyCode, match) {
+            if (!match || Utils.isInvalidString(match[0]) || !Number.isInteger(match.index)) return false;
+
+            const token = match[0];
+            const tokenStart = match.index;
+            const tokenEnd = tokenStart + token.length;
+            const previousCharacter = tokenStart > 0 ? originalText[tokenStart - 1] : '';
+            const nextCharacter = tokenEnd < originalText.length ? originalText[tokenEnd] : '';
+            const isUnicodeWordContinuation = character => /[\p{L}\p{M}\p{Pc}]/u.test(character);
+
+            // Alphabetic codes/symbols may be adjacent to a number, but must not
+            // be extracted from inside ordinary words (fraud/AUD, country/TRY).
+            if (/^[A-Za-z]/u.test(token) && isUnicodeWordContinuation(previousCharacter)) return false;
+            if (/[A-Za-z]$/u.test(token) && isUnicodeWordContinuation(nextCharacter)) return false;
+
+            // Short alphabetic currency symbols are case-sensitive. In
+            // particular, lowercase "ft" is the common feet unit.
+            const caseSensitiveSymbols = { HUF: 'Ft', MYR: 'RM', IDR: 'Rp' };
+            const expectedSymbol = caseSensitiveSymbols[currencyCode];
+            if (expectedSymbol && token.toLowerCase() === expectedSymbol.toLowerCase() && token !== expectedSymbol) {
+                return false;
+            }
+
+            return true;
+        },
         _parseAmountCandidateText: function(amountText) {
             if (Utils.isInvalidString(amountText)) return null;
 
@@ -1977,6 +2019,8 @@
                 a.patternIndex - b.patternIndex;
         },
         _buildCurrencyAmountCandidate: function(originalText, currencyCode, match, patternIndex) {
+            if (!TextExtractor._isValidCurrencyTokenMatch(originalText, currencyCode, match)) return null;
+
             const matchedCurrencyText = match[0];
             const currencyStart = match.index;
             const currencyEnd = currencyStart + matchedCurrencyText.length;
@@ -2074,14 +2118,19 @@
 
             for (const pattern of Config.CURRENCY_PATTERNS) {
                 pattern.regex.lastIndex = 0;
-                const match = pattern.regex.exec(originalText);
-                if (match) {
+                let match;
+                while ((match = pattern.regex.exec(originalText)) !== null) {
+                    if (!TextExtractor._isValidCurrencyTokenMatch(originalText, pattern.code, match)) {
+                        if (match[0] === '') pattern.regex.lastIndex += 1;
+                        continue;
+                    }
                     currencyCode = pattern.code;
                     matchedCurrencyText = match[0];
                     const firstOccurrenceIndex = match.index;
                     amountTextToParse = (originalText.substring(0, firstOccurrenceIndex) + originalText.substring(firstOccurrenceIndex + matchedCurrencyText.length)).trim();
                     break;
                 }
+                if (currencyCode) break;
             }
 
             let amount = null;
@@ -2091,7 +2140,7 @@
                 originalText.replace(matchedCurrencyText, '').trim() :
                 amountTextToParse;
 
-            if (textForNumericParse !== "") {
+            if (TextExtractor._isStrictCurrencyAmountText(textForNumericParse)) {
                 const parsedWithMagnitude = NumberParser.parseAmountWithMagnitudeSuffixes(textForNumericParse);
                 if (parsedWithMagnitude !== null) {
                     amount = parsedWithMagnitude;

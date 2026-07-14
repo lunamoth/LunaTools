@@ -254,6 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         let totalTabCount = 0;
+        const seenSessionIds = new Set();
         return value.map((session, sessionIndex) => {
             const sessionName = typeof session?.name === 'string' ? session.name.trim() : '';
             const validSession = isRecord(session) &&
@@ -276,6 +277,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!validSession) {
                 throw new Error(`${sessionIndex + 1}번째 세션의 형식이 올바르지 않습니다.`);
             }
+
+            const sessionIdKey = String(session.id);
+            if (seenSessionIds.has(sessionIdKey)) {
+                throw new Error(`${sessionIndex + 1}번째 세션의 ID가 다른 세션과 충돌합니다.`);
+            }
+            seenSessionIds.add(sessionIdKey);
 
             const normalizedTabs = session.tabs.map((tab, tabIndex) => {
                 if (!isRecord(tab)) {

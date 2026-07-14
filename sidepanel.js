@@ -1016,7 +1016,25 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const setView = (viewState) => {
-            if (state.isTransitioning || !UI.inputWrapper || !UI.runningWrapper) return;
+            if (!UI.inputWrapper || !UI.runningWrapper) return;
+
+            const previousViewState = state.currentView;
+            const staysInRunningWrapper = !state.isInitialLoad &&
+                previousViewState !== 'input' &&
+                viewState !== 'input';
+
+            // Running and complete use the same wrapper. Updating only the
+            // logical state avoids an unnecessary transition lock that could
+            // otherwise reject an immediate restart click.
+            if (staysInRunningWrapper) {
+                state.currentView = viewState;
+                if (UI.sectionCardContainer) UI.sectionCardContainer.dataset.viewState = viewState;
+                updateButtonState();
+                scheduleSetCardHeight();
+                return;
+            }
+
+            if (state.isTransitioning) return;
 
             const isActuallySwitching = state.currentView !== viewState || state.isInitialLoad;
             state.currentView = viewState;
@@ -1178,10 +1196,19 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             if (UI.pauseResumeButton) {
+                UI.pauseResumeButton.classList.remove(CONFIG.CSS.SUCCESS_BTN_CLASS);
                 if (viewState === 'running') {
                     UI.pauseResumeButton.textContent = state.isPaused ? CONFIG.TEXT.RESUME : CONFIG.TEXT.PAUSE;
                     UI.pauseResumeButton.disabled = false;
+                } else if (viewState === 'complete') {
+                    UI.pauseResumeButton.textContent = CONFIG.TEXT.RESTART;
+                    UI.pauseResumeButton.classList.add(CONFIG.CSS.SUCCESS_BTN_CLASS);
+                    UI.pauseResumeButton.disabled = false;
                 }
+            }
+
+            if (UI.stopProcessButton) {
+                UI.stopProcessButton.style.display = viewState === 'complete' ? 'none' : '';
             }
 
             if (UI.saveListButton) {
@@ -2269,7 +2296,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const handleGetCurrentTabs = createTabFetchHandler({ currentWindow: true }, '현재 창의 탭 가져오기');
 
             if (UI.startRunButton) UI.startRunButton.addEventListener('click', handleStartRunButtonClick);
-            if (UI.pauseResumeButton) UI.pauseResumeButton.addEventListener('click', togglePause);
+            if (UI.pauseResumeButton) {
+                UI.pauseResumeButton.addEventListener('click', async () => {
+                    if (state.currentView === 'complete') {
+                        await resetToIdle();
+                    } else if (state.currentView === 'running') {
+                        togglePause();
+                    }
+                });
+            }
             if (UI.stopProcessButton) {
                 UI.stopProcessButton.addEventListener('click', async () => {
                     const confirmed = await Modal.show({
@@ -2799,10 +2834,29 @@ document.addEventListener('DOMContentLoaded', function() {
           return { sessions: [], hasInvalidData: true };
         }
 
-        const sessions = value.filter(isValidSession);
+        const sessions = [];
+        const seenSessionIds = new Set();
+        let hasInvalidData = false;
+
+        for (const session of value) {
+          if (!isValidSession(session)) {
+            hasInvalidData = true;
+            continue;
+          }
+
+          const sessionIdKey = String(session.id);
+          if (seenSessionIds.has(sessionIdKey)) {
+            hasInvalidData = true;
+            continue;
+          }
+
+          seenSessionIds.add(sessionIdKey);
+          sessions.push(session);
+        }
+
         return {
           sessions,
-          hasInvalidData: sessions.length !== value.length
+          hasInvalidData
         };
       };
 
