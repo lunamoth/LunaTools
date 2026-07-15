@@ -379,11 +379,12 @@
         REACTIVATION_THROTTLE_MS: 1000
       },
       patterns: {
-        url: [
+        page: [
           /[?&]page=(\d{1,4})(?=[&#]|$)/i, /[?&]po=(\d{1,4})(?=[&#]|$)/i, /[?&]p=(\d{1,4})(?=[&#]|$)/i,
-          /page\/(\d{1,4})(?=[/?#]|$)/i,
-          /\/(\d{1,4})(?:[/?#]|$)/i
+          /page\/(\d{1,4})(?=[/?#]|$)/i
         ],
+        datePath: /\/(\d{4})\/(\d{1,2})\/(\d{1,2})(\/?)(?=[?#]|$)/,
+        numericPath: /\/(\d{1,4})(?:[/?#]|$)/i,
         ignore: [
           /\/status\/\d{10,}/i,
           /\/commit\/\w{7,40}/i,
@@ -484,24 +485,88 @@
         this.urlPatternCache = new KB_NAV_LRUCache(KB_NAV_CONFIG.cache.MAX_SIZE, KB_NAV_CONFIG.cache.MAX_AGE_MS);
         this.cleanupInterval = setInterval(() => this.urlPatternCache.removeExpired(), KB_NAV_CONFIG.cache.MAX_AGE_MS / 2);
       }
+      _createPagePatternInfo(url, pattern) {
+        const match = pattern.exec(url);
+        if (!match || !match[1]) return null;
+
+        const pageNumber = parseInt(match[1], 10);
+        if (isNaN(pageNumber) || pageNumber < KB_NAV_CONFIG.navigation.MIN_PAGE || pageNumber > KB_NAV_CONFIG.navigation.MAX_PAGE) {
+          return null;
+        }
+
+        return { kind: 'page', regex: pattern, currentPage: pageNumber, originalMatch: match[0] };
+      }
+      _createDatePatternInfo(url) {
+        const match = KB_NAV_CONFIG.patterns.datePath.exec(url);
+        if (!match) return undefined;
+
+        const year = parseInt(match[1], 10);
+        const month = parseInt(match[2], 10);
+        const day = parseInt(match[3], 10);
+        if (year < 1000 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) {
+          return null;
+        }
+
+        const date = new Date(Date.UTC(year, month - 1, day));
+        if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+          return null;
+        }
+
+        return {
+          kind: 'date',
+          year,
+          month,
+          day,
+          monthWidth: match[2].length,
+          dayWidth: match[3].length,
+          trailingSlash: match[4],
+          originalMatch: match[0]
+        };
+      }
       findPagePattern(url) {
         const cachedResult = this.urlPatternCache.get(url);
         if (cachedResult !== undefined) return cachedResult;
-        for (const pattern of KB_NAV_CONFIG.patterns.url) {
-          const match = pattern.exec(url);
-          if (!match || !match[1]) continue;
-          const pageNumber = parseInt(match[1], 10);
-          if (isNaN(pageNumber) || pageNumber < KB_NAV_CONFIG.navigation.MIN_PAGE || pageNumber > KB_NAV_CONFIG.navigation.MAX_PAGE) {
-            continue;
-          }
-          const patternInfo = { regex: pattern, currentPage: pageNumber, originalMatch: match[0] };
+
+        // 명시적인 페이지 매개변수는 날짜형 경로보다 우선합니다.
+        for (const pattern of KB_NAV_CONFIG.patterns.page) {
+          const patternInfo = this._createPagePatternInfo(url, pattern);
+          if (!patternInfo) continue;
           this.urlPatternCache.set(url, patternInfo);
           return patternInfo;
         }
+
+        // 연/월/일 경로는 가장 앞의 연도를 일반 페이지 번호로 오인하지 않고
+        // 실제 달력 날짜로 처리합니다. 잘못된 날짜도 숫자 경로로 재해석하지 않습니다.
+        const datePatternInfo = this._createDatePatternInfo(url);
+        if (datePatternInfo !== undefined) {
+          this.urlPatternCache.set(url, datePatternInfo);
+          return datePatternInfo;
+        }
+
+        const numericPatternInfo = this._createPagePatternInfo(url, KB_NAV_CONFIG.patterns.numericPath);
+        if (numericPatternInfo) {
+          this.urlPatternCache.set(url, numericPatternInfo);
+          return numericPatternInfo;
+        }
+
         this.urlPatternCache.set(url, null);
         return null;
       }
       generateNewUrl(currentUrl, patternInfo, direction) {
+        if (patternInfo.kind === 'date') {
+          const { year, month, day, monthWidth, dayWidth, trailingSlash, originalMatch } = patternInfo;
+          const nextDate = new Date(Date.UTC(year, month - 1, day));
+          nextDate.setUTCDate(nextDate.getUTCDate() + direction);
+
+          const nextYear = nextDate.getUTCFullYear();
+          if (nextYear < 1000 || nextYear > 9999) return currentUrl;
+
+          const nextMonth = String(nextDate.getUTCMonth() + 1).padStart(monthWidth, '0');
+          const nextDay = String(nextDate.getUTCDate()).padStart(dayWidth, '0');
+          const nextDatePath = `/${String(nextYear).padStart(4, '0')}/${nextMonth}/${nextDay}${trailingSlash}`;
+          return currentUrl.replace(originalMatch, nextDatePath);
+        }
+
         const { currentPage, originalMatch } = patternInfo;
         let newPage = currentPage + direction;
         newPage = Math.max(KB_NAV_CONFIG.navigation.MIN_PAGE, newPage);
@@ -1959,6 +2024,35 @@
                 endOffset: baseOffset + captureOffsetInMatch + capturedText.length - trailingWhitespaceLength
             };
         },
+        _trimEmbeddedKoreanContextPrefix: function(text, candidate) {
+            if (!candidate) return null;
+
+            const candidateText = text.slice(candidate.startOffset, candidate.endOffset);
+            const previousCharacter = candidate.startOffset > 0 ? text[candidate.startOffset - 1] : '';
+            const startsWithKoreanNumericCharacter = /^[천백십조억만일이삼사오육칠팔구영]/u.test(candidateText);
+
+            // 문장 속 조사·명사의 마지막 글자(금액이, 금액만, 구매일 등)가 한글 숫자와
+            // 같더라도 숫자 표현의 시작으로 포함하지 않습니다. 공백 뒤의 실제 금액만
+            // 사용하고, 아라비아 숫자가 조사 바로 뒤에 붙은 기존 입력도 보존합니다.
+            if (!startsWithKoreanNumericCharacter || !/[ㄱ-ㅎㅏ-ㅣ가-힣]/u.test(previousCharacter)) {
+                return candidate;
+            }
+
+            const separatedAmountMatch = /\s+([^\s].*)$/u.exec(candidateText);
+            const adjacentArabicAmountMatch = /^[천백십조억만일이삼사오육칠팔구영](\d.*)$/u.exec(candidateText);
+            const amountMatch = separatedAmountMatch || adjacentArabicAmountMatch;
+            if (!amountMatch) return null;
+
+            const actualAmountText = amountMatch[1].trim();
+            if (!TextExtractor._isStrictCurrencyAmountText(actualAmountText)) return null;
+
+            const actualAmountStart = candidateText.indexOf(amountMatch[1], amountMatch.index);
+            return {
+                amountText: actualAmountText,
+                startOffset: candidate.startOffset + actualAmountStart,
+                endOffset: candidate.endOffset
+            };
+        },
         _getOptionalCurrencySymbolAmountPrefixSource: function() {
             return String.raw`(?:US\s*)?[\$＄]|C\$|A\$|HK\$|NZ\$|S\$|Mex\$|R\$|SFr\.?|RM|Rs\.?|Rp|[£￡¥￥₩€₹₺₱₪฿]|zł|Kč|Ft|лв`;
         },
@@ -1982,7 +2076,8 @@
             const match = trailingRegex.exec(text);
             if (!match) return null;
 
-            return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], match.index, match[2]);
+            const candidate = TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], match.index, match[2]);
+            return TextExtractor._trimEmbeddedKoreanContextPrefix(text, candidate);
         },
         _getCurrencyExpressionStart: function(originalText, currencyStart, matchedCurrencyText) {
             if (!/^[\$＄]$/u.test(matchedCurrencyText)) return currencyStart;
@@ -3008,6 +3103,30 @@
     };
 	
     const EventHandlers = {
+        isEditableKeyEvent: function(event) {
+            if (document.designMode === 'on') return true;
+
+            const eventPath = typeof event.composedPath === 'function' ? event.composedPath() : [];
+            const candidates = [...eventPath, event.target, document.activeElement];
+            const editableSelector = 'input, textarea, select, [contenteditable], [role="textbox"], [role="searchbox"], [role="combobox"], .CodeMirror, .monaco-editor, .ace_editor';
+
+            return candidates.some(candidate => {
+                if (!(candidate instanceof Element)) return false;
+                const editableElement = candidate.closest(editableSelector);
+                if (!editableElement) return false;
+
+                const tagName = String(editableElement.tagName || '').toUpperCase();
+                if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName)) return true;
+                if (editableElement.matches('.CodeMirror, .monaco-editor, .ace_editor')) return true;
+
+                const role = String(editableElement.getAttribute('role') || '').toLowerCase();
+                if (['textbox', 'searchbox', 'combobox'].includes(role)) return true;
+
+                const contentEditableValue = editableElement.getAttribute('contenteditable');
+                return editableElement.isContentEditable ||
+                    (contentEditableValue !== null && contentEditableValue.toLowerCase() !== 'false');
+            });
+        },
         handleUnifiedConvertAction: async function() {
             const conversionGeneration = ++AppState.conversionGeneration;
             const selection = window.getSelection();
@@ -3036,7 +3155,13 @@
             document.addEventListener('selectionchange', Utils.debounce(EventHandlers.handleSelectionChange, 250));
             document.addEventListener('keydown', function(event) {
                 if (!event.isTrusted) return;
-                if (event.altKey && (event.key === 'z' || event.key === 'Z' || event.code === 'KeyZ')) { event.preventDefault(); event.stopPropagation(); EventHandlers.handleUnifiedConvertAction(); }
+                const isConvertShortcut = event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey &&
+                    (event.key === 'z' || event.key === 'Z' || event.code === 'KeyZ');
+                if (isConvertShortcut && !event.repeat && !event.isComposing && !EventHandlers.isEditableKeyEvent(event)) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void EventHandlers.handleUnifiedConvertAction();
+                }
                 if (event.key === 'Escape' || event.code === 'Escape') { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') PopupUI.close(); }
             });
             window.addEventListener('scroll', () => { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) PopupUI.close(); }, true);

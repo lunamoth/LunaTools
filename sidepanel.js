@@ -540,9 +540,13 @@ document.addEventListener('DOMContentLoaded', function() {
                             button.style.backgroundColor = 'var(--bg-control)';
                             button.style.color = 'var(--text-secondary)';
                         } else if (buttonConfig.isDanger) {
+                             button.dataset.dangerAction = 'true';
                              button.style.backgroundColor = 'var(--danger-color)';
                              button.style.color = 'white';
                         } else {
+                            if (buttonConfig.isDefaultConfirm) {
+                                button.dataset.defaultAction = 'confirm';
+                            }
                             button.style.backgroundColor = 'var(--accent-color)';
                             button.style.color = 'white';
                         }
@@ -561,9 +565,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (!UI.modalOverlay.classList.contains('visible') || e.isComposing) return;
                     if (e.key === 'Enter') {
                         e.preventDefault();
+                        const customButtonWrapper = UI.modalFooter.querySelector('.custom-buttons');
                         const confirmButton = UI.modalConfirmBtn.style.display !== 'none'
                             ? UI.modalConfirmBtn
-                            : UI.modalFooter.querySelector('.custom-buttons button:not([data-default-action="cancel"])');
+                            : customButtonWrapper?.querySelector('button[data-default-action="confirm"]') ||
+                              customButtonWrapper?.querySelector('button:not([data-default-action="cancel"]):not([data-danger-action="true"])');
                         if (confirmButton) confirmButton.click();
                     } else if (e.key === 'Escape') {
                         e.preventDefault();
@@ -1106,8 +1112,19 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
+        const hasSuccessfullyCompletedCurrentRun = () => (
+            state.currentView === 'complete' &&
+            state.urlsToProcess.length > 0 &&
+            state.currentUrlIndex === state.urlsToProcess.length &&
+            state.errorCount === 0 &&
+            state.processingRunId === null &&
+            state.completionRunId === null
+        );
+
         const resetToIdle = async (message = CONFIG.TEXT.IDLE, isError = false) => {
-            if (!state.isInitialLoad && state.isDirty) {
+            // 모든 URL을 성공적으로 연 완료 화면의 입력값은 이미 소비된 작업입니다.
+            // 이 경우에만 미저장 목록 경고를 건너뛰며, 실패·중단·일반 편집 상태의 보호는 유지합니다.
+            if (!state.isInitialLoad && state.isDirty && !hasSuccessfullyCompletedCurrentRun()) {
                  const safeListName = escapeHtml(state.loadedListName || '현재');
                  const confirmed = await Modal.show({
                     title: '저장되지 않은 변경사항',
@@ -1327,7 +1344,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     buttons: [
                         { text: '취소', value: 'cancel', isDefaultCancel: true },
                         { text: '변경사항 버리고 새로 작성', value: 'discard', isDanger: true },
-                        { text: '저장 후 새로 작성', value: 'save_and_new' }
+                        { text: '저장 후 새로 작성', value: 'save_and_new', isDefaultConfirm: true }
                     ]
                 });
 
@@ -3149,6 +3166,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         const createdWindowIds = [];
+        const createdRestoreTabs = [];
         try {
           for (const windowTabs of tabsByWindow.values()) {
             const [firstTab, ...remainingTabs] = windowTabs;
@@ -3160,16 +3178,26 @@ document.addEventListener('DOMContentLoaded', function() {
             createdWindowIds.push(createdWindowId);
 
             const createdTabs = [];
-            const createdWindowTabs = await chrome.tabs.query({ windowId: createdWindowId });
-            const createdFirstTab = createdWindowTabs[0];
+            let createdFirstTab = Array.isArray(createdWindow.tabs)
+              ? createdWindow.tabs.find(tab => Number.isInteger(tab?.id))
+              : null;
+            if (!createdFirstTab) {
+              const createdWindowTabs = await chrome.tabs.query({ windowId: createdWindowId });
+              createdFirstTab = createdWindowTabs.find(tab => Number.isInteger(tab?.id));
+            }
             if (!Number.isInteger(createdFirstTab?.id)) {
               throw new Error('복원된 창의 첫 번째 탭을 확인할 수 없습니다.');
             }
 
+            createdTabs.push({ savedTab: firstTab, createdTabId: createdFirstTab.id });
+            createdRestoreTabs.push({
+              tabId: createdFirstTab.id,
+              windowId: createdWindowId,
+              expectedUrl: firstTab.url
+            });
             if (firstTab.pinned) {
               await chrome.tabs.update(createdFirstTab.id, { pinned: true });
             }
-            createdTabs.push({ savedTab: firstTab, createdTabId: createdFirstTab.id });
 
             for (const savedTab of remainingTabs) {
               const createdTab = await chrome.tabs.create({
@@ -3182,6 +3210,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error('복원된 탭의 식별자를 확인할 수 없습니다.');
               }
               createdTabs.push({ savedTab, createdTabId: createdTab.id });
+              createdRestoreTabs.push({
+                tabId: createdTab.id,
+                windowId: createdWindowId,
+                expectedUrl: savedTab.url
+              });
             }
 
             await restoreTabGroupsForWindow(createdTabs, createdWindowId);
@@ -3192,18 +3225,46 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
         } catch (error) {
-          const rollbackResults = await Promise.allSettled(
-            [...createdWindowIds].reverse().map(windowId => chrome.windows.remove(windowId))
-          );
-          const rollbackFailureCount = rollbackResults.filter(result => result.status === 'rejected').length;
-          if (rollbackFailureCount > 0) {
-            console.error(`Failed to roll back ${rollbackFailureCount} restored window(s).`, rollbackResults);
+          let rollbackFailureCount = 0;
+          let preservedChangedTabCount = 0;
+
+          // 창 전체를 닫으면 복원 도중 사용자가 그 창에 추가하거나 이동한 탭까지
+          // 함께 사라질 수 있습니다. 이번 복원에서 만든 탭만, URL과 창이 그대로일 때만 정리합니다.
+          for (const restoreTab of [...createdRestoreTabs].reverse()) {
+            try {
+              const liveTab = await chrome.tabs.get(restoreTab.tabId);
+              const committedUrl = normalizeSessionUrl(typeof liveTab.url === 'string' ? liveTab.url : '');
+              const pendingUrl = normalizeSessionUrl(typeof liveTab.pendingUrl === 'string' ? liveTab.pendingUrl : '');
+              const isStillInRestoreWindow = liveTab.windowId === restoreTab.windowId;
+              const isStillOnRestoreUrl = pendingUrl
+                ? pendingUrl === restoreTab.expectedUrl && (!committedUrl || committedUrl === restoreTab.expectedUrl)
+                : committedUrl === restoreTab.expectedUrl;
+
+              if (!isStillInRestoreWindow || !isStillOnRestoreUrl) {
+                preservedChangedTabCount += 1;
+                continue;
+              }
+
+              await chrome.tabs.remove(restoreTab.tabId);
+            } catch (rollbackError) {
+              const rollbackErrorMessage = String(rollbackError?.message || '').toLowerCase();
+              const tabAlreadyGone = rollbackErrorMessage.includes('no tab with id') ||
+                rollbackErrorMessage.includes('invalid tab id') ||
+                rollbackErrorMessage.includes('tab id not found');
+              if (!tabAlreadyGone) {
+                rollbackFailureCount += 1;
+                console.error(`Failed to roll back restored tab ${restoreTab.tabId}.`, rollbackError);
+              }
+            }
           }
 
           const reason = error instanceof Error ? error.message : String(error);
-          const rollbackStatus = rollbackFailureCount === 0
-            ? ' 생성된 복원 창은 모두 정리했습니다.'
-            : ` 생성된 복원 창 중 ${rollbackFailureCount}개를 정리하지 못했습니다.`;
+          let rollbackStatus = rollbackFailureCount === 0
+            ? ' 변경되지 않은 복원 탭은 모두 정리했습니다.'
+            : ` 복원 탭 중 ${rollbackFailureCount}개를 정리하지 못했습니다.`;
+          if (preservedChangedTabCount > 0) {
+            rollbackStatus += ` 사용자가 이동하거나 주소를 변경한 탭 ${preservedChangedTabCount}개는 보존했습니다.`;
+          }
           throw new Error(`${reason}${rollbackStatus}`);
         }
       };
