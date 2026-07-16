@@ -54,6 +54,21 @@
     return Boolean(rule && matchesHostnameRule(currentUrl.hostname, rule.hostname));
   }
 
+  function includesSearchParameters(currentSearch, expectedSearch) {
+    const currentParams = new URLSearchParams(currentSearch);
+    const expectedParams = new URLSearchParams(expectedSearch);
+
+    for (const key of new Set(expectedParams.keys())) {
+      const unmatchedCurrentValues = currentParams.getAll(key);
+      for (const expectedValue of expectedParams.getAll(key)) {
+        const matchingIndex = unmatchedCurrentValues.indexOf(expectedValue);
+        if (matchingIndex === -1) return false;
+        unmatchedCurrentValues.splice(matchingIndex, 1);
+      }
+    }
+    return true;
+  }
+
   function matchesBlockedSiteRule(currentUrl, rawRule) {
     const ruleText = String(rawRule || '').trim();
     if (!ruleText) return false;
@@ -76,7 +91,9 @@
       }
     }
 
-    if (structuredRule.search && currentUrl.search !== structuredRule.search) {
+    // A blocked URL rule describes a URL prefix/keyword. Extra query
+    // parameters (including a different order) must not bypass the rule.
+    if (structuredRule.search && !includesSearchParameters(currentUrl.search, structuredRule.search)) {
       return false;
     }
 
@@ -379,11 +396,10 @@
         REACTIVATION_THROTTLE_MS: 1000
       },
       patterns: {
-        page: [
-          /[?&]page=(\d{1,4})(?=[&#]|$)/i, /[?&]po=(\d{1,4})(?=[&#]|$)/i, /[?&]p=(\d{1,4})(?=[&#]|$)/i,
-          /page\/(\d{1,4})(?=[/?#]|$)/i
-        ],
+        pageQueryKeys: ['page', 'po', 'p'],
+        pagePath: /(?:^|\/)page\/(\d{1,4})(?=[/?#]|$)/i,
         datePath: /\/(\d{4})\/(\d{1,2})\/(\d{1,2})(\/?)(?=[?#]|$)/,
+        datePathPrefix: /\/\d{4}\/\d{1,2}\/\d{1,2}(?=\/|[?#]|$)/,
         numericPath: /\/(\d{1,4})(?:[/?#]|$)/i,
         ignore: [
           /\/status\/\d{10,}/i,
@@ -527,23 +543,65 @@
         const cachedResult = this.urlPatternCache.get(url);
         if (cachedResult !== undefined) return cachedResult;
 
-        // 명시적인 페이지 매개변수는 날짜형 경로보다 우선합니다.
-        for (const pattern of KB_NAV_CONFIG.patterns.page) {
-          const patternInfo = this._createPagePatternInfo(url, pattern);
-          if (!patternInfo) continue;
+        let parsedUrl;
+        try {
+          parsedUrl = new URL(url);
+        } catch (_) {
+          this.urlPatternCache.set(url, null);
+          return null;
+        }
+
+        // Read only top-level query parameters. A nested URL such as
+        // ?redirect=https://example.com/?page=2 must not become pagination.
+        const queryEntries = Array.from(parsedUrl.searchParams.entries());
+        for (const expectedKey of KB_NAV_CONFIG.patterns.pageQueryKeys) {
+          const queryEntry = queryEntries.find(([key]) => key.toLowerCase() === expectedKey);
+          if (!queryEntry) continue;
+
+          const [queryKey, rawPageNumber] = queryEntry;
+          if (!/^\d{1,4}$/.test(rawPageNumber)) continue;
+          const currentPage = parseInt(rawPageNumber, 10);
+          if (currentPage < KB_NAV_CONFIG.navigation.MIN_PAGE || currentPage > KB_NAV_CONFIG.navigation.MAX_PAGE) continue;
+
+          const patternInfo = {
+            kind: 'query',
+            queryKey,
+            currentPage,
+            pageWidth: rawPageNumber.length
+          };
           this.urlPatternCache.set(url, patternInfo);
           return patternInfo;
         }
 
+        const pathname = parsedUrl.pathname;
+
+        // Path patterns must only inspect the pathname. Otherwise a URL placed
+        // inside an unrelated query value (for example ?redirect=/page/2)
+        // can be mistaken for the current page's own pagination route.
+        const pathPagePatternInfo = this._createPagePatternInfo(pathname, KB_NAV_CONFIG.patterns.pagePath);
+        if (pathPagePatternInfo) {
+          this.urlPatternCache.set(url, pathPagePatternInfo);
+          return pathPagePatternInfo;
+        }
+
         // 연/월/일 경로는 가장 앞의 연도를 일반 페이지 번호로 오인하지 않고
         // 실제 달력 날짜로 처리합니다. 잘못된 날짜도 숫자 경로로 재해석하지 않습니다.
-        const datePatternInfo = this._createDatePatternInfo(url);
+        const datePatternInfo = this._createDatePatternInfo(pathname);
         if (datePatternInfo !== undefined) {
           this.urlPatternCache.set(url, datePatternInfo);
           return datePatternInfo;
         }
 
-        const numericPatternInfo = this._createPagePatternInfo(url, KB_NAV_CONFIG.patterns.numericPath);
+        // A common article URL such as /2026/07/02/post-name contains a date
+        // but is not itself a day-by-day archive URL. Never reinterpret its
+        // leading year as a generic page number; allow rel=next/prev discovery
+        // to handle the page instead.
+        if (KB_NAV_CONFIG.patterns.datePathPrefix.test(pathname)) {
+          this.urlPatternCache.set(url, null);
+          return null;
+        }
+
+        const numericPatternInfo = this._createPagePatternInfo(pathname, KB_NAV_CONFIG.patterns.numericPath);
         if (numericPatternInfo) {
           this.urlPatternCache.set(url, numericPatternInfo);
           return numericPatternInfo;
@@ -565,6 +623,23 @@
           const nextDay = String(nextDate.getUTCDate()).padStart(dayWidth, '0');
           const nextDatePath = `/${String(nextYear).padStart(4, '0')}/${nextMonth}/${nextDay}${trailingSlash}`;
           return currentUrl.replace(originalMatch, nextDatePath);
+        }
+
+        if (patternInfo.kind === 'query') {
+          const { currentPage, queryKey, pageWidth } = patternInfo;
+          const newPage = Math.min(
+            KB_NAV_CONFIG.navigation.MAX_PAGE,
+            Math.max(KB_NAV_CONFIG.navigation.MIN_PAGE, currentPage + direction)
+          );
+          if (newPage === currentPage) return currentUrl;
+
+          try {
+            const parsedUrl = new URL(currentUrl);
+            parsedUrl.searchParams.set(queryKey, String(newPage).padStart(pageWidth, '0'));
+            return parsedUrl.href;
+          } catch (_) {
+            return currentUrl;
+          }
         }
 
         const { currentPage, originalMatch } = patternInfo;

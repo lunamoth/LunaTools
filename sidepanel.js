@@ -96,7 +96,10 @@ document.addEventListener('DOMContentLoaded', function() {
             MAX_URL_LENGTH: 2048,
             MAX_LIST_NAME_LENGTH: 200,
             EXPORT_URL_REVOKE_DELAY_MS: 60 * 1000,
-            DELAY_LOADING_NAVIGATION_WAIT_MS: 2500
+            DELAY_LOADING_NAVIGATION_WAIT_MS: 2500,
+            MIN_INTERVAL_SECONDS: 0.1,
+            // setTimeout() uses a signed 32-bit millisecond delay in Chromium.
+            MAX_INTERVAL_SECONDS: Math.floor(0x7FFFFFFF / 1000)
         };
 
         const UI = Object.keys(CONFIG.SELECTOR).reduce((acc, key) => {
@@ -1112,8 +1115,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
-        const hasSuccessfullyCompletedCurrentRun = () => (
+        const canResetCompletedAdHocRunWithoutWarning = () => (
             state.currentView === 'complete' &&
+            state.loadedListName === null &&
             state.urlsToProcess.length > 0 &&
             state.currentUrlIndex === state.urlsToProcess.length &&
             state.errorCount === 0 &&
@@ -1122,9 +1126,10 @@ document.addEventListener('DOMContentLoaded', function() {
         );
 
         const resetToIdle = async (message = CONFIG.TEXT.IDLE, isError = false) => {
-            // 모든 URL을 성공적으로 연 완료 화면의 입력값은 이미 소비된 작업입니다.
-            // 이 경우에만 미저장 목록 경고를 건너뛰며, 실패·중단·일반 편집 상태의 보호는 유지합니다.
-            if (!state.isInitialLoad && state.isDirty && !hasSuccessfullyCompletedCurrentRun()) {
+            // 저장 목록을 불러오지 않은 일회성 입력은 성공적으로 실행한 뒤 바로
+            // 비울 수 있습니다. 저장 목록을 편집한 경우에는 실행 성공 여부와
+            // 무관하게 미저장 변경사항을 계속 보호합니다.
+            if (!state.isInitialLoad && state.isDirty && !canResetCompletedAdHocRunWithoutWarning()) {
                  const safeListName = escapeHtml(state.loadedListName || '현재');
                  const confirmed = await Modal.show({
                     title: '저장되지 않은 변경사항',
@@ -1721,18 +1726,30 @@ document.addEventListener('DOMContentLoaded', function() {
             const dataStr = JSON.stringify(lists);
             const blob = new Blob([dataStr], {type: "application/json"});
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
             const now = new Date();
             const year = now.getFullYear().toString().slice(-2);
             const month = String(now.getMonth() + 1).padStart(2, '0');
             const day = String(now.getDate()).padStart(2, '0');
-            a.download = `${year}${month}${day}_LunaTools_Multi_URL_Opener_Lists.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), CONFIG.EXPORT_URL_REVOKE_DELAY_MS);
-            Toast.show('모든 목록을 내보냈습니다.', 'success');
+            const filename = `${year}${month}${day}_LunaTools_Multi_URL_Opener_Lists.json`;
+
+            try {
+                await new Promise((resolve, reject) => {
+                    chrome.downloads.download({ url, filename }, (downloadId) => {
+                        const downloadError = chrome.runtime.lastError;
+                        if (downloadId === undefined || downloadError) {
+                            reject(new Error(downloadError?.message || '다운로드를 시작할 수 없습니다.'));
+                            return;
+                        }
+                        resolve(downloadId);
+                    });
+                });
+                setTimeout(() => URL.revokeObjectURL(url), CONFIG.EXPORT_URL_REVOKE_DELAY_MS);
+                Toast.show('모든 목록을 내보냈습니다.', 'success');
+            } catch (downloadError) {
+                URL.revokeObjectURL(url);
+                const detail = downloadError?.message ? ` (${downloadError.message})` : '';
+                Toast.show(`목록 내보내기에 실패했습니다.${detail}`, 'error', 5000);
+            }
         };
 
         const normalizeImportedUrlListText = (urlsText) => {
@@ -2113,8 +2130,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // schedule a second callback; resume will continue exactly once.
             if (state.isPaused) return;
 
-            const value = UI.intervalInput ? parseFloat(UI.intervalInput.value) : CONFIG.DEFAULT_OPTIONS.interval;
-            const intervalSeconds = !isNaN(value) && value >= 0.1 ? value : 0.1;
+            const value = UI.intervalInput ? Number(UI.intervalInput.value) : CONFIG.DEFAULT_OPTIONS.interval;
+            const intervalSeconds = Number.isFinite(value) && value >= CONFIG.MIN_INTERVAL_SECONDS
+                ? Math.min(value, CONFIG.MAX_INTERVAL_SECONDS)
+                : CONFIG.DEFAULT_OPTIONS.interval;
             state.intervalId = setTimeout(() => {
                 state.intervalId = null;
                 processNextUrl(runId);
@@ -2253,8 +2272,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const normalizeRunOptions = (rawOptions = {}) => {
             const normalized = { ...CONFIG.DEFAULT_OPTIONS };
             const interval = Number(rawOptions.interval);
-            if (Number.isFinite(interval) && interval >= 0.1) {
-                normalized.interval = interval;
+            if (Number.isFinite(interval) && interval >= CONFIG.MIN_INTERVAL_SECONDS) {
+                normalized.interval = Math.min(interval, CONFIG.MAX_INTERVAL_SECONDS);
             }
 
             for (const key of ['removeDuplicates', 'focusLock', 'delayLoading', 'sortUrlsBeforeRun', 'playSound']) {

@@ -40,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const MAX_SESSION_URL_LENGTH = 2048;
     const MAX_SESSION_ID_LENGTH = 256;
     const MAX_LIST_NAME_LENGTH = 200;
+    const MAX_MULTI_URL_INTERVAL_SECONDS = Math.floor(0x7FFFFFFF / 1000);
     const MAX_BACKUP_SESSION_COUNT = 250000;
     const MAX_BACKUP_TABS_PER_SESSION = 300;
     const MAX_BACKUP_TOTAL_SESSION_TABS = 550000;
@@ -139,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const normalized = {};
         if (hasOwn(value, 'interval')) {
             const interval = Number(value.interval);
-            if (!Number.isFinite(interval) || interval < 0.1) {
+            if (!Number.isFinite(interval) || interval < 0.1 || interval > MAX_MULTI_URL_INTERVAL_SECONDS) {
                 throw new Error('URL 열기 간격 옵션이 올바르지 않습니다.');
             }
             normalized.interval = interval;
@@ -474,15 +475,23 @@ document.addEventListener('DOMContentLoaded', () => {
                                ('0' + now.getDate()).slice(-2);
             const filename = `${dateString}_LunaTools_Backup.json`;
 
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), BACKUP_URL_REVOKE_DELAY_MS);
-
-            showStatus('데이터를 성공적으로 백업했습니다.');
+            try {
+                await new Promise((resolve, reject) => {
+                    chrome.downloads.download({ url, filename }, (downloadId) => {
+                        const downloadError = chrome.runtime.lastError;
+                        if (downloadId === undefined || downloadError) {
+                            reject(new Error(downloadError?.message || '다운로드를 시작할 수 없습니다.'));
+                            return;
+                        }
+                        resolve(downloadId);
+                    });
+                });
+                setTimeout(() => URL.revokeObjectURL(url), BACKUP_URL_REVOKE_DELAY_MS);
+                showStatus('데이터를 성공적으로 백업했습니다.');
+            } catch (downloadError) {
+                URL.revokeObjectURL(url);
+                throw downloadError;
+            }
         } catch (error) {
             console.error('Backup failed:', error);
             showStatus(`백업 실패: ${error.message}`, true);

@@ -31,6 +31,8 @@ const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
 
 let exchangeRateRefreshPromise = null;
+let tabCountBadgeUpdatePromise = null;
+let tabCountBadgeUpdateRequested = false;
 
 function normalizeCurrencyCode(value) {
   return String(value || '').trim().toUpperCase();
@@ -473,7 +475,7 @@ function warmExchangeRateCache() {
   });
 }
 
-async function updateTabCountBadge() {
+async function performTabCountBadgeUpdate() {
   try {
     const allTabs = await chrome.tabs.query({});
     const tabCount = allTabs.length;
@@ -493,6 +495,29 @@ async function updateTabCountBadge() {
       // 배지 초기화 자체가 실패해도 확장 프로그램의 다른 기능은 계속 동작해야 합니다.
     }
   }
+}
+
+function updateTabCountBadge() {
+  tabCountBadgeUpdateRequested = true;
+
+  if (!tabCountBadgeUpdatePromise) {
+    tabCountBadgeUpdatePromise = (async () => {
+      do {
+        // Coalesce every tab event received while the current query/write is
+        // pending into one trailing refresh. This also guarantees that an
+        // older asynchronous result can never overwrite the newest count.
+        tabCountBadgeUpdateRequested = false;
+        await performTabCountBadgeUpdate();
+      } while (tabCountBadgeUpdateRequested);
+    })().finally(() => {
+      tabCountBadgeUpdatePromise = null;
+      if (tabCountBadgeUpdateRequested) {
+        void updateTabCountBadge();
+      }
+    });
+  }
+
+  return tabCountBadgeUpdatePromise;
 }
 
 function ensureMergeTabsContextMenu() {
