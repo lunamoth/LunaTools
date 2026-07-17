@@ -61,6 +61,15 @@
     for (const key of new Set(expectedParams.keys())) {
       const unmatchedCurrentValues = currentParams.getAll(key);
       for (const expectedValue of expectedParams.getAll(key)) {
+        // A rule such as "?v=" is commonly used as a URL-prefix rule and
+        // means that the parameter must exist, regardless of its value.
+        // Consume one occurrence so duplicate-key rules still retain their
+        // multiplicity semantics.
+        if (expectedValue === '') {
+          if (unmatchedCurrentValues.length === 0) return false;
+          unmatchedCurrentValues.shift();
+          continue;
+        }
         const matchingIndex = unmatchedCurrentValues.indexOf(expectedValue);
         if (matchingIndex === -1) return false;
         unmatchedCurrentValues.splice(matchingIndex, 1);
@@ -880,7 +889,9 @@
         this._debouncedProcessKey(direction);
       }
       _shouldIgnoreKeyEvent(event) {
-        if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented || event.isComposing) return true;
+        // Shift+Arrow is a native text-selection command even when focus is
+        // outside a form control. Only unmodified arrow keys navigate pages.
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.defaultPrevented || event.isComposing) return true;
 
         const eventPath = typeof event.composedPath === 'function' ? event.composedPath() : [];
         const candidates = [...eventPath, event.target, document.activeElement];

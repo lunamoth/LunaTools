@@ -124,7 +124,8 @@ document.addEventListener('DOMContentLoaded', function() {
             isInitialLoad: true,
             currentRunId: 0,
             processingRunId: null,
-            completionRunId: null
+            completionRunId: null,
+            unprocessedInputCount: 0
         };
 
         const canAutoFocusUrlInput = () => (
@@ -947,7 +948,12 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
-				
+
+        const setInlineStyleIfChanged = (element, propertyName, value) => {
+            if (!element || element.style[propertyName] === value) return;
+            element.style[propertyName] = value;
+        };
+
         const getElementHeightWithMargins = (element) => {
             if (!element || getComputedStyle(element).display === 'none') return 0;
             const style = getComputedStyle(element);
@@ -972,8 +978,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!UI.sectionCardContainer || !UI.inputWrapper || !UI.runningWrapper) return;
 
             if (state.currentView === 'input') {
-                UI.sectionCardContainer.style.height = '';
-                UI.sectionCardContainer.style.overflowY = 'auto';
+                setInlineStyleIfChanged(UI.sectionCardContainer, 'height', '');
+                setInlineStyleIfChanged(UI.sectionCardContainer, 'overflowY', 'auto');
             } else if (state.currentView === 'running' || state.currentView === 'complete') {
                 let totalContentHeight = 0;
                 if (UI.runningWrapper.style.display !== 'none') {
@@ -1013,14 +1019,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
                 if (totalContentHeight > 0) {
-                     UI.sectionCardContainer.style.height = `${newHeight}px`;
+                    setInlineStyleIfChanged(UI.sectionCardContainer, 'height', `${newHeight}px`);
                 } else {
-                    UI.sectionCardContainer.style.height = 'auto';
+                    setInlineStyleIfChanged(UI.sectionCardContainer, 'height', 'auto');
                 }
-                UI.sectionCardContainer.style.overflowY = 'hidden';
+                setInlineStyleIfChanged(UI.sectionCardContainer, 'overflowY', 'hidden');
             } else {
-                UI.sectionCardContainer.style.height = 'auto';
-                UI.sectionCardContainer.style.overflowY = 'hidden';
+                setInlineStyleIfChanged(UI.sectionCardContainer, 'height', 'auto');
+                setInlineStyleIfChanged(UI.sectionCardContainer, 'overflowY', 'hidden');
             }
         };
 
@@ -1121,6 +1127,7 @@ document.addEventListener('DOMContentLoaded', function() {
             state.urlsToProcess.length > 0 &&
             state.currentUrlIndex === state.urlsToProcess.length &&
             state.errorCount === 0 &&
+            state.unprocessedInputCount === 0 &&
             state.processingRunId === null &&
             state.completionRunId === null
         );
@@ -1143,7 +1150,7 @@ document.addEventListener('DOMContentLoaded', function() {
             Object.assign(state, {
                 urlsToProcess: [], currentUrlIndex: 0, isPaused: false, errorCount: 0,
                 isDirty: false, loadedListName: null, originalLoadedListUrls: null,
-                processingRunId: null, completionRunId: null
+                processingRunId: null, completionRunId: null, unprocessedInputCount: 0
             });
             state.currentRunId += 1;
             clearTimeout(state.intervalId); state.intervalId = null;
@@ -1174,6 +1181,7 @@ document.addEventListener('DOMContentLoaded', function() {
             state.urlsToProcess = [];
             state.currentUrlIndex = 0;
             state.errorCount = 0;
+            state.unprocessedInputCount = 0;
 
             if(UI.urlQueue) UI.urlQueue.replaceChildren();
             if(UI.progressBar) UI.progressBar.value = 0;
@@ -2146,6 +2154,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const prepared = prepareUrlsForRun(rawUrls);
 
             state.urlsToProcess = prepared.urls;
+            // Duplicates are deliberately excluded when that option is enabled.
+            // Invalid, overlong, or over-limit entries were not processed and
+            // must keep the unsaved-change warning active after completion.
+            state.unprocessedInputCount = prepared.invalid + prepared.tooLong + prepared.overLimit;
             if (state.urlsToProcess.length === 0) {
                 if (UI.progressStats) {
                     UI.progressStats.textContent = CONFIG.TEXT.EMPTY_INPUT;
