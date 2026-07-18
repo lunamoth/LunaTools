@@ -52,8 +52,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
     const SESSION_URL_CONTROL_CHARACTER_REGEX = CONTROL_CHARACTER_REGEX;
     let statusHideTimer = null;
+    let dataOperationInProgress = false;
 
     // --- Helper Functions ---
+
+    const setDataControlsDisabled = (disabled) => {
+        if (saveButton) saveButton.disabled = disabled;
+        if (backupButton) backupButton.disabled = disabled;
+        if (restoreButton) restoreButton.disabled = disabled;
+    };
+
+    const beginDataOperation = () => {
+        if (dataOperationInProgress) return false;
+        dataOperationInProgress = true;
+        setDataControlsDisabled(true);
+        return true;
+    };
+
+    const finishDataOperation = () => {
+        dataOperationInProgress = false;
+        setDataControlsDisabled(false);
+    };
 
     const showStatus = (message, isError = false) => {
         if (!statusDiv) return;
@@ -409,6 +428,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Actions ---
 
     const saveOptions = () => {
+        if (!beginDataOperation()) {
+            showStatus('다른 데이터 작업이 진행 중입니다.', true);
+            return;
+        }
+
         const settingsToSave = {
             [STORAGE_KEYS.LOCKED]: getValuesFromTextarea(lockedSitesTextarea, { lowercase: true }),
             [STORAGE_KEYS.BLOCKED]: getValuesFromTextarea(blockedSitesTextarea),
@@ -416,16 +440,23 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         if (chrome && chrome.storage && chrome.storage.sync) {
-            chrome.storage.sync.set(settingsToSave, () => {
-                if (chrome.runtime.lastError) {
-                    showStatus(`저장 실패: ${chrome.runtime.lastError.message}`, true);
-                } else {
-                    showStatus('설정이 저장되었습니다.');
-                }
-            });
+            try {
+                chrome.storage.sync.set(settingsToSave, () => {
+                    if (chrome.runtime.lastError) {
+                        showStatus(`저장 실패: ${chrome.runtime.lastError.message}`, true);
+                    } else {
+                        showStatus('설정이 저장되었습니다.');
+                    }
+                    finishDataOperation();
+                });
+            } catch (error) {
+                showStatus(`저장 실패: ${error.message}`, true);
+                finishDataOperation();
+            }
         } else {
             console.error('Chrome Storage API is not available.');
             showStatus('저장 기능을 사용할 수 없습니다.', true);
+            finishDataOperation();
         }
     };
 
@@ -452,6 +483,11 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const handleBackup = async () => {
+        if (!beginDataOperation()) {
+            showStatus('다른 데이터 작업이 진행 중입니다.', true);
+            return;
+        }
+
         try {
             const syncData = await chrome.storage.sync.get(SYNC_KEYS);
             const localData = await chrome.storage.local.get(LOCAL_KEYS);
@@ -495,6 +531,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Backup failed:', error);
             showStatus(`백업 실패: ${error.message}`, true);
+        } finally {
+            finishDataOperation();
         }
     };
 
@@ -508,15 +546,26 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        if (!beginDataOperation()) {
+            showStatus('다른 데이터 작업이 진행 중입니다.', true);
+            if (restoreFileInput) restoreFileInput.value = '';
+            return;
+        }
+
+        const finishRestoreAttempt = () => {
+            finishDataOperation();
+            if (restoreFileInput) restoreFileInput.value = '';
+        };
+
         const reader = new FileReader();
         reader.onerror = () => {
             showStatus('복원 실패: 백업 파일을 읽을 수 없습니다.', true);
-            if (restoreFileInput) restoreFileInput.value = '';
+            finishRestoreAttempt();
         };
         reader.onload = async (e) => {
             let syncSnapshot = null;
             let localSnapshot = null;
-            if (restoreButton) restoreButton.disabled = true;
+            let reloadScheduled = false;
             try {
                 const backupData = normalizeBackupData(JSON.parse(e.target.result));
                 
@@ -538,6 +587,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(() => {
                     location.reload();
                 }, 1500);
+                reloadScheduled = true;
 
             } catch (error) {
                 console.error('Restore failed:', error);
@@ -552,11 +602,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     showStatus(`복원 실패: ${error.message}`, true);
                 }
             } finally {
-                if (restoreButton) restoreButton.disabled = false;
-                if (restoreFileInput) restoreFileInput.value = ''; // Reset file input for next use
+                if (!reloadScheduled) finishRestoreAttempt();
             }
         };
-        reader.readAsText(file);
+        try {
+            reader.readAsText(file);
+        } catch (error) {
+            console.error('Restore file read failed:', error);
+            showStatus('복원 실패: 백업 파일을 읽을 수 없습니다.', true);
+            finishRestoreAttempt();
+        }
     };
 
     const init = () => {

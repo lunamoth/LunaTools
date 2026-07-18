@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LunaTools",
-  "version": "16.17",
+  "version": "16.18",
   "description": "마우스제스처, 좌우키페이지이동, 상위/루트이동, 탭중복제거/정렬/합치기, PiP, 환율/단위/시각변환, 영상회전, 사이트잠금/차단, 드래그새탭열기/지연열기/복사, 여러URL열기, 볼륨부스터, 세션매니저, 탭음소거/전체음소거 크롬 멀티 툴",
   "homepage_url": "http://lunamoth.com/entry/LunaTools",
   "permissions": [

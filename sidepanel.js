@@ -2712,10 +2712,14 @@ document.addEventListener('DOMContentLoaded', function() {
             const undoButton = document.createElement('button');
             undoButton.textContent = '실행 취소';
             undoButton.className = 'toast-undo-btn';
+            let undoStarted = false;
             undoButton.onclick = () => {
+                if (undoStarted) return;
+                undoStarted = true;
+                undoButton.disabled = true;
                 clearTimeout(toastTimeout);
                 toastEl.classList.remove('show');
-                undoCallback();
+                void undoCallback();
             };
             toastEl.appendChild(undoButton);
         }
@@ -3107,11 +3111,19 @@ document.addEventListener('DOMContentLoaded', function() {
           const tabs = await chrome.tabs.query(queryInfo);
           if (tabs.length === 0) return { tabs: [], closingCandidates: [] };
 
-          const windows = await chrome.windows.getAll();
+          const windowIds = [...new Set(
+            tabs
+              .map(tab => tab.windowId)
+              .filter(windowId => Number.isInteger(windowId))
+          )];
           let allTabGroups = [];
-          try {
-            allTabGroups = (await Promise.all(windows.map(w => chrome.tabGroups.query({ windowId: w.id })))).flat();
-          } catch (e) {
+          const tabGroupResults = await Promise.allSettled(
+            windowIds.map(windowId => chrome.tabGroups.query({ windowId }))
+          );
+          allTabGroups = tabGroupResults
+            .filter(result => result.status === 'fulfilled' && Array.isArray(result.value))
+            .flatMap(result => result.value);
+          if (tabGroupResults.some(result => result.status === 'rejected')) {
             showToast(CONSTANTS.MESSAGES.GET_TAB_GROUPS_FAILED);
           }
 
@@ -3125,7 +3137,9 @@ document.addEventListener('DOMContentLoaded', function() {
               pinned: Boolean(tab.pinned),
               groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
               groupInfo: Number.isInteger(tab.groupId) && tab.groupId > -1
-                ? normalizeSessionGroupInfo(allTabGroups.find(g => g.id === tab.groupId) || null)
+                ? normalizeSessionGroupInfo(
+                    allTabGroups.find(group => group.id === tab.groupId && group.windowId === tab.windowId) || null
+                  )
                 : null,
               windowId: Number.isInteger(tab.windowId) ? tab.windowId : undefined
             })),
