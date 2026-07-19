@@ -1465,6 +1465,7 @@
         lastSelectionRect: null,
         closePopupTimeout: null,
         conversionGeneration: 0,
+        popupDisplayGeneration: 0,
     };
 
     const Utils = {
@@ -1884,6 +1885,7 @@
 
                 let year, monthIndex, day;
                 let parsedDateSuccessfully = false;
+                const hasExplicitDate = Boolean(monthNameStr || yearYMDStr || part1MDYStr);
 
                 const today = new Date();
                 if (monthNameStr) {
@@ -1949,23 +1951,19 @@
                     continue;
                 }
 
-                if (hour === 24) {
-                    hour = 0;
-                    const nextDate = new Date(Date.UTC(year, monthIndex, day));
-                    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-                    year = nextDate.getUTCFullYear();
-                    monthIndex = nextDate.getUTCMonth();
-                    day = nextDate.getUTCDate();
-                }
+                const rollsToNextDay = hour === 24;
+                if (rollsToNextDay) hour = 0;
 
 
                 let resolvedTzOffsetString = null;
+                let resolvedIanaTimeZone = null;
                 const upperTzStr = tzStr.toUpperCase().replace(/\s+/gu, ' ').trim();
 
                 if (Config.TIMEZONE_FIXED_OFFSETS[upperTzStr]) {
                     resolvedTzOffsetString = Config.TIMEZONE_FIXED_OFFSETS[upperTzStr];
                 } else if (Config.TIMEZONE_LOOKUP[upperTzStr]) {
                     const ianaZone = Config.TIMEZONE_LOOKUP[upperTzStr];
+                    resolvedIanaTimeZone = ianaZone;
                     resolvedTzOffsetString = this._getOffsetStringForIANA(ianaZone, year, monthIndex, day, hour, minute);
                 } else {
                     const offsetMatch = REGEXES.TZ_OFFSET_REGEX.exec(upperTzStr);
@@ -2019,13 +2017,42 @@
                                 normalizedFullName === label || upperTzStr.startsWith(`${label} `)
                             );
                             if (matchedFullTimeZone) {
-                                resolvedTzOffsetString = this._getOffsetStringForIANA(matchedFullTimeZone[1], year, monthIndex, day, hour, minute);
+                                resolvedIanaTimeZone = matchedFullTimeZone[1];
+                                resolvedTzOffsetString = this._getOffsetStringForIANA(resolvedIanaTimeZone, year, monthIndex, day, hour, minute);
                             }
                         }
                     }
                 }
 
                 if (!resolvedTzOffsetString) continue;
+
+                // A time without a date belongs to "today" in its source timezone,
+                // not necessarily to the browser's local calendar day.
+                if (!hasExplicitDate) {
+                    const currentSourceOffsetString = resolvedIanaTimeZone
+                        ? this._getOffsetStringForInstant(resolvedIanaTimeZone, today)
+                        : resolvedTzOffsetString;
+                    const currentSourceOffsetMinutes = this._parseGmtOffsetMinutes(currentSourceOffsetString);
+                    if (currentSourceOffsetMinutes === null) continue;
+
+                    const currentSourceCalendar = new Date(today.getTime() + (currentSourceOffsetMinutes * 60 * 1000));
+                    year = currentSourceCalendar.getUTCFullYear();
+                    monthIndex = currentSourceCalendar.getUTCMonth();
+                    day = currentSourceCalendar.getUTCDate();
+                }
+
+                if (rollsToNextDay) {
+                    const nextDate = new Date(Date.UTC(year, monthIndex, day));
+                    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+                    year = nextDate.getUTCFullYear();
+                    monthIndex = nextDate.getUTCMonth();
+                    day = nextDate.getUTCDate();
+                }
+
+                if (resolvedIanaTimeZone) {
+                    resolvedTzOffsetString = this._getOffsetStringForIANA(resolvedIanaTimeZone, year, monthIndex, day, hour, minute);
+                    if (!resolvedTzOffsetString) continue;
+                }
 
                 try {
                     const monthNameForParse = Config.MONTH_NAMES_EN_FULL[monthIndex];
@@ -3103,6 +3130,7 @@
         close: function() {
             // 닫기 이후 완료되는 느린 환율 요청이 팝업을 다시 열지 못하게 무효화합니다.
             AppState.conversionGeneration += 1;
+            AppState.popupDisplayGeneration += 1;
             if (AppState.currentPopupElement) {
                 AppState.currentPopupElement.classList.remove(UI_STRINGS.POPUP_VISIBLE_CLASS);
                 clearTimeout(AppState.closePopupTimeout);
@@ -3140,6 +3168,7 @@
         display: function(messagesArray, isErrorState = false, isLoadingState = false) {
             if (!AppState.currentPopupElement) PopupUI.create();
             if (!AppState.currentPopupElement || !AppState.popupContentContainer) return;
+            const popupDisplayGeneration = ++AppState.popupDisplayGeneration;
             clearTimeout(AppState.closePopupTimeout);
             const fragment = document.createDocumentFragment();
             messagesArray.forEach((msgData) => {
@@ -3176,6 +3205,11 @@
             else AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_DEFAULT_CLASS);
             AppState.currentPopupElement.style.display = 'block'; AppState.currentPopupElement.style.visibility = 'hidden';
             requestAnimationFrame(() => {
+                if (popupDisplayGeneration !== AppState.popupDisplayGeneration ||
+                    !AppState.currentPopupElement ||
+                    AppState.currentPopupElement.style.display === 'none') {
+                    return;
+                }
                 const { top, left } = PopupUI.calculatePosition(AppState.currentPopupElement);
                 AppState.currentPopupElement.style.top = `${top}px`; AppState.currentPopupElement.style.left = `${left}px`;
                 AppState.currentPopupElement.style.visibility = 'visible'; AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_VISIBLE_CLASS);
