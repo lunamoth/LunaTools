@@ -2818,6 +2818,25 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       };
 
+      const getSessionTabNavigationState = (tab) => {
+        const rawCommittedUrl = typeof tab?.url === 'string' ? tab.url.trim() : '';
+        const rawPendingUrl = typeof tab?.pendingUrl === 'string' ? tab.pendingUrl.trim() : '';
+        const hasPendingUrl = rawPendingUrl.length > 0;
+
+        return {
+          committedUrl: normalizeSessionUrl(rawCommittedUrl),
+          pendingUrl: hasPendingUrl ? normalizeSessionUrl(rawPendingUrl) : null,
+          hasPendingUrl
+        };
+      };
+
+      const isStableSessionClosingCandidate = (liveTab, candidate) => {
+        const navigationState = getSessionTabNavigationState(liveTab);
+        return liveTab?.windowId === candidate?.windowId &&
+          !navigationState.hasPendingUrl &&
+          navigationState.committedUrl === candidate?.url;
+      };
+
       const isValidUrl = (url) => Boolean(normalizeSessionUrl(url));
 
       const normalizeSessionTab = (tab) => {
@@ -3128,7 +3147,18 @@ document.addEventListener('DOMContentLoaded', function() {
           }
 
           const validTabEntries = tabs
-            .map(tab => ({ tab, normalizedUrl: normalizeSessionUrl(tab?.url || '') }))
+            .map(tab => {
+              const navigationState = getSessionTabNavigationState(tab);
+              return {
+                tab,
+                // A pending destination is the tab's current effective URL. If it
+                // is not a supported session URL, never fall back to the stale
+                // committed URL and accidentally treat the tab as safely saved.
+                normalizedUrl: navigationState.hasPendingUrl
+                  ? navigationState.pendingUrl
+                  : navigationState.committedUrl
+              };
+            })
             .filter(({ normalizedUrl }) => Boolean(normalizedUrl));
           return {
             tabs: validTabEntries.map(({ tab, normalizedUrl }) => ({
@@ -3144,8 +3174,12 @@ document.addEventListener('DOMContentLoaded', function() {
               windowId: Number.isInteger(tab.windowId) ? tab.windowId : undefined
             })),
             closingCandidates: validTabEntries
-              .filter(({ tab }) => Number.isInteger(tab.id))
-              .map(({ tab, normalizedUrl }) => ({ id: tab.id, url: normalizedUrl }))
+              .filter(({ tab }) => Number.isInteger(tab.id) && Number.isInteger(tab.windowId))
+              .map(({ tab, normalizedUrl }) => ({
+                id: tab.id,
+                windowId: tab.windowId,
+                url: normalizedUrl
+              }))
           };
         } catch (error) {
           showToast(CONSTANTS.MESSAGES.GET_TABS_FAILED);
@@ -3278,12 +3312,12 @@ document.addEventListener('DOMContentLoaded', function() {
           for (const restoreTab of [...createdRestoreTabs].reverse()) {
             try {
               const liveTab = await chrome.tabs.get(restoreTab.tabId);
-              const committedUrl = normalizeSessionUrl(typeof liveTab.url === 'string' ? liveTab.url : '');
-              const pendingUrl = normalizeSessionUrl(typeof liveTab.pendingUrl === 'string' ? liveTab.pendingUrl : '');
+              const navigationState = getSessionTabNavigationState(liveTab);
               const isStillInRestoreWindow = liveTab.windowId === restoreTab.windowId;
-              const isStillOnRestoreUrl = pendingUrl
-                ? pendingUrl === restoreTab.expectedUrl && (!committedUrl || committedUrl === restoreTab.expectedUrl)
-                : committedUrl === restoreTab.expectedUrl;
+              const isStillOnRestoreUrl = navigationState.hasPendingUrl
+                ? navigationState.pendingUrl === restoreTab.expectedUrl &&
+                  (!navigationState.committedUrl || navigationState.committedUrl === restoreTab.expectedUrl)
+                : navigationState.committedUrl === restoreTab.expectedUrl;
 
               if (!isStillInRestoreWindow || !isStillOnRestoreUrl) {
                 preservedChangedTabCount += 1;
@@ -3429,18 +3463,18 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
           const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
           const protectedTabIds = new Set(Number.isInteger(activeTab?.id) ? [activeTab.id] : []);
-          const verifiedIds = [];
+          const verifiedCandidates = [];
           let changedCount = 0;
 
           for (const candidate of snapshot.closingCandidates) {
             if (protectedTabIds.has(candidate.id)) continue;
             try {
               const liveTab = await chrome.tabs.get(candidate.id);
-              const committedUrl = normalizeSessionUrl(typeof liveTab.url === 'string' ? liveTab.url : '');
-              const pendingUrl = normalizeSessionUrl(typeof liveTab.pendingUrl === 'string' ? liveTab.pendingUrl : '');
-              const stillOnSnapshotUrl = committedUrl === candidate.url && (!pendingUrl || pendingUrl === candidate.url);
-              if (stillOnSnapshotUrl) {
-                verifiedIds.push(candidate.id);
+              // A raw pendingUrl means navigation is still in flight even when
+              // its scheme is unsupported and normalization returns null. Keep
+              // such tabs instead of closing content that was not stably saved.
+              if (isStableSessionClosingCandidate(liveTab, candidate)) {
+                verifiedCandidates.push(candidate);
               } else {
                 changedCount++;
               }
@@ -3452,13 +3486,33 @@ document.addEventListener('DOMContentLoaded', function() {
           // Protect a tab selected while verification was running.
           const [latestActiveTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
           if (Number.isInteger(latestActiveTab?.id)) protectedTabIds.add(latestActiveTab.id);
-          const tabIdsToClose = verifiedIds.filter(id => !protectedTabIds.has(id));
+          const candidatesToClose = verifiedCandidates.filter(candidate => !protectedTabIds.has(candidate.id));
 
-          const closeResults = await Promise.allSettled(
-            tabIdsToClose.map(tabId => chrome.tabs.remove(tabId))
-          );
-          const closedCount = closeResults.filter(result => result.status === 'fulfilled').length;
-          const failedCount = closeResults.length - closedCount;
+          let closedCount = 0;
+          let failedCount = 0;
+          for (const candidate of candidatesToClose) {
+            try {
+              // The first verification pass can take noticeable time with a
+              // large session. Re-check immediately before each destructive
+              // removal so navigation/window changes made meanwhile survive.
+              const liveTab = await chrome.tabs.get(candidate.id);
+              if (!isStableSessionClosingCandidate(liveTab, candidate)) {
+                changedCount++;
+                continue;
+              }
+              await chrome.tabs.remove(candidate.id);
+              closedCount++;
+            } catch (closeError) {
+              const closeErrorMessage = String(closeError?.message || '').toLowerCase();
+              const tabAlreadyGone = closeErrorMessage.includes('no tab with id') ||
+                closeErrorMessage.includes('invalid tab id') ||
+                closeErrorMessage.includes('tab id not found');
+              if (!tabAlreadyGone) {
+                failedCount++;
+                console.warn(`Failed to close saved tab ${candidate.id}.`, closeError);
+              }
+            }
+          }
           const notClosedCount = changedCount + failedCount;
 
           if (notClosedCount > 0) {
