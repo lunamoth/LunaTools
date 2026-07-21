@@ -409,6 +409,8 @@
         pagePath: /(?:^|\/)page\/(\d{1,4})(?=[/?#]|$)/i,
         datePath: /\/(\d{4})\/(\d{1,2})\/(\d{1,2})(\/?)(?=[?#]|$)/,
         datePathPrefix: /\/\d{4}\/\d{1,2}\/\d{1,2}(?=\/|[?#]|$)/,
+        // Intentional: nested numeric path segments (for example, /products/42/reviews)
+        // are valid navigation targets for this feature. Do not restrict this to root paths.
         numericPath: /\/(\d{1,4})(?:[/?#]|$)/i,
         ignore: [
           /\/status\/\d{10,}/i,
@@ -1343,8 +1345,8 @@
                 { names: ['L', '리터'], target_unit_code: 'gallon', factor: 1/3.78541, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(L|l|리터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!b)(?!k)(?!s)/giu, is_metric: true, target_unit_name: '갤런', category: 'volume' },
             ],
             temperature: [
-                { names: ['Fahrenheit', 'F', '화씨'], target_unit_code: '°C', regex: /(-?[\d\.,]+)\s*(?:°F\b|F\b(?!t|l\b|r\b|o\b)|화씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val - 32) * 5 / 9, target_unit_name: '섭씨', category: 'temperature' },
-                { names: ['Celsius', 'C', '섭씨'], target_unit_code: '°F', regex: /(-?[\d\.,]+)\s*(?:°C\b|\bC\b(?![a-zA-Z])|섭씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val * 9 / 5) + 32, target_unit_name: '화씨', category: 'temperature' }
+                { names: ['Fahrenheit', 'F', '화씨'], target_unit_code: '°C', regex: /(-?[\d\.,]+)\s*(°F\b|F\b(?!t|l\b|r\b|o\b)|화씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val - 32) * 5 / 9, target_unit_name: '섭씨', category: 'temperature' },
+                { names: ['Celsius', 'C', '섭씨'], target_unit_code: '°F', regex: /(-?[\d\.,]+)\s*(°C\b|\bC\b(?![a-zA-Z])|섭씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val * 9 / 5) + 32, target_unit_name: '화씨', category: 'temperature' }
             ],
             data_rate: [
                 { names: ['Mbps', 'mbps', '메가비트', '메가bps'], target_unit_code: 'MB/s', factor: 0.125, to_base_unit_factor: 1000000, regex: /([\d\.,]+)\s*(Mbps|메가비트|메가bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'data_rate' }
@@ -1858,7 +1860,9 @@
                 candidateInstantMs = nextCandidateInstantMs;
             }
 
-            return offsetString;
+            // A non-converging offset means that the requested wall-clock time falls
+            // inside a daylight-saving gap and therefore has no valid instant.
+            return null;
         },
 
         _isValidDate(year, monthIndex, day) {
@@ -2379,7 +2383,7 @@
 
                         const unitStr = match[2];
                         const value = Utils.parseFloatLenient(valueStr);
-                        if (value !== null) {
+                        if (value !== null && typeof unitStr === 'string') {
                              foundMatches.push({ value, unitInfo: unit, originalText: originalMatchedSegment, originalUnit: unitStr.trim() });
                         }
                     }
