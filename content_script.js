@@ -1311,8 +1311,11 @@
         CURRENCY_FLAGS: {
             'USD': '🇺🇸', 'EUR': '🇪🇺', 'JPY': '🇯🇵', 'GBP': '🇬🇧', 'AUD': '🇦🇺', 'CAD': '🇨🇦', 'CHF': '🇨🇭', 'CNY': '🇨🇳', 'HKD': '🇭🇰', 'NZD': '🇳🇿', 'SEK': '🇸🇪', 'KRW': '🇰🇷', 'SGD': '🇸🇬', 'NOK': '🇳🇴', 'MXN': '🇲🇽', 'INR': '🇮🇳', 'ZAR': '🇿🇦', 'TRY': '🇹🇷', 'BRL': '🇧🇷', 'DKK': '🇩🇰', 'PLN': '🇵🇱', 'THB': '🇹🇭', 'IDR': '🇮🇩', 'HUF': '🇭🇺', 'CZK': '🇨🇿', 'ILS': '🇮🇱', 'PHP': '🇵🇭', 'MYR': '🇲🇾', 'RON': '🇷🇴', 'BGN': '🇧🇬', 'ISK': '🇮🇸',
         },
-        UNIT_CATEGORY_ICONS: { length: '📏', mass: '⚖️', volume: '💧', temperature: '🌡️', time: '🕒', data_rate: '⚡️' },
-        CATEGORY_BASE_UNITS: { length: 'm', mass: 'kg', volume: 'L' },
+        UNIT_CATEGORY_ICONS: {
+            length: '📏', mass: '⚖️', volume: '💧', temperature: '🌡️', time: '🕒',
+            area: '📐', digital_storage: '💾', data_rate: '⚡️', speed: '🚗', pressure: '💨'
+        },
+        CATEGORY_BASE_UNITS: { length: 'm', mass: 'kg', volume: 'L', area: 'm²' },
         CURRENCY_PATTERNS: [
             { code: 'CAD', regex: /캐나다\s*달러|캐나다달러|C\$|CAD/giu }, { code: 'AUD', regex: /호주\s*달러|호주달러|A\$|AUD/giu }, { code: 'CHF', regex: /스위스\s*프랑|스위스프랑|CHF|SFr\./giu }, { code: 'SGD', regex: /싱가포르\s*달러|싱가포르달러|S\$|SGD/giu }, { code: 'HKD', regex: /홍콩\s*달러|홍콩달러|HK\$|HKD/giu }, { code: 'NZD', regex: /뉴질랜드\s*달러|뉴질랜드달러|NZ\$|NZD/giu }, { code: 'MXN', regex: /멕시코\s*페소|멕시코페소|Mex\$|MXN/giu }, { code: 'BRL', regex: /브라질\s*헤알|헤알|R\$|BRL/giu }, { code: 'PHP', regex: /필리핀\s*페소|필리핀페소|₱|PHP/giu }, { code: 'MYR', regex: /말레이시아\s*링깃|링깃|RM|MYR/giu }, { code: 'GBP', regex: /파운드\s*스털링|영국\s*파운드|GBP\s*[£￡]|[£￡]\s*GBP/giu }, { code: 'JPY', regex: /엔|엔화|円|[¥￥]|JPY|일본\s*엔|일본\s*엔화/giu }, { code: 'EUR', regex: /유로|€|EUR/giu }, { code: 'CNY', regex: /위안|위안화|元|CNY|중국\s*위안|인민폐|런민비/giu }, { code: 'KRW', regex: /원|₩|KRW|한국\s*원|대한민국\s*원/giu }, { code: 'INR', regex: /인도\s*루피|인도루피|루피(?!아)|₹|Rs\.?|INR/giu }, { code: 'TRY', regex: /터키\s*리라|튀르키예\s*리라|리라|₺|TRY/giu }, { code: 'IDR', regex: /인도네시아\s*루피아|루피아|Rp|IDR/giu }, { code: 'PLN', regex: /폴란드\s*즐로티|즐로티|zł|PLN/giu }, { code: 'ILS', regex: /이스라엘\s*셰켈|셰켈|₪|ILS/giu }, { code: 'THB', regex: /태국\s*바트|바트|밧|฿|THB/giu }, { code: 'SEK', regex: /스웨덴\s*크로나|스웨덴크로나|SEK(?:kr)?|(?:krSEK)/giu }, { code: 'NOK', regex: /노르웨이\s*크로나|노르웨이크로나|NOK(?:kr)?|(?:krNOK)/giu }, { code: 'DKK', regex: /덴마크\s*크로나|덴마크크로나|DKK(?:kr)?|(?:krDKK)/giu }, { code: 'ISK', regex: /아이슬란드\s*크로나|아이슬란드크로나|ISK(?:kr)?|(?:krISK)/giu }, 
             // [수정됨] ZAR의 R을 단어 경계(\b)로 감쌈
@@ -1321,13 +1324,13 @@
         ],
         UNIT_CONVERSION_CONFIG: {
             length: [
-                { names: ['inch', 'inches', 'in', '"', '인치'], target_unit_code: 'cm', factor: 2.54, to_base_unit_factor: 0.0254, regex: /([\d\.,]+)\s*(inch(?:es)?|in|"|인치)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'ft', from_base_unit_factor: 1/0.3048, precision: 3 }, { unit: 'm', from_base_unit_factor: 1, precision: 3 }], category: 'length' },
-                { names: ['foot', 'feet', 'ft', "'", '피트'], target_unit_code: 'm', factor: 0.3048, to_base_unit_factor: 0.3048, regex: /([\d\.,]+)\s*(foot|feet|ft|'|피트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'cm', from_base_unit_factor: 100, precision: 1 }, { unit: 'inch', from_base_unit_factor: 1/0.0254, precision: 2 }], category: 'length' },
-                { names: ['yard', 'yards', 'yd', '야드'], target_unit_code: 'm', factor: 0.9144, to_base_unit_factor: 0.9144, regex: /([\d\.,]+)\s*(yard(?:s)?|yd|야드)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'length' },
-                { names: ['mile', 'miles', 'mi', '마일'], target_unit_code: 'km', factor: 1.60934, to_base_unit_factor: 1609.34, regex: /([\d\.,]+)\s*(mile(?:s)?|mi|마일)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'length' },
+                { names: ['inch', 'inches', 'in', '"', '인치'], target_unit_code: 'cm', factor: 2.54, to_base_unit_factor: 0.0254, regex: /([\d\.,]+)\s*(inch(?:es)?|in|"|인치)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2))/giu, additional_outputs: [{ unit: 'ft', from_base_unit_factor: 1/0.3048, precision: 3 }, { unit: 'm', from_base_unit_factor: 1, precision: 3 }], category: 'length' },
+                { names: ['foot', 'feet', 'ft', "'", '피트'], target_unit_code: 'm', factor: 0.3048, to_base_unit_factor: 0.3048, regex: /([\d\.,]+)\s*(foot|feet|ft|'|피트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2))/giu, additional_outputs: [{ unit: 'cm', from_base_unit_factor: 100, precision: 1 }, { unit: 'inch', from_base_unit_factor: 1/0.0254, precision: 2 }], category: 'length' },
+                { names: ['yard', 'yards', 'yd', '야드'], target_unit_code: 'm', factor: 0.9144, to_base_unit_factor: 0.9144, regex: /([\d\.,]+)\s*(yard(?:s)?|yd|야드)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2))/giu, category: 'length' },
+                { names: ['mile', 'miles', 'mi', '마일'], target_unit_code: 'km', factor: 1.60934, to_base_unit_factor: 1609.34, regex: /([\d\.,]+)\s*(mile(?:s)?|mi|마일)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*h\b|per\s+hour\b))/giu, category: 'length' },
                 { names: ['cm', '센티미터', '센치'], target_unit_code: 'inch', factor: 1/2.54, to_base_unit_factor: 0.01, regex: /([\d\.,]+)\s*(cm|센티미터|센치)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '인치', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision: 3}], category: 'length' },
-                { names: ['m', '미터'], target_unit_code: 'ft', factor: 1/0.3048, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(m|미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!i)(?!l)(?!o)(?!y)(?!a)(?!k)/giu, is_metric: true, target_unit_name: '피트', additional_outputs: [{unit: 'km', from_base_unit_factor: 0.001, precision:4}, {unit: 'inch', from_base_unit_factor: 1/0.0254, precision:1}], category: 'length' },
-                { names: ['km', '킬로미터'], target_unit_code: 'mile', factor: 1/1.60934, to_base_unit_factor: 1000, regex: /([\d\.,]+)\s*(km|킬로미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '마일', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision:0}], category: 'length' },
+                { names: ['m', '미터'], target_unit_code: 'ft', factor: 1/0.3048, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(m|미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*s\b|per\s+second\b))(?!i)(?!l)(?!o)(?!y)(?!a)(?!k)/giu, is_metric: true, target_unit_name: '피트', additional_outputs: [{unit: 'km', from_base_unit_factor: 0.001, precision:4}, {unit: 'inch', from_base_unit_factor: 1/0.0254, precision:1}], category: 'length' },
+                { names: ['km', '킬로미터'], target_unit_code: 'mile', factor: 1/1.60934, to_base_unit_factor: 1000, regex: /([\d\.,]+)\s*(km|킬로미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*(?:h|s)\b|per\s+(?:hour|second)\b))/giu, is_metric: true, target_unit_name: '마일', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision:0}], category: 'length' },
             ],
             mass: [
                 { names: ['ounce', 'ounces', 'oz', '온스'], target_unit_code: 'g', factor: 28.3495, to_base_unit_factor: 0.0283495, regex: /([\d\.,]+)\s*(ounce(?:s)?|oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'mass', target_precision: 0 },
@@ -1348,8 +1351,47 @@
                 { names: ['Fahrenheit', 'F', '화씨'], target_unit_code: '°C', regex: /(-?[\d\.,]+)\s*(°F\b|F\b(?!t|l\b|r\b|o\b)|화씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val - 32) * 5 / 9, target_unit_name: '섭씨', category: 'temperature' },
                 { names: ['Celsius', 'C', '섭씨'], target_unit_code: '°F', regex: /(-?[\d\.,]+)\s*(°C\b|\bC\b(?![a-zA-Z])|섭씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val * 9 / 5) + 32, target_unit_name: '화씨', category: 'temperature' }
             ],
+            area: [
+                { names: ['m²', 'm2', '㎡', 'sq m', 'sqm', '제곱미터'], target_unit_code: '평', factor: 0.3025, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(㎡|m(?:²|2|\^\s*2)|sq\.?\s*m|sqm|square\s+met(?:er|re)s?|제곱미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'ft²', from_base_unit_factor: 1/0.09290304, precision: 2 }], category: 'area', target_precision: 2 },
+                { names: ['평'], target_unit_code: 'm²', factor: 400/121, to_base_unit_factor: 400/121, regex: /([\d\.,]+)\s*(평)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'ft²', from_base_unit_factor: 1/0.09290304, precision: 2 }], category: 'area', target_precision: 2 },
+                { names: ['ft²', 'ft2', 'sq ft', 'sqft', 'square foot', 'square feet', '제곱피트'], target_unit_code: 'm²', factor: 0.09290304, to_base_unit_factor: 0.09290304, regex: /([\d\.,]+)\s*(ft(?:²|2|\^\s*2)|sq\.?\s*ft|sqft|square\s+(?:foot|feet)|제곱피트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: '평', from_base_unit_factor: 0.3025, precision: 2 }], category: 'area', target_precision: 2 }
+            ],
+            digital_storage: [
+                { names: ['KB', 'kilobyte', 'kilobytes', '킬로바이트'], target_unit_code: 'KiB', factor: 1000/1024, regex: /([\d\.,]+)\s*(KB|[Kk]ilobytes?|킬로바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['MB', 'megabyte', 'megabytes', '메가바이트'], target_unit_code: 'MiB', factor: 1000000/1048576, regex: /([\d\.,]+)\s*(MB|[Mm]egabytes?|메가바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['GB', 'gigabyte', 'gigabytes', '기가바이트'], target_unit_code: 'GiB', factor: 1000000000/1073741824, regex: /([\d\.,]+)\s*(GB|[Gg]igabytes?|기가바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['TB', 'terabyte', 'terabytes', '테라바이트'], target_unit_code: 'TiB', factor: 1000000000000/1099511627776, regex: /([\d\.,]+)\s*(TB|[Tt]erabytes?|테라바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['PB', 'petabyte', 'petabytes', '페타바이트'], target_unit_code: 'PiB', factor: 1000000000000000/1125899906842624, regex: /([\d\.,]+)\s*(PB|[Pp]etabytes?|페타바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['KiB', 'kibibyte', 'kibibytes', '키비바이트'], target_unit_code: 'KB', factor: 1024/1000, regex: /([\d\.,]+)\s*(KiB|[Kk]ibibytes?|키비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['MiB', 'mebibyte', 'mebibytes', '메비바이트'], target_unit_code: 'MB', factor: 1048576/1000000, regex: /([\d\.,]+)\s*(MiB|[Mm]ebibytes?|메비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['GiB', 'gibibyte', 'gibibytes', '기비바이트'], target_unit_code: 'GB', factor: 1073741824/1000000000, regex: /([\d\.,]+)\s*(GiB|[Gg]ibibytes?|기비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['TiB', 'tebibyte', 'tebibytes', '테비바이트'], target_unit_code: 'GB', factor: 1099511627776/1000000000, regex: /([\d\.,]+)\s*(TiB|[Tt]ebibytes?|테비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['PiB', 'pebibyte', 'pebibytes', '페비바이트'], target_unit_code: 'TB', factor: 1125899906842624/1000000000000, regex: /([\d\.,]+)\s*(PiB|[Pp]ebibytes?|페비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 }
+            ],
             data_rate: [
-                { names: ['Mbps', 'mbps', '메가비트', '메가bps'], target_unit_code: 'MB/s', factor: 0.125, to_base_unit_factor: 1000000, regex: /([\d\.,]+)\s*(Mbps|메가비트|메가bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'data_rate' }
+                { names: ['Kbps', 'kbps', 'kb/s', 'Kbit/s', '킬로비트/초'], target_unit_code: 'KB/s', factor: 0.125, regex: /([\d\.,]+)\s*(Kbps|kbps|kb\/s|[Kk]bits?\/s|[Kk]ilobits?\s+per\s+second|킬로비트(?:\/초)?|킬로bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['Mbps', 'mbps', 'Mb/s', 'Mbit/s', '메가비트/초'], target_unit_code: 'MB/s', factor: 0.125, regex: /([\d\.,]+)\s*(Mbps|mbps|Mb\/s|[Mm]bits?\/s|[Mm]egabits?\s+per\s+second|메가비트(?:\/초)?|메가bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['Gbps', 'gbps', 'Gb/s', 'Gbit/s', '기가비트/초'], target_unit_code: 'MB/s', factor: 125, regex: /([\d\.,]+)\s*(Gbps|gbps|Gb\/s|[Gg]bits?\/s|[Gg]igabits?\s+per\s+second|기가비트(?:\/초)?|기가bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['Tbps', 'tbps', 'Tb/s', 'Tbit/s', '테라비트/초'], target_unit_code: 'GB/s', factor: 125, regex: /([\d\.,]+)\s*(Tbps|tbps|Tb\/s|[Tt]bits?\/s|[Tt]erabits?\s+per\s+second|테라비트(?:\/초)?|테라bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['KB/s', 'KBps', '킬로바이트/초'], target_unit_code: 'Kbps', factor: 8, regex: /([\d\.,]+)\s*(KB\/s|KBps|[Kk]ilobytes?\s+per\s+second|킬로바이트(?:\/초|초당))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['MB/s', 'MBps', '메가바이트/초'], target_unit_code: 'Mbps', factor: 8, regex: /([\d\.,]+)\s*(MB\/s|MBps|[Mm]egabytes?\s+per\s+second|메가바이트(?:\/초|초당))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['GB/s', 'GBps', '기가바이트/초'], target_unit_code: 'Gbps', factor: 8, regex: /([\d\.,]+)\s*(GB\/s|GBps|[Gg]igabytes?\s+per\s+second|기가바이트(?:\/초|초당))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['TB/s', 'TBps', '테라바이트/초'], target_unit_code: 'Tbps', factor: 8, regex: /([\d\.,]+)\s*(TB\/s|TBps|[Tt]erabytes?\s+per\s+second|테라바이트(?:\/초|초당))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 }
+            ],
+            speed: [
+                { names: ['mph', 'mi/h', 'mile per hour', 'miles per hour', '마일/시'], target_unit_code: 'km/h', factor: 1.609344, regex: /([\d\.,]+)\s*(mph|mi\/h|miles?\s+per\s+hour|마일(?:\/시|시속))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'speed', target_precision: 2 },
+                { names: ['km/h', 'kmh', 'kph', '킬로미터/시'], target_unit_code: 'mph', factor: 1/1.609344, regex: /([\d\.,]+)\s*(km\/?h|kph|kilomet(?:er|re)s?\s+per\s+hour|킬로미터(?:\/시|시속))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'speed', target_precision: 2 },
+                { names: ['m/s', 'mps', 'meter per second', 'metre per second', '미터/초'], target_unit_code: 'km/h', factor: 3.6, regex: /([\d\.,]+)\s*(m\/s|mps|met(?:er|re)s?\s+per\s+second|미터(?:\/초|초속))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'speed', target_precision: 2 },
+                { names: ['knot', 'knots', 'kt', 'kts', '노트'], target_unit_code: 'km/h', factor: 1.852, regex: /([\d\.,]+)\s*(knots?|kts?|노트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'speed', target_precision: 2 }
+            ],
+            pressure: [
+                { names: ['psi'], target_unit_code: 'kPa', factor: 6.894757293168, to_base_unit_factor: 6.894757293168, regex: /(-?[\d\.,]+)\s*(psi)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'bar', from_base_unit_factor: 0.01, precision: 2 }], category: 'pressure', target_precision: 1 },
+                { names: ['kPa'], target_unit_code: 'psi', factor: 1/6.894757293168, to_base_unit_factor: 1, regex: /(-?[\d\.,]+)\s*(kPa)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'bar', from_base_unit_factor: 0.01, precision: 2 }], category: 'pressure', target_precision: 2 },
+                { names: ['MPa'], target_unit_code: 'bar', factor: 10, to_base_unit_factor: 1000, regex: /(-?[\d\.,]+)\s*(MPa)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, additional_outputs: [{ unit: 'psi', from_base_unit_factor: 1/6.894757293168, precision: 2 }], category: 'pressure', target_precision: 2 },
+                { names: ['bar'], target_unit_code: 'kPa', factor: 100, to_base_unit_factor: 100, regex: /(-?[\d\.,]+)\s*(bar)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'psi', from_base_unit_factor: 1/6.894757293168, precision: 2 }], category: 'pressure', target_precision: 2 },
+                { names: ['atm'], target_unit_code: 'kPa', factor: 101.325, to_base_unit_factor: 101.325, regex: /(-?[\d\.,]+)\s*(atm)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'bar', from_base_unit_factor: 0.01, precision: 3 }], category: 'pressure', target_precision: 3 },
+                { names: ['hPa', 'mbar'], target_unit_code: 'kPa', factor: 0.1, to_base_unit_factor: 0.1, regex: /(-?[\d\.,]+)\s*(hPa|mbar)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'bar', from_base_unit_factor: 0.01, precision: 3 }], category: 'pressure', target_precision: 2 },
+                { names: ['mmHg'], target_unit_code: 'kPa', factor: 0.133322387415, to_base_unit_factor: 0.133322387415, regex: /(-?[\d\.,]+)\s*(mmHg)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'atm', from_base_unit_factor: 1/101.325, precision: 3 }], category: 'pressure', target_precision: 2 }
             ],
         },
         KST_IANA_TIMEZONE: 'Asia/Seoul',
@@ -1409,6 +1451,13 @@
         RESULT_UNIT_SUFFIX_MASS: "(단위, 질량)",
         RESULT_UNIT_SUFFIX_VOLUME: "(단위, 부피)",
         RESULT_UNIT_SUFFIX_DEFAULT: "(단위)",
+        RESULT_UNIT_SUFFIX_BY_CATEGORY: Object.freeze({
+            area: "(넓이·평수)",
+            digital_storage: "(저장 용량)",
+            data_rate: "(데이터 속도)",
+            speed: "(속도)",
+            pressure: "(압력)"
+        }),
         RESULT_CURRENCY_SUFFIX: "(환율)",
         RESULT_CURRENCY_ERROR_SUFFIX: "(환율 오류)",
         KOREAN_WON_UNIT: "원",
@@ -2885,7 +2934,7 @@
                             if (unitDetails.unitInfo.category === 'mass') processedOriginalTextForTitle += ' (질량)';
                             else if (unitDetails.unitInfo.category === 'volume') processedOriginalTextForTitle += ' (부피)';
                         }
-                        let titleSuffix = UI_STRINGS.RESULT_UNIT_SUFFIX_DEFAULT;
+                        let titleSuffix = UI_STRINGS.RESULT_UNIT_SUFFIX_BY_CATEGORY[unitDetails.unitInfo.category] || UI_STRINGS.RESULT_UNIT_SUFFIX_DEFAULT;
                         if (unitDetailItems.length > 1 && isOzUnit) {
                             if (unitDetails.unitInfo.category === 'mass') titleSuffix = UI_STRINGS.RESULT_UNIT_SUFFIX_MASS;
                             else if (unitDetails.unitInfo.category === 'volume') titleSuffix = UI_STRINGS.RESULT_UNIT_SUFFIX_VOLUME;
