@@ -2417,6 +2417,17 @@
             if (Utils.isInvalidString(inputText)) return [];
             const foundMatches = [];
             const trimmedText = inputText.trim();
+            const normalizedIgnoredText = typeof ignoredText === 'string'
+                ? ignoredText.trim().toLowerCase()
+                : '';
+            const shouldIgnoreCurrencyOverlap = (matchedText) => {
+                const normalizedMatchedText = String(matchedText || '').trim().toLowerCase();
+                return Boolean(
+                    normalizedIgnoredText &&
+                    normalizedMatchedText &&
+                    normalizedIgnoredText.includes(normalizedMatchedText)
+                );
+            };
 
             for (const categoryKey in Config.UNIT_CONVERSION_CONFIG) {
                 for (const unit of Config.UNIT_CONVERSION_CONFIG[categoryKey]) {
@@ -2426,7 +2437,7 @@
                         const valueStr = match[1];
                         const originalMatchedSegment = match[0].trim();
 
-                        if (ignoredText && originalMatchedSegment.toLowerCase() === ignoredText.toLowerCase()) {
+                        if (shouldIgnoreCurrencyOverlap(originalMatchedSegment)) {
                             continue;
                         }
 
@@ -2441,7 +2452,7 @@
 
             const plainOzInputMatch = REGEXES.PLAIN_OZ_REGEX.exec(trimmedText);
             if (plainOzInputMatch) {
-                 if (!(ignoredText && plainOzInputMatch[0].trim().toLowerCase() === ignoredText.toLowerCase())) {
+                 if (!shouldIgnoreCurrencyOverlap(plainOzInputMatch[0])) {
                     const valueFromPlainOz = Utils.parseFloatLenient(plainOzInputMatch[1]);
                     const matchedMassOz = foundMatches.find(m =>
                         m.value === valueFromPlainOz && m.unitInfo.category === 'mass' &&
@@ -2917,8 +2928,8 @@
             if (typeof unitInfo.factor === 'number') return value * unitInfo.factor;
             return null;
         },
-        processUnitConversion: function(selectedText, currencyMagnitudeTextToIgnore = null) {
-            const unitDetailItems = TextExtractor.extractPhysicalUnitDetails(selectedText, currencyMagnitudeTextToIgnore);
+        processUnitConversion: function(selectedText, currencyUnitTextToIgnore = null) {
+            const unitDetailItems = TextExtractor.extractPhysicalUnitDetails(selectedText, currencyUnitTextToIgnore);
             if (!unitDetailItems || unitDetailItems.length === 0) return null;
             const conversionDataObjects = [];
             for (const unitDetails of unitDetailItems) {
@@ -2955,6 +2966,17 @@
                 return null;
             }
 
+            const matchedCurrencyToken = String(currencyDetails.matchedCurrencyText || '').trim();
+            // C$ ends with the Celsius token "C", while the case-insensitive feet
+            // pattern also accepts the HUF symbol "Ft". Suppress only these proven
+            // currency/unit collisions so genuinely ambiguous inputs such as
+            // "100 파운드" can continue to show both supported interpretations.
+            const overlappingCurrencyUnitText = (
+                (currencyDetails.currencyCode === 'CAD' && /^C\$$/iu.test(matchedCurrencyToken)) ||
+                (currencyDetails.currencyCode === 'HUF' && matchedCurrencyToken === 'Ft')
+            ) ? currencyDetails.originalText : null;
+            const physicalUnitTextToIgnore = currencyDetails.magnitudeAmountText || overlappingCurrencyUnitText;
+
             try {
                 const {
                     rate,
@@ -2986,7 +3008,7 @@
                 const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate}${freshnessSuffix})</small>`;
                 const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate}${freshnessSuffix})`;
 
-                return { titleHtml, contentHtml, copyText, isError: false, extractedMagnitudeText: currencyDetails.magnitudeAmountText };
+                return { titleHtml, contentHtml, copyText, isError: false, physicalUnitTextToIgnore };
             } catch (error) {
                 const errMsgBase = `${UI_STRINGS.ERROR_ICON} 환율 변환 실패 (${Utils.escapeHTML(currencyDetails.currencyCode || "?")} → ${Config.DEFAULT_TARGET_CURRENCY}).`;
                 const errMsgDetail = (error && error.message) ? error.message : '알 수 없는 오류입니다.';
@@ -2996,7 +3018,7 @@
                     contentHtml: `${errMsgBase}<br><small class="error-detail">${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}</small>`,
                     copyText: `${currencyDetails.originalText} ${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}\n${errMsgBase}\n${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}`,
                     isError: true,
-                    extractedMagnitudeText: currencyDetails.magnitudeAmountText
+                    physicalUnitTextToIgnore
                 };
             }
         },
@@ -3015,18 +3037,18 @@
         fetchAndProcessConversions: async function(selectedText) {
             let resultsArray = [];
             let conversionAttempted = false;
-            let currencyMagnitudeTextToIgnore = null;
+            let currencyUnitTextToIgnore = null;
 
             const currencyResultObject = await Converter.processCurrencyConversion(selectedText);
             if (currencyResultObject) {
                 conversionAttempted = true;
                 resultsArray.push(currencyResultObject);
-                if (currencyResultObject.extractedMagnitudeText) {
-                    currencyMagnitudeTextToIgnore = currencyResultObject.extractedMagnitudeText;
+                if (currencyResultObject.physicalUnitTextToIgnore) {
+                    currencyUnitTextToIgnore = currencyResultObject.physicalUnitTextToIgnore;
                 }
             }
 
-            const unitConversionOutcome = Converter.processUnitConversion(selectedText, currencyMagnitudeTextToIgnore);
+            const unitConversionOutcome = Converter.processUnitConversion(selectedText, currencyUnitTextToIgnore);
             if (unitConversionOutcome && unitConversionOutcome.results && unitConversionOutcome.results.length > 0) {
                 conversionAttempted = true;
                 resultsArray.push(...unitConversionOutcome.results);

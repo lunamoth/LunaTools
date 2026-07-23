@@ -531,22 +531,23 @@
             position: relative;
             z-index: 1;
             margin: -0.25rem 0 var(--spacing-md);
-            padding: 1rem 1.25rem;
+            padding: 18px 24px;
             border-left: 5px solid var(--color-primary);
             border-radius: var(--border-radius-small);
             background-color: var(--table-header-bg);
             color: var(--color-text);
-            font-size: 1.15rem;
-            line-height: 1.7;
+            font-size: var(--font-size-description);
+            line-height: 1.75;
         }
 
         .cheat-sheet__section-title {
             position: relative;
             z-index: 1;
-            margin: 0 0 1rem;
+            margin: 0 0 1.5rem;
             color: var(--color-primary);
-            font-size: 1.45rem;
+            font-size: var(--font-size-subtitle);
             font-weight: var(--font-weight-bold);
+            line-height: 1.35;
         }
 
         .cheat-sheet__table-wrap {
@@ -562,7 +563,8 @@
             width: 100%;
             min-width: 640px;
             border-collapse: collapse;
-            font-size: 1rem;
+            font-size: var(--font-size-table);
+            line-height: 1.7;
         }
 
         .cheat-sheet-table--compact {
@@ -571,7 +573,7 @@
 
         .cheat-sheet-table th,
         .cheat-sheet-table td {
-            padding: 13px 14px;
+            padding: 18px 16px;
             border-right: 1px solid var(--table-border);
             border-bottom: 1px solid var(--table-border);
             text-align: left;
@@ -609,7 +611,7 @@
             background-color: var(--key-bg);
             color: var(--key-text);
             font-family: "SF Mono", "Monaco", "Inconsolata", monospace;
-            font-size: 0.92em;
+            font-size: 0.95em;
             white-space: nowrap;
         }
 
@@ -619,7 +621,7 @@
             margin: 0;
             text-align: center;
             color: var(--color-text);
-            font-size: 1.2rem;
+            font-size: var(--font-size-description);
             font-weight: var(--font-weight-bold);
         }
 
@@ -634,9 +636,6 @@
                 font-size: 1rem;
             }
 
-            .cheat-sheet-table {
-                font-size: 0.95rem;
-            }
         }
 
         .visually-hidden {
