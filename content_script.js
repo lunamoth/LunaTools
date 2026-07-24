@@ -1328,6 +1328,7 @@
                 { names: ['foot', 'feet', 'ft', "'", '피트'], target_unit_code: 'm', factor: 0.3048, to_base_unit_factor: 0.3048, regex: /([\d\.,]+)\s*(foot|feet|ft|'|피트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2))/giu, additional_outputs: [{ unit: 'cm', from_base_unit_factor: 100, precision: 1 }, { unit: 'inch', from_base_unit_factor: 1/0.0254, precision: 2 }], category: 'length' },
                 { names: ['yard', 'yards', 'yd', '야드'], target_unit_code: 'm', factor: 0.9144, to_base_unit_factor: 0.9144, regex: /([\d\.,]+)\s*(yard(?:s)?|yd|야드)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2))/giu, category: 'length' },
                 { names: ['mile', 'miles', 'mi', '마일'], target_unit_code: 'km', factor: 1.60934, to_base_unit_factor: 1609.34, regex: /([\d\.,]+)\s*(mile(?:s)?|mi|마일)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*h\b|per\s+hour\b))/giu, category: 'length' },
+                { names: ['mm', 'millimeter', 'millimeters', 'millimetre', 'millimetres', '밀리미터'], target_unit_code: 'inch', factor: 1/25.4, to_base_unit_factor: 0.001, regex: /([\d\.,]+)\s*(mm|millimet(?:er|re)s?|밀리미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*s\b|per\s+second\b))/giu, is_metric: true, target_unit_name: '인치', category: 'length', target_precision: 2 },
                 { names: ['cm', '센티미터', '센치'], target_unit_code: 'inch', factor: 1/2.54, to_base_unit_factor: 0.01, regex: /([\d\.,]+)\s*(cm|센티미터|센치)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '인치', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision: 3}], category: 'length' },
                 { names: ['m', '미터'], target_unit_code: 'ft', factor: 1/0.3048, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(m|미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*s\b|per\s+second\b))(?!i)(?!l)(?!o)(?!y)(?!a)(?!k)/giu, is_metric: true, target_unit_name: '피트', additional_outputs: [{unit: 'km', from_base_unit_factor: 0.001, precision:4}, {unit: 'inch', from_base_unit_factor: 1/0.0254, precision:1}], category: 'length' },
                 { names: ['km', '킬로미터'], target_unit_code: 'mile', factor: 1/1.60934, to_base_unit_factor: 1000, regex: /([\d\.,]+)\s*(km|킬로미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*(?:h|s)\b|per\s+(?:hour|second)\b))/giu, is_metric: true, target_unit_name: '마일', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision:0}], category: 'length' },
@@ -2196,11 +2197,18 @@
             const candidateText = text.slice(candidate.startOffset, candidate.endOffset);
             const previousCharacter = candidate.startOffset > 0 ? text[candidate.startOffset - 1] : '';
             const startsWithKoreanNumericCharacter = /^[천백십조억만일이삼사오육칠팔구영]/u.test(candidateText);
+            const hasKoreanContextBeforeCandidate = /[ㄱ-ㅎㅏ-ㅣ가-힣]/u.test(previousCharacter);
+            const startsWithSeparatedArabicAmount =
+                /^[천백십조억만일이삼사오육칠팔구영]\s+(?=[\d.])/u.test(candidateText);
 
             // 문장 속 조사·명사의 마지막 글자(금액이, 금액만, 구매일 등)가 한글 숫자와
-            // 같더라도 숫자 표현의 시작으로 포함하지 않습니다. 공백 뒤의 실제 금액만
-            // 사용하고, 아라비아 숫자가 조사 바로 뒤에 붙은 기존 입력도 보존합니다.
-            if (!startsWithKoreanNumericCharacter || !/[ㄱ-ㅎㅏ-ㅣ가-힣]/u.test(previousCharacter)) {
+            // 같더라도 숫자 표현의 시작으로 포함하지 않습니다. 선택 영역이 조사처럼
+            // 보이는 글자에서 바로 시작한 "이 100달러"도 공백 뒤의 아라비아 금액만
+            // 사용합니다. 공백 없는 "이십 달러", "백이십 달러"는 그대로 보존합니다.
+            if (
+                !startsWithKoreanNumericCharacter ||
+                (!hasKoreanContextBeforeCandidate && !startsWithSeparatedArabicAmount)
+            ) {
                 return candidate;
             }
 

@@ -3500,6 +3500,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 changedCount++;
                 continue;
               }
+
+              // Verification and removal can span several seconds for a large
+              // session. Refresh the protected foreground tab immediately
+              // before every destructive removal so a tab selected while the
+              // closing loop is running is never removed.
+              const [activeTabBeforeRemoval] = await chrome.tabs.query({
+                active: true,
+                lastFocusedWindow: true
+              });
+              if (activeTabBeforeRemoval?.id === candidate.id) {
+                protectedTabIds.add(candidate.id);
+                changedCount++;
+                continue;
+              }
+
               await chrome.tabs.remove(candidate.id);
               closedCount++;
             } catch (closeError) {
