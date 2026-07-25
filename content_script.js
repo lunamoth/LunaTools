@@ -2019,6 +2019,9 @@
                     const ianaZone = Config.TIMEZONE_LOOKUP[upperTzStr];
                     resolvedIanaTimeZone = ianaZone;
                     resolvedTzOffsetString = this._getOffsetStringForIANA(ianaZone, year, monthIndex, day, hour, minute);
+                } else if (upperTzStr === 'CENTRAL EUROPEAN TIME') {
+                    resolvedIanaTimeZone = 'Europe/Berlin';
+                    resolvedTzOffsetString = this._getOffsetStringForIANA(resolvedIanaTimeZone, year, monthIndex, day, hour, minute);
                 } else {
                     const offsetMatch = REGEXES.TZ_OFFSET_REGEX.exec(upperTzStr);
                     if (offsetMatch) {
