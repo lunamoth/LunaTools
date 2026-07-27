@@ -1673,7 +1673,14 @@
         },
         hasInvalidCommaGrouping: function(inputStr) {
             if (inputStr === null || typeof inputStr === 'undefined') return false;
-            const numericSegments = String(inputStr).match(/\d[\d,]*(?:\.\d+)?/gu) || [];
+            const inputText = String(inputStr);
+
+            // 쉼표는 천 단위 구분자, 마침표는 소수점으로만 허용합니다.
+            // "1.000,50"처럼 소수점 뒤에 쉼표가 오는 표기를 쉼표 제거로
+            // "1.00050"으로 오인하지 않도록 파싱 전에 거부합니다.
+            if (/\d[\d,]*\.\d*,\d/u.test(inputText)) return true;
+
+            const numericSegments = inputText.match(/\d[\d,]*(?:\.\d+)?/gu) || [];
             return numericSegments.some(segment =>
                 segment.includes(',') && !/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/u.test(segment)
             );
@@ -2270,6 +2277,26 @@
             const hasKoreanContextBeforeCandidate = /[ㄱ-ㅎㅏ-ㅣ가-힣]/u.test(previousCharacter);
             const startsWithSeparatedArabicAmount =
                 /^[천백십조억만일이삼사오육칠팔구영]\s+(?=[\d.])/u.test(candidateText);
+            const adjacentArabicAmountMatch =
+                /^[천백십조억만일이삼사오육칠팔구영]+((?:\d|\.).*)$/u.exec(candidateText);
+
+            // 한글 숫자처럼 보이는 문맥 글자가 선택 영역의 시작에 붙은 경우에도
+            // 뒤의 엄격한 아라비아 숫자만 금액으로 사용합니다. "이100달러"를
+            // 2,100달러로 합산하는 식의 오변환을 방지합니다.
+            if (adjacentArabicAmountMatch) {
+                const actualAmountText = adjacentArabicAmountMatch[1].trim();
+                if (TextExtractor._isStrictCurrencyAmountText(actualAmountText)) {
+                    const actualAmountStart = candidateText.indexOf(
+                        adjacentArabicAmountMatch[1],
+                        adjacentArabicAmountMatch.index
+                    );
+                    return {
+                        amountText: actualAmountText,
+                        startOffset: candidate.startOffset + actualAmountStart,
+                        endOffset: candidate.endOffset
+                    };
+                }
+            }
 
             // 문장 속 조사·명사의 마지막 글자(금액이, 금액만, 구매일 등)가 한글 숫자와
             // 같더라도 숫자 표현의 시작으로 포함하지 않습니다. 선택 영역이 조사처럼
@@ -2283,8 +2310,7 @@
             }
 
             const separatedAmountMatch = /\s+([^\s].*)$/u.exec(candidateText);
-            const adjacentArabicAmountMatch = /^[천백십조억만일이삼사오육칠팔구영](\d.*)$/u.exec(candidateText);
-            const amountMatch = separatedAmountMatch || adjacentArabicAmountMatch;
+            const amountMatch = separatedAmountMatch;
             if (!amountMatch) return null;
 
             const actualAmountText = amountMatch[1].trim();
