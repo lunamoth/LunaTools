@@ -1329,7 +1329,7 @@
                 { names: ['yard', 'yards', 'yd', '야드'], target_unit_code: 'm', factor: 0.9144, to_base_unit_factor: 0.9144, regex: /([\d\.,]+)\s*(yard(?:s)?|yd|야드)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2))/giu, category: 'length' },
                 { names: ['mile', 'miles', 'mi', '마일'], target_unit_code: 'km', factor: 1.60934, to_base_unit_factor: 1609.34, regex: /([\d\.,]+)\s*(mile(?:s)?|mi|마일)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*h\b|per\s+hour\b))/giu, category: 'length' },
                 { names: ['mm', 'millimeter', 'millimeters', 'millimetre', 'millimetres', '밀리미터'], target_unit_code: 'inch', factor: 1/25.4, to_base_unit_factor: 0.001, regex: /([\d\.,]+)\s*(mm|millimet(?:er|re)s?|밀리미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*s\b|per\s+second\b))/giu, is_metric: true, target_unit_name: '인치', category: 'length', target_precision: 2 },
-                { names: ['cm', '센티미터', '센치'], target_unit_code: 'inch', factor: 1/2.54, to_base_unit_factor: 0.01, regex: /([\d\.,]+)\s*(cm|센티미터|센치)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '인치', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision: 3}], category: 'length' },
+                { names: ['cm', '센티미터', '센치'], target_unit_code: 'inch', factor: 1/2.54, to_base_unit_factor: 0.01, regex: /([\d\.,]+)\s*(cm|센티미터|센치)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*s\b|per\s+second\b))/giu, is_metric: true, target_unit_name: '인치', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision: 3}], category: 'length' },
                 { names: ['m', '미터'], target_unit_code: 'ft', factor: 1/0.3048, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(m|미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*s\b|per\s+second\b))(?!i)(?!l)(?!o)(?!y)(?!a)(?!k)/giu, is_metric: true, target_unit_name: '피트', additional_outputs: [{unit: 'km', from_base_unit_factor: 0.001, precision:4}, {unit: 'inch', from_base_unit_factor: 1/0.0254, precision:1}], category: 'length' },
                 { names: ['km', '킬로미터'], target_unit_code: 'mile', factor: 1/1.60934, to_base_unit_factor: 1000, regex: /([\d\.,]+)\s*(km|킬로미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:²|\^\s*2|\/\s*(?:h|s)\b|per\s+(?:hour|second)\b))/giu, is_metric: true, target_unit_name: '마일', additional_outputs: [{unit: 'm', from_base_unit_factor: 1, precision:0}], category: 'length' },
             ],
@@ -2132,11 +2132,11 @@
     };
 
     const TextExtractor = {
-        _getCurrencyAmountPatternSource: function() {
+        _getCurrencyAmountPatternSource: function({ lazyKoreanNumber = false } = {}) {
             const numeric = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`;
             const magnitudeSuffix = String.raw`(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT])`;
             const numericWithMagnitude = `${numeric}\\s*${magnitudeSuffix}`;
-            const koreanOrPlainNumber = String.raw`[\d,\.\s천백십조억만일이삼사오육칠팔구영]+`;
+            const koreanOrPlainNumber = String.raw`[\d,\.\s천백십조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
             return `(?:${numericWithMagnitude}|${koreanOrPlainNumber})`;
         },
         _isStrictCurrencyAmountText: function(amountText) {
@@ -2331,33 +2331,61 @@
             { allowLeadingCurrencySymbol = false, currencyToken = '' } = {}
         ) {
             const source = TextExtractor._getCurrencyAmountPatternSource();
+            const grammarAwareSource = TextExtractor._getCurrencyAmountPatternSource({ lazyKoreanNumber: true });
             const optionalSymbolPrefix = allowLeadingCurrencySymbol
                 ? `(?:(?:${TextExtractor._getOptionalCurrencySymbolAmountPrefixSource()})\\s*)?`
                 : '';
+            const suffixSource = TextExtractor._getKoreanCurrencyGrammarSuffixPatternSource();
+            const grammarSuffixRegex = new RegExp(
+                `^\\s*(${optionalSymbolPrefix}(${grammarAwareSource}))(${suffixSource})(?![\\p{L}\\p{M}\\p{N}\\p{Pc}])`,
+                'iu'
+            );
+            const grammarSuffixMatch = grammarSuffixRegex.exec(text);
+            if (
+                grammarSuffixMatch &&
+                TextExtractor._getKoreanCurrencyGrammarSuffix(grammarSuffixMatch[3], currencyToken)
+            ) {
+                const grammarSuffix = grammarSuffixMatch[3];
+                const amountText = grammarSuffixMatch[2];
+                // "USD100이/이라도"는 100 뒤의 한국어 조사·어미이고,
+                // "USD100만"의 만은 금액 단위입니다. 아라비아 숫자가 포함되었거나
+                // 둘 이상의 글자로 된 명확한 어미일 때만 조사 분리를 우선합니다.
+                const shouldPreferGrammarSplit =
+                    grammarSuffix !== '만' &&
+                    (/\d/u.test(amountText) || Array.from(grammarSuffix).length > 1);
+                if (shouldPreferGrammarSplit) {
+                    return TextExtractor._normalizeCapturedAmountSpan(
+                        grammarSuffixMatch[0],
+                        grammarSuffixMatch[1],
+                        0,
+                        amountText
+                    );
+                }
+            }
+
             const leadingRegex = new RegExp(`^\\s*(${optionalSymbolPrefix}(${source}))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu');
             const match = leadingRegex.exec(text);
             if (match) {
                 return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], 0, match[2]);
             }
 
-            const suffixSource = TextExtractor._getKoreanCurrencyGrammarSuffixPatternSource();
-            const grammarSuffixRegex = new RegExp(
-                `^\\s*(${optionalSymbolPrefix}(${source}))(${suffixSource})(?![\\p{L}\\p{M}\\p{N}\\p{Pc}])`,
+            const fallbackGrammarSuffixRegex = new RegExp(
+                `^\\s*(${optionalSymbolPrefix}(${grammarAwareSource}))(${suffixSource})(?![\\p{L}\\p{M}\\p{N}\\p{Pc}])`,
                 'iu'
             );
-            const grammarSuffixMatch = grammarSuffixRegex.exec(text);
+            const fallbackGrammarSuffixMatch = fallbackGrammarSuffixRegex.exec(text);
             if (
-                !grammarSuffixMatch ||
-                !TextExtractor._getKoreanCurrencyGrammarSuffix(grammarSuffixMatch[3], currencyToken)
+                !fallbackGrammarSuffixMatch ||
+                !TextExtractor._getKoreanCurrencyGrammarSuffix(fallbackGrammarSuffixMatch[3], currencyToken)
             ) {
                 return null;
             }
 
             return TextExtractor._normalizeCapturedAmountSpan(
-                grammarSuffixMatch[0],
-                grammarSuffixMatch[1],
+                fallbackGrammarSuffixMatch[0],
+                fallbackGrammarSuffixMatch[1],
                 0,
-                grammarSuffixMatch[2]
+                fallbackGrammarSuffixMatch[2]
             );
         },
         _extractTrailingAmountCandidate: function(text, { allowLeadingCurrencySymbol = false } = {}) {
@@ -2414,11 +2442,21 @@
             const currencyEnd = currencyStart + matchedCurrencyText.length;
             const tokenStrength = TextExtractor._getCurrencyTokenStrength(originalText, currencyStart, matchedCurrencyText);
             const allowLeadingCurrencySymbol = tokenStrength >= 3;
-
-            const leadingAmountCandidate = TextExtractor._extractLeadingAmountCandidate(
-                originalText.slice(currencyEnd),
-                { allowLeadingCurrencySymbol, currencyToken: matchedCurrencyText }
+            const followingText = originalText.slice(currencyEnd);
+            const immediateGrammarSuffix = TextExtractor._getKoreanCurrencyGrammarSuffix(
+                followingText,
+                matchedCurrencyText
             );
+
+            // "100원만", "100원이"처럼 통화 뒤에 조사가 바로 붙은 경우
+            // 조사 "만/이"를 통화 앞 금액과 별개의 10,000/2로 해석하지 않습니다.
+            // 통화 뒤 숫자 표기(USD백만)는 조사로 시작하지 않으므로 그대로 지원합니다.
+            const leadingAmountCandidate = immediateGrammarSuffix
+                ? null
+                : TextExtractor._extractLeadingAmountCandidate(
+                    followingText,
+                    { allowLeadingCurrencySymbol, currencyToken: matchedCurrencyText }
+                );
             if (leadingAmountCandidate) {
                 const parsedLeading = TextExtractor._parseAmountCandidateText(leadingAmountCandidate.amountText);
                 if (parsedLeading) {

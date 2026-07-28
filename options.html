@@ -4,7 +4,7 @@
     <!-- Lato, 나눔바른고딕 이건 LunaTools 디자인의 전제 조건 입니다. 유지할 것 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🌙 LunaTools 설정, 단축키 가이드</title>
+    <title>🌙 LunaTools 설정, 마우스 제스처, 단축키 가이드, Alt + Z Cheat Sheet</title>
     <link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap" >
     <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/moonspam/NanumBarunGothic@latest/nanumbarungothicsubset.css">  
     <script src="options.js" defer></script>
@@ -194,7 +194,7 @@
         }
 
         .tab-btn.active::after {
-            width: 70%;
+            width: 90%;
         }
 
         .tab-btn:hover {
@@ -674,8 +674,8 @@
         <!-- Tabs Navigation -->
         <nav class="tabs-nav">
             <button class="tab-btn active" data-tab="settings">옵션 설정</button>
-            <button class="tab-btn" data-tab="guide">단축키 가이드</button>
-            <button class="tab-btn" data-tab="altz-cheat-sheet">Alt+Z Cheat Sheet</button>
+            <button class="tab-btn" data-tab="guide">마우스 제스처, 단축키 가이드</button>
+            <button class="tab-btn" data-tab="altz-cheat-sheet">Alt + Z Cheat Sheet</button>
         </nav>
 
         <!-- Tab 1: Settings -->
@@ -742,9 +742,51 @@
             <section class="card liquid-glass">
                 <div class="card__header">
                     <div class="card__icon-wrapper card__icon-wrapper--guide">
+                        <span class="card__icon">🖱️</span>
+                    </div>
+                    <h2 class="card__title">1. 마우스 제스처</h2>
+                </div>
+                <p class="card__description">마우스 오른쪽 버튼을 누른 채 원하는 방향으로 드래그하여 브라우저를 빠르게 제어합니다.</p>
+                <table class="shortcut-table">
+                    <thead>
+                        <tr>
+                            <th>기능</th>
+                            <th>단축키 / 동작</th>
+                            <th>설명</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>뒤로 가기</td>
+                            <td>우클릭 후 <kbd>←</kbd></td>
+                            <td>현재 탭에서 이전 페이지로 이동합니다.</td>
+                        </tr>
+                        <tr>
+                            <td>앞으로 가기</td>
+                            <td>우클릭 후 <kbd>→</kbd></td>
+                            <td>현재 탭에서 다음 페이지로 이동합니다.</td>
+                        </tr>
+                        <tr>
+                            <td>강력 새로고침</td>
+                            <td>우클릭 후 <kbd>↑</kbd></td>
+                            <td>캐시를 무시하고 현재 페이지를 강력 새로고침합니다.</td>
+                        </tr>
+                        <tr>
+                            <td>탭 닫기</td>
+                            <td>우클릭 후 <kbd>↓</kbd></td>
+                            <td>현재 탭을 닫습니다.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Section 2 -->
+            <section class="card liquid-glass">
+                <div class="card__header">
+                    <div class="card__icon-wrapper card__icon-wrapper--guide">
                         <span class="card__icon">📑</span>
                     </div>
-                    <h2 class="card__title">1. 브라우저 및 탭 관리 (전역 기능)</h2>
+                    <h2 class="card__title">2. 브라우저 및 탭 관리 (전역 기능)</h2>
                 </div>
                 <p class="card__description">브라우저 전체에 적용되는 탭 관리 및 패널 기능입니다.</p>
                 <table class="shortcut-table">
@@ -757,9 +799,9 @@
                     </thead>
                     <tbody>
                         <tr>
-                            <td>사이드패널 열기</td>
+                            <td>여러 URL 열기, 세션 매니저 사이드패널 열기</td>
                             <td><kbd>Alt</kbd> + <kbd>L</kbd></td>
-                            <td>LunaTools 사이드패널(여러 URL 열기, 세션 매니저)을 엽니다.</td>
+                            <td>LunaTools 여러 URL 열기, 세션 매니저 사이드패널을 엽니다.</td>
                         </tr>
                         <tr>
                             <td>탭 정렬</td>
@@ -775,13 +817,13 @@
                 </table>
             </section>
 
-            <!-- Section 2 -->
+            <!-- Section 3 -->
             <section class="card liquid-glass">
                 <div class="card__header">
                     <div class="card__icon-wrapper card__icon-wrapper--guide">
                         <span class="card__icon">🧭</span>
                     </div>
-                    <h2 class="card__title">2. 웹 페이지 탐색 및 링크 (웹페이지 내 동작)</h2>
+                    <h2 class="card__title">3. 웹 페이지 탐색 및 링크 (웹페이지 내 동작)</h2>
                 </div>
                 <p class="card__description">웹 페이지 내부에서 빠르게 이동하거나 링크를 처리하는 기능입니다.</p>
                 <table class="shortcut-table">
@@ -837,13 +879,13 @@
                 </table>
             </section>
 
-            <!-- Section 3 -->
+            <!-- Section 4 -->
             <section class="card liquid-glass">
                 <div class="card__header">
                     <div class="card__icon-wrapper card__icon-wrapper--guide">
                         <span class="card__icon">🎬</span>
                     </div>
-                    <h2 class="card__title">3. 미디어 제어 (영상/음성)</h2>
+                    <h2 class="card__title">4. 미디어 제어 (영상/음성)</h2>
                 </div>
                 <p class="card__description">유튜브, 동영상 사이트 등에서 미디어를 편리하게 제어합니다.</p>
                 <table class="shortcut-table">
@@ -884,13 +926,13 @@
                 </table>
             </section>
 
-            <!-- Section 4 -->
+            <!-- Section 5 -->
             <section class="card liquid-glass">
                 <div class="card__header">
                     <div class="card__icon-wrapper card__icon-wrapper--guide">
                         <span class="card__icon">⚡</span>
                     </div>
-                    <h2 class="card__title">4. 유틸리티 (스마트 변환)</h2>
+                    <h2 class="card__title">5. 유틸리티 (스마트 변환)</h2>
                 </div>
                 <p class="card__description">환율, 길이·넓이·평수, 저장 용량, 데이터 속도, 이동 속도, 압력, 시간 등을 드래그하여 즉시 변환합니다.</p>
                 <table class="shortcut-table">
