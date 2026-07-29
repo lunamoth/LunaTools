@@ -2058,6 +2058,26 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        async function removeCancelledRunTabIfUnchanged(createdTab, expectedUrl) {
+            if (!Number.isInteger(createdTab?.id)) return;
+
+            try {
+                const currentTab = await chrome.tabs.get(createdTab.id);
+                const currentUrl = normalizeUrlForOpening(currentTab.pendingUrl || currentTab.url || '');
+
+                // Once the user has interacted with the tab, it no longer belongs
+                // exclusively to the cancelled run and must not be removed.
+                if (currentTab.active || currentTab.pinned || currentUrl !== expectedUrl) return;
+
+                await chrome.tabs.remove(createdTab.id);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (!/No tab with id|Invalid tab ID/i.test(message)) {
+                    console.warn(`Failed to remove tab ${createdTab.id} from a cancelled run:`, error);
+                }
+            }
+        }
+
         const finalizeProcessedQueueItem = (span) => {
             if (!span) return;
 
@@ -2105,11 +2125,17 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 const urlToOpen = normalizeUrlForOpening(url);
                 if (!urlToOpen) throw new Error('지원하지 않는 URL 형식입니다.');
+                let createdTab;
 
                 if (UI.delayLoadingCheckbox && UI.delayLoadingCheckbox.checked) {
-                    await createAndDiscardTab(urlToOpen);
+                    createdTab = await createAndDiscardTab(urlToOpen);
                 } else {
-                    await chrome.tabs.create({ url: urlToOpen, active: (UI.focusLockCheckbox ? !UI.focusLockCheckbox.checked : true) });
+                    createdTab = await chrome.tabs.create({ url: urlToOpen, active: (UI.focusLockCheckbox ? !UI.focusLockCheckbox.checked : true) });
+                }
+
+                if (runId !== state.currentRunId) {
+                    await removeCancelledRunTabIfUnchanged(createdTab, urlToOpen);
+                    return;
                 }
             } catch (e) {
                 console.error(`Error processing URL ${url}:`, e);
