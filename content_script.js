@@ -3340,6 +3340,10 @@
 
             const onDrag = (e) => {
                 if (!isDragging) return;
+                if ((e.buttons & 1) === 0) {
+                    onDragEnd();
+                    return;
+                }
                 let newLeft = e.clientX - dragOffsetX, newTop = e.clientY - dragOffsetY;
                 const vpWidth = window.innerWidth, vpHeight = window.innerHeight;
                 newLeft = Math.max(Config.POPUP_SCREEN_MARGIN, Math.min(newLeft, vpWidth - popupEl.offsetWidth - Config.POPUP_SCREEN_MARGIN));
@@ -3353,9 +3357,12 @@
                 popupEl.style.willChange = 'auto';
                 document.removeEventListener('mousemove', onDrag);
                 document.removeEventListener('mouseup', onDragEnd);
+                window.removeEventListener('blur', onDragEnd);
+                window.removeEventListener('pagehide', onDragEnd);
             };
             
             dragHandleEl.addEventListener('mousedown', (e) => {
+                if (!e.isTrusted || e.button !== 0) return;
                 if (closeButtonEl && e.target === closeButtonEl) return;
                 isDragging = true;
                 const rect = popupEl.getBoundingClientRect();
@@ -3364,6 +3371,8 @@
                 popupEl.style.willChange = 'transform';
                 document.addEventListener('mousemove', onDrag);
                 document.addEventListener('mouseup', onDragEnd);
+                window.addEventListener('blur', onDragEnd);
+                window.addEventListener('pagehide', onDragEnd);
                 e.preventDefault();
             });
         },

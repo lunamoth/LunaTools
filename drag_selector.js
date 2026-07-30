@@ -556,7 +556,11 @@
             }
 
             this.#lastMouseEvent = e;
-            if (this.#isDragging) return;
+            if (this.#isDragging) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
             
             const dragDistance = Math.hypot(e.clientX - this.#startPos.x, e.clientY - this.#startPos.y);
             if (dragDistance > DragSelector.CONFIG.BEHAVIOR.MIN_DRAG_DISTANCE) {
