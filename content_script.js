@@ -1423,6 +1423,25 @@
         },
     };
 
+    const UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE = String.raw`(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+\-\u2212\uFE63\uFF0D]?\d+)?`;
+    const NUMERIC_TOKEN_PATTERN_SOURCE = String.raw`[+\-\u2212\uFE63\uFF0D]?${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE}`;
+    const NUMERIC_TOKEN_START_BOUNDARY_SOURCE = String.raw`(?<![\d.,eE+\-\u2212\uFE63\uFF0D/×xX\u2010-\u2015~～])`;
+    const COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE = String.raw`(?:[/×xX+]|[\-\u2212\uFE63\uFF0D\u2010-\u2015~～])`;
+    const COMPOUND_NUMERIC_LEFT_CONTEXT_REGEX = new RegExp(
+        `(?:${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE})\\s*${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}\\s*$`,
+        'iu'
+    );
+    const COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX = new RegExp(
+        `^\\s*${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}\\s*(?:${NUMERIC_TOKEN_PATTERN_SOURCE})`,
+        'iu'
+    );
+    const LEADING_NUMERIC_SIGN_REGEX = /^[+\-\u2212\uFE63\uFF0D]/u;
+    const NUMERIC_VALUE_BEFORE_SIGN_REGEX = new RegExp(
+        `(?:${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE})\\s*$`,
+        'iu'
+    );
+    const PHYSICAL_UNIT_REGEX_CACHE = new WeakMap();
+
     const UI_STRINGS = {
         POPUP_LAYER_ID: `smart-converter-popup-layer-v42-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
         POPUP_ERROR_CLASS: 'smart-converter-popup-error',
@@ -1484,10 +1503,10 @@
         KOREAN_NUMERALS_REGEX_G: new RegExp(Object.keys(Config.KOREAN_NUMERALS_MAP).join('|'), 'gu'),
         KOREAN_NUMERIC_CLEANUP_REGEX_GI: /[^0-9\.\s천백십]/giu,
         NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9억만천백십조일이삼사오육칠팔구영BMKbmk\.,\s]/giu,
-        AMOUNT_ABBREVIATION_REGEX_I: /^([\d\.,]+)\s*(BLN|MLN|TLN|BN|MN|TN|[BMKT])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/iu,
-        ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^([\\d\.,]+)\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).sort((a, b) => b.length - a.length).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
-        PLAIN_OZ_REGEX: /^([\d\.,]+)\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$/iu,
-        PURE_NUMBER_REGEX: /^(?:\d+(?:\.\d*)?|\.\d+)$/u,
+        AMOUNT_ABBREVIATION_REGEX_I: new RegExp(`^(${NUMERIC_TOKEN_PATTERN_SOURCE})\\s*(BLN|MLN|TLN|BN|MN|TN|[BMKT])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
+        ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^(${NUMERIC_TOKEN_PATTERN_SOURCE})\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).sort((a, b) => b.length - a.length).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
+        PLAIN_OZ_REGEX: new RegExp(`^(${NUMERIC_TOKEN_PATTERN_SOURCE})\\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$`, 'iu'),
+        PURE_NUMBER_REGEX: new RegExp(`^(?:${NUMERIC_TOKEN_PATTERN_SOURCE})$`, 'iu'),
         TIME_EXTRACTION_PATTERN: new RegExp(
             '(?:' +
                 '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,\\s*(\\d{4}|\\d{2}))?)' +
@@ -1660,7 +1679,7 @@
         },
         parseFloatLenient: function(inputStr) {
             if (inputStr === null || typeof inputStr === 'undefined') return null;
-            const str = String(inputStr).trim();
+            const str = String(inputStr).trim().replace(/[\u2212\uFE63\uFF0D]/gu, '-');
             if (str === "") return null;
 
             const plainNumberPattern = /^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[+-]?\d+)?$/iu;
@@ -2133,11 +2152,11 @@
 
     const TextExtractor = {
         _getCurrencyAmountPatternSource: function({ lazyKoreanNumber = false } = {}) {
-            const numeric = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`;
+            const numeric = NUMERIC_TOKEN_PATTERN_SOURCE;
             const magnitudeSuffix = String.raw`(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT])`;
             const numericWithMagnitude = `${numeric}\\s*${magnitudeSuffix}`;
             const koreanOrPlainNumber = String.raw`[\d,\.\s천백십조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
-            return `(?:${numericWithMagnitude}|${koreanOrPlainNumber})`;
+            return `${NUMERIC_TOKEN_START_BOUNDARY_SOURCE}(?:${numericWithMagnitude}|${numeric}|${koreanOrPlainNumber})`;
         },
         _isStrictCurrencyAmountText: function(amountText) {
             if (Utils.isInvalidString(amountText)) return false;
@@ -2252,6 +2271,55 @@
 
             return null;
         },
+        _isCompoundNumericCandidate: function(text, candidate) {
+            if (!candidate) return false;
+
+            const sourceText = String(text || '');
+            const beforeCandidate = sourceText.slice(0, candidate.startOffset);
+            const afterCandidate = sourceText.slice(candidate.endOffset);
+            const amountText = String(candidate.amountText || '').trim();
+
+            if (COMPOUND_NUMERIC_LEFT_CONTEXT_REGEX.test(beforeCandidate) ||
+                COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX.test(afterCandidate)) {
+                return true;
+            }
+
+            // In "10 -20" or "10 +20", the sign is captured as part of the
+            // second number. A preceding numeric value still makes this a
+            // range/expression rather than an independent signed amount.
+            return LEADING_NUMERIC_SIGN_REGEX.test(amountText) &&
+                NUMERIC_VALUE_BEFORE_SIGN_REGEX.test(beforeCandidate);
+        },
+        _finalizeAmountCandidate: function(text, candidate) {
+            return candidate && !TextExtractor._isCompoundNumericCandidate(text, candidate)
+                ? candidate
+                : null;
+        },
+        _getPhysicalUnitExtractionRegex: function(unit) {
+            if (!unit?.regex) return null;
+
+            const cachedRegex = PHYSICAL_UNIT_REGEX_CACHE.get(unit);
+            if (cachedRegex) return cachedRegex;
+
+            const unsignedLegacyPrefix = String.raw`([\d\.,]+)`;
+            const signedLegacyPrefix = String.raw`(-?[\d\.,]+)`;
+            const source = unit.regex.source;
+            const legacyPrefix = source.startsWith(signedLegacyPrefix)
+                ? signedLegacyPrefix
+                : source.startsWith(unsignedLegacyPrefix)
+                    ? unsignedLegacyPrefix
+                    : null;
+
+            const extractionRegex = legacyPrefix
+                ? new RegExp(
+                    `${NUMERIC_TOKEN_START_BOUNDARY_SOURCE}(${NUMERIC_TOKEN_PATTERN_SOURCE})${source.slice(legacyPrefix.length)}`,
+                    unit.regex.flags
+                )
+                : unit.regex;
+
+            PHYSICAL_UNIT_REGEX_CACHE.set(unit, extractionRegex);
+            return extractionRegex;
+        },
         _normalizeCapturedAmountSpan: function(matchText, capturedText, baseOffset = 0, amountTextOverride = capturedText) {
             const captureOffsetInMatch = matchText.indexOf(capturedText);
             if (captureOffsetInMatch < 0) return null;
@@ -2354,11 +2422,14 @@
                     grammarSuffix !== '만' &&
                     (/\d/u.test(amountText) || Array.from(grammarSuffix).length > 1);
                 if (shouldPreferGrammarSplit) {
-                    return TextExtractor._normalizeCapturedAmountSpan(
-                        grammarSuffixMatch[0],
-                        grammarSuffixMatch[1],
-                        0,
-                        amountText
+                    return TextExtractor._finalizeAmountCandidate(
+                        text,
+                        TextExtractor._normalizeCapturedAmountSpan(
+                            grammarSuffixMatch[0],
+                            grammarSuffixMatch[1],
+                            0,
+                            amountText
+                        )
                     );
                 }
             }
@@ -2366,7 +2437,10 @@
             const leadingRegex = new RegExp(`^\\s*(${optionalSymbolPrefix}(${source}))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu');
             const match = leadingRegex.exec(text);
             if (match) {
-                return TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], 0, match[2]);
+                return TextExtractor._finalizeAmountCandidate(
+                    text,
+                    TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], 0, match[2])
+                );
             }
 
             const fallbackGrammarSuffixRegex = new RegExp(
@@ -2381,11 +2455,14 @@
                 return null;
             }
 
-            return TextExtractor._normalizeCapturedAmountSpan(
-                fallbackGrammarSuffixMatch[0],
-                fallbackGrammarSuffixMatch[1],
-                0,
-                fallbackGrammarSuffixMatch[2]
+            return TextExtractor._finalizeAmountCandidate(
+                text,
+                TextExtractor._normalizeCapturedAmountSpan(
+                    fallbackGrammarSuffixMatch[0],
+                    fallbackGrammarSuffixMatch[1],
+                    0,
+                    fallbackGrammarSuffixMatch[2]
+                )
             );
         },
         _extractTrailingAmountCandidate: function(text, { allowLeadingCurrencySymbol = false } = {}) {
@@ -2398,7 +2475,8 @@
             if (!match) return null;
 
             const candidate = TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], match.index, match[2]);
-            return TextExtractor._trimEmbeddedKoreanContextPrefix(text, candidate);
+            const contextTrimmedCandidate = TextExtractor._trimEmbeddedKoreanContextPrefix(text, candidate);
+            return TextExtractor._finalizeAmountCandidate(text, contextTrimmedCandidate);
         },
         _getCurrencyExpressionStart: function(originalText, currencyStart, matchedCurrencyText) {
             if (!/^[\$＄]$/u.test(matchedCurrencyText)) return currencyStart;
@@ -2596,13 +2674,26 @@
 
             for (const categoryKey in Config.UNIT_CONVERSION_CONFIG) {
                 for (const unit of Config.UNIT_CONVERSION_CONFIG[categoryKey]) {
-                    unit.regex.lastIndex = 0;
+                    const extractionRegex = TextExtractor._getPhysicalUnitExtractionRegex(unit);
+                    if (!extractionRegex) continue;
+                    extractionRegex.lastIndex = 0;
                     let match;
-                    while ((match = unit.regex.exec(trimmedText)) !== null) {
+                    while ((match = extractionRegex.exec(trimmedText)) !== null) {
                         const valueStr = match[1];
                         const originalMatchedSegment = match[0].trim();
 
                         if (shouldIgnoreCurrencyOverlap(originalMatchedSegment)) {
+                            continue;
+                        }
+
+                        const valueOffsetInMatch = match[0].indexOf(valueStr);
+                        if (valueOffsetInMatch < 0) continue;
+                        const numericCandidate = {
+                            amountText: valueStr,
+                            startOffset: match.index + valueOffsetInMatch,
+                            endOffset: match.index + valueOffsetInMatch + valueStr.length
+                        };
+                        if (TextExtractor._isCompoundNumericCandidate(trimmedText, numericCandidate)) {
                             continue;
                         }
 
