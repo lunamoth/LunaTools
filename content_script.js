@@ -1889,13 +1889,14 @@
             if (!match) return null;
             const hours = parseInt(match[2], 10);
             const minutes = match[3] ? parseInt(match[3], 10) : 0;
-            if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours > 14 || minutes > 59) return null;
+            if (!Number.isInteger(hours) || !Number.isInteger(minutes) ||
+                hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) return null;
             const sign = match[1] === '-' ? -1 : 1;
             return sign * ((hours * 60) + minutes);
         },
 
         _formatGmtOffsetMinutes(offsetMinutes) {
-            if (!Number.isFinite(offsetMinutes)) return null;
+            if (!Number.isInteger(offsetMinutes) || Math.abs(offsetMinutes) > 14 * 60) return null;
             const sign = offsetMinutes < 0 ? '-' : '+';
             const absoluteMinutes = Math.abs(offsetMinutes);
             const hours = Math.floor(absoluteMinutes / 60);
@@ -2055,9 +2056,10 @@
                         const hOff = parseInt(offsetMatch[2], 10);
                         const mOffStr = offsetMatch[4];
                         const mOff = mOffStr ? parseInt(mOffStr, 10) : 0;
+                        const normalizedOffset = `GMT${sign}${String(hOff).padStart(2, '0')}:${String(mOff).padStart(2, '0')}`;
 
-                        if (hOff <= 14 && mOff <= 59) {
-                            resolvedTzOffsetString = `GMT${sign}${String(hOff).padStart(2, '0')}:${String(mOff).padStart(2, '0')}`;
+                        if (this._parseGmtOffsetMinutes(normalizedOffset) !== null) {
+                            resolvedTzOffsetString = normalizedOffset;
                         }
                     } else if (upperTzStr.match(/^(?:PACIFIC|MOUNTAIN|CENTRAL|EASTERN|ATLANTIC|ALASKA|HAWAII)(?:\s(?:STANDARD|DAYLIGHT))?(?:\sTIME)?$|^(?:GREENWICH MEAN|COORDINATED UNIVERSAL)(?:\sTIME)?$/)) {
                         const fixedFullTimeZoneLookup = {

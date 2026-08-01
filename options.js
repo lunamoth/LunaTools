@@ -53,11 +53,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const SESSION_URL_CONTROL_CHARACTER_REGEX = CONTROL_CHARACTER_REGEX;
     let statusHideTimer = null;
     let dataOperationInProgress = false;
+    let syncOptionsReady = false;
 
     // --- Helper Functions ---
 
     const setDataControlsDisabled = (disabled) => {
-        if (saveButton) saveButton.disabled = disabled;
+        if (saveButton) saveButton.disabled = disabled || !syncOptionsReady;
         if (backupButton) backupButton.disabled = disabled;
         if (restoreButton) restoreButton.disabled = disabled;
     };
@@ -461,24 +462,55 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const restoreOptions = () => {
+        syncOptionsReady = false;
+        setDataControlsDisabled(true);
+
         if (chrome && chrome.storage && chrome.storage.sync) {
-            chrome.storage.sync.get(SYNC_KEYS, (items) => {
-                if (chrome.runtime.lastError) {
-                    showStatus('설정 불러오기 실패!', true);
-                } else {
-                    if (lockedSitesTextarea) {
-                        lockedSitesTextarea.value = (items[STORAGE_KEYS.LOCKED] || []).join('\n');
+            try {
+                chrome.storage.sync.get(SYNC_KEYS, (items) => {
+                    if (chrome.runtime.lastError) {
+                        setDataControlsDisabled(false);
+                        showStatus('설정 불러오기 실패! 페이지를 새로고침해 주세요.', true);
+                        return;
                     }
-                    if (blockedSitesTextarea) {
-                        blockedSitesTextarea.value = (items[STORAGE_KEYS.BLOCKED] || []).join('\n');
+
+                    try {
+                        if (!items || typeof items !== 'object' || Array.isArray(items)) {
+                            throw new Error('동기화 설정 데이터의 형식이 올바르지 않습니다.');
+                        }
+
+                        // Validate every value before touching the form. A partial update
+                        // could otherwise be saved back over settings that failed to load.
+                        const lockedSites = normalizeStringArray(items[STORAGE_KEYS.LOCKED]);
+                        const blockedSites = normalizeStringArray(items[STORAGE_KEYS.BLOCKED]);
+                        const disabledDragSites = normalizeStringArray(items[STORAGE_KEYS.DISABLED_DRAG]);
+                        syncOptionsReady = true;
+                        setDataControlsDisabled(false);
+
+                        if (lockedSitesTextarea) {
+                            lockedSitesTextarea.value = lockedSites.join('\n');
+                        }
+                        if (blockedSitesTextarea) {
+                            blockedSitesTextarea.value = blockedSites.join('\n');
+                        }
+                        if (disabledDragSitesTextarea) {
+                            disabledDragSitesTextarea.value = disabledDragSites.join('\n');
+                        }
+                    } catch (error) {
+                        console.error('Failed to restore options:', error);
+                        setDataControlsDisabled(false);
+                        showStatus(`설정 불러오기 실패: ${error.message}`, true);
                     }
-                    if (disabledDragSitesTextarea) {
-                        disabledDragSitesTextarea.value = (items[STORAGE_KEYS.DISABLED_DRAG] || []).join('\n');
-                    }
-                }
-            });
+                });
+            } catch (error) {
+                console.error('Failed to access synchronized options:', error);
+                setDataControlsDisabled(false);
+                showStatus('설정 불러오기 실패! 페이지를 새로고침해 주세요.', true);
+            }
         } else {
-             console.error('Chrome Storage API is not available.');
+            console.error('Chrome Storage API is not available.');
+            setDataControlsDisabled(false);
+            showStatus('설정 불러오기 기능을 사용할 수 없습니다.', true);
         }
     };
 

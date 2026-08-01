@@ -337,42 +337,47 @@
         #normalizeActionUrls(links) {
             const urls = [];
             const seenUrls = new Set();
-            let skipped = 0;
+            const stats = { invalid: 0, duplicate: 0, overLimit: 0 };
             const { MAX_URLS_PER_ACTION, MAX_URL_LENGTH } = DragSelector.CONFIG.LIMITS;
 
             for (const link of links) {
                 const href = typeof link?.href === 'string' ? link.href.trim() : '';
                 if (!href || href.length > MAX_URL_LENGTH) {
-                    skipped += 1;
+                    stats.invalid += 1;
                     continue;
                 }
 
                 try {
                     const parsed = new URL(href);
                     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || !parsed.hostname) {
-                        skipped += 1;
+                        stats.invalid += 1;
                         continue;
                     }
 
                     const normalizedUrl = parsed.href;
-                    if (normalizedUrl.length > MAX_URL_LENGTH || seenUrls.has(normalizedUrl)) {
-                        skipped += 1;
+                    if (normalizedUrl.length > MAX_URL_LENGTH) {
+                        stats.invalid += 1;
+                        continue;
+                    }
+
+                    if (seenUrls.has(normalizedUrl)) {
+                        stats.duplicate += 1;
                         continue;
                     }
 
                     if (urls.length >= MAX_URLS_PER_ACTION) {
-                        skipped += 1;
+                        stats.overLimit += 1;
                         continue;
                     }
 
                     seenUrls.add(normalizedUrl);
                     urls.push(normalizedUrl);
                 } catch (_) {
-                    skipped += 1;
+                    stats.invalid += 1;
                 }
             }
 
-            return { urls, skipped };
+            return { urls, ...stats };
         }
 
         async #copyTextToClipboard(text) {
@@ -411,9 +416,9 @@
                     if (!response) return;
 
                     const failed = Number(response.failed || 0);
-                    const skipped = Number(response.skipped || 0);
-                    if (failed > 0 || skipped > 0) {
-                        console.warn(`LunaTools: 탭 열기 결과 - 실패 ${failed}개, 제외 ${skipped}개.`);
+                    const safetySkipped = Number(response.invalid || 0) + Number(response.overLimit || 0);
+                    if (failed > 0 || safetySkipped > 0) {
+                        console.warn(`LunaTools: 탭 열기 결과 - 실패 ${failed}개, 안전 제한 제외 ${safetySkipped}개.`);
                     }
                 });
             } catch (error) {
@@ -454,11 +459,14 @@
 
         async #performAction(links, modifier = this.#modifier) {
             if (links.size === 0 || !modifier) return;
-            const { urls, skipped } = this.#normalizeActionUrls(links);
-            if (urls.length === 0) return;
-            if (skipped > 0) {
-                console.warn(`LunaTools: 선택한 링크 중 ${skipped}개를 안전 제한 또는 중복으로 제외했습니다.`);
+            const { urls, invalid, overLimit } = this.#normalizeActionUrls(links);
+            const safetySkipped = invalid + overLimit;
+
+            // 같은 URL을 가리키는 여러 링크 요소는 흔한 페이지 구조이므로 조용히 중복 제거합니다.
+            if (safetySkipped > 0) {
+                console.warn(`LunaTools: 선택한 링크 중 ${safetySkipped}개를 안전 제한으로 제외했습니다.`);
             }
+            if (urls.length === 0) return;
 
             if (modifier === 'ctrl') {
                 const copied = await this.#copyTextToClipboard(urls.join('\n'));
