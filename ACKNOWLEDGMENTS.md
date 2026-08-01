@@ -1,52 +1,67 @@
 # 감사의 말 (Acknowledgements)
 
-- PiP 기능 개선에 **PIP screen for html5 video 확장 프로그램** (https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg) 소스 코드 참고했습니다. 개발자 keisokoo님에게 연락드려서 소스 코드 참고 허락 받았습니다. 허락해주셔서 감사드립니다.
+- PiP 기능 개선을 위해 **PIP screen for html5 video 확장 프로그램** (https://chromewebstore.google.com/detail/pip-screen-for-html5-vide/ebgihmollhfickaopoldkikdnipmdemg)의 소스 코드 일부를 참고했습니다. 개발자 keisokoo님에게 직접 연락하여 소스 코드 참고 허락을 받았습니다. 허락해주셔서 감사드립니다.
 
 ---
 
 # 사용한 오픈소스 정보 및 라이선스
 
-LunaTools 는 아래에 명시된 오픈소스 덕분에 만들어질 수 있었습니다. 멋진 소프트웨어, 서비스, 폰트를 공개해주신 개발자분들의 노고에 깊은 감사를 드립니다.
+LunaTools는 아래에 명시된 오픈소스 덕분에 만들어질 수 있었습니다. 멋진 소프트웨어, 서비스, 폰트를 공개해주신 개발자분들의 노고에 깊은 감사를 드립니다.
 
-### Frankfurter.app
+### Frankfurter
 
-- **용도**: 환율 변환 기능에 필요한 실시간 환율 데이터를 가져오기 위해 사용됩니다.
-- **출처**: https://www.frankfurter.app/
+- **용도**: 환율 변환 기능에 필요한 최신 영업일 기준 환율 데이터를 가져오기 위해 사용됩니다. 환율은 매일 약 16:00 CET에 갱신됩니다.
+- **서비스 및 문서**: https://frankfurter.dev/
+- **API**: https://api.frankfurter.dev/v1/
+- **소스 코드**: https://github.com/lineofflight/frankfurter
 - **라이선스**: MIT License (아래 전문 참고)
 
-Copyright (c) 2020 Hakan Ensari
+(The MIT License)
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Copyright (c) Hakan Ensari
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### Lato 폰트
 
-- **용도**: 옵션 및 사이드 패널 페이지의 사용자 인터페이스 웹 폰트로 사용됩니다.
+- **용도**: 옵션 및 사이드 패널에서 웹폰트로 사용되며, 일부 페이지 내 LunaTools UI의 폰트 스택에서도 참조됩니다.
 - **출처**: Google Fonts (https://fonts.google.com/specimen/Lato)
+- **소스 및 라이선스**: https://github.com/google/fonts/tree/main/ofl/lato
 - **라이선스**: SIL Open Font License, Version 1.1 (아래 전문 참고)
+
+Copyright (c) 2010-2014 by tyPoland Lukasz Dziedzic (team@latofonts.com) with Reserved Font Name "Lato"
 
 ### 나눔바른고딕 폰트 (Nanum Barun Gothic)
 
-- **용도**: 옵션 및 사이드 패널 페이지의 사용자 인터페이스 웹 폰트로 사용됩니다.
-- **출처**: 네이버 나눔글꼴 (https://hangeul.naver.com/font)
-- **라이선스**: SIL Open Font License, Version 1.1 (아래 전문 참고)
+- **용도**: 옵션 및 사이드 패널에서 웹폰트로 사용되며, 일부 페이지 내 LunaTools UI의 폰트 스택에서도 참조됩니다.
+- **원본 및 저작권자**: 네이버 나눔글꼴 (https://hangeul.naver.com/font)
+- **공식 라이선스 안내**: https://help.naver.com/service/30016/contents/18088?osType=PC&lang=ko
+- **사용한 웹폰트 배포본**: moonspam/NanumBarunGothic 경량화 서브셋 (https://github.com/moonspam/NanumBarunGothic)
+- **배포 경로**: jsDelivr (https://cdn.jsdelivr.net/gh/moonspam/NanumBarunGothic@latest/nanumbarungothicsubset.css)
+- **라이선스**: 원본 나눔바른고딕의 SIL Open Font License, Version 1.1 (아래 전문 참고)
+
+Copyright (c) 2010, NAVER Corporation (https://www.navercorp.com/) with Reserved Font Name Nanum, Naver Nanum, NanumGothic, Naver NanumGothic, NanumMyeongjo, Naver NanumMyeongjo, NanumBrush, Naver NanumBrush, NanumPen, Naver NanumPen, Naver NanumGothicEco, NanumGothicEco, Naver NanumMyeongjoEco, NanumMyeongjoEco, Naver NanumGothicLight, NanumGothicLight, NanumBarunGothic, Naver NanumBarunGothic, NanumSquareRound, NanumBarunPen, MaruBuri, NanumSquareNeo
 
 ### SIL Open Font License, Version 1.1
+
+공식 원문: https://openfontlicense.org/open-font-license-official-text/
 
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
 
@@ -68,11 +83,12 @@ DEFINITIONS
 PERMISSION & CONDITIONS
 Permission is hereby granted, free of charge, to any person obtaining a copy of the Font Software, to use, study, copy, merge, embed, modify, redistribute, and sell modified and unmodified copies of the Font Software, subject to the following conditions:
 
-Neither the Font Software nor any of its individual components, in Original or Modified Versions, may be sold by itself.
-Original or Modified Versions of the Font Software may be bundled, redistributed and/or sold with any software, provided that each copy contains the above copyright notice and this license. These can be included either as stand-alone text files, human-readable headers or in the appropriate machine-readable metadata fields within text or binary files as long as those fields can be easily viewed by the user.
-No Modified Version of the Font Software may use the Reserved Font Name(s) unless explicit written permission is granted by the corresponding Copyright Holder. This restriction only applies to the primary font name as presented to the users.
-The name(s) of the Copyright Holder(s) or the Author(s) of the Font Software shall not be used to promote, endorse or advertise any Modified Version, except to acknowledge the contribution(s) of the Copyright Holder(s) and the Author(s) or with their explicit written permission.
-The Font Software, modified or unmodified, in part or in whole, must be distributed entirely under this license, and must not be distributed under any other license. The requirement for fonts to remain under this license does not apply to any document created using the Font Software.
+1) Neither the Font Software nor any of its individual components, in Original or Modified Versions, may be sold by itself.
+2) Original or Modified Versions of the Font Software may be bundled, redistributed and/or sold with any software, provided that each copy contains the above copyright notice and this license. These can be included either as stand-alone text files, human-readable headers or in the appropriate machine-readable metadata fields within text or binary files as long as those fields can be easily viewed by the user.
+3) No Modified Version of the Font Software may use the Reserved Font Name(s) unless explicit written permission is granted by the corresponding Copyright Holder. This restriction only applies to the primary font name as presented to the users.
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font Software shall not be used to promote, endorse or advertise any Modified Version, except to acknowledge the contribution(s) of the Copyright Holder(s) and the Author(s) or with their explicit written permission.
+5) The Font Software, modified or unmodified, in part or in whole, must be distributed entirely under this license, and must not be distributed under any other license. The requirement for fonts to remain under this license does not apply to any document created using the Font Software.
+
 TERMINATION
 This license becomes null and void if any of the above conditions are not met.
 
