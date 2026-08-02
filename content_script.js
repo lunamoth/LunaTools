@@ -1508,6 +1508,9 @@
         PLAIN_OZ_REGEX: new RegExp(`^(${NUMERIC_TOKEN_PATTERN_SOURCE})\\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$`, 'iu'),
         PURE_NUMBER_REGEX: new RegExp(`^(?:${NUMERIC_TOKEN_PATTERN_SOURCE})$`, 'iu'),
         TIME_EXTRACTION_PATTERN: new RegExp(
+            NUMERIC_TOKEN_START_BOUNDARY_SOURCE +
+            '(?<![\\p{L}\\p{M}\\p{N}\\p{Pc}])' +
+            '(?<!\\d:)' +
             '(?:' +
                 '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,\\s*(\\d{4}|\\d{2}))?)' +
                 '|' +
@@ -1519,7 +1522,8 @@
             '(\\d{1,2})(?::(\\d{2}))?(?::(\\d{2}))?' +
             '\\s*(a\\.?m\\.?|p\\.?m\\.?)?' +
             '\\s+((?:P[SDMCE]?T|E[SDC]?T|C[SDMCE]?T|M[SD]?T|A[KDEH]?ST|WET|WEST|CET|CEST|BST|GMT|UTC)(?:[+-]\\d{1,2}(?::?\\d{2})?)?|(?:\\b(?:Pacific|Mountain|Central|Eastern|Atlantic|Alaska|Hawaii|Greenwich Mean|Coordinated Universal)(?: Standard| Daylight| European)? Time\\b)|[A-Z]{3,5})' +
-            '(?:\\s+Time)?',
+            '(?:\\s+Time)?' +
+            '(?![\\p{L}\\p{M}\\p{N}\\p{Pc}\\/×xX+\\-\\u2212\\uFE63\\uFF0D\\u2010-\\u2015~～]|:\\d)',
             'giu'
         ),
         TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i,
@@ -1812,8 +1816,7 @@
             if (text === "영") return 0;
 
             if (REGEXES.PURE_NUMBER_REGEX.test(text)) {
-                const val = Utils.parseFloatLenient(text);
-                if (val !== null) return val;
+                return Utils.parseFloatLenient(text);
             }
 
             const numeralReplacedText = NumberParser.replaceKoreanNumerals(text);
