@@ -788,6 +788,10 @@
 
         return Boolean(element.matches?.('.CodeMirror, .monaco-editor, .ace_editor'));
       }
+      invalidateCache() {
+        this._debouncedInvalidateCache.cancel();
+        this.cachedLinks = null;
+      }
       findNavigationLinks() {
         if (this.cachedLinks) return this.cachedLinks;
         const links = Array.from(document.querySelectorAll('a[rel][href], link[rel][href]'));
@@ -882,6 +886,8 @@
         const currentUrl = window.location.href;
         if (this.urlPageFinder.shouldIgnoreUrl(currentUrl)) return;
 
+        // SPA가 class/style만 바꿔 링크를 교체해도 현재 DOM 기준으로 찾는다.
+        this.domLinkFinder.invalidateCache();
         const targetUrl = this._determineTargetUrl(currentUrl, direction);
         const safeTargetUrl = KB_NAV_Utils.normalizeNavigationUrl(targetUrl);
         if (!safeTargetUrl || safeTargetUrl === currentUrl) return;

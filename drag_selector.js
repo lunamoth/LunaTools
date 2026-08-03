@@ -548,6 +548,8 @@
             if (isEditable) return;
             
             this.#abortDelayedOpen();
+            // SPA에서 class/style만 바뀐 링크도 현재 제스처에 반영한다.
+            this.#allLinksOnPageCached = null;
             this.#modifier = modifier;
             this.#isTrustedSequence = true;
             this.#startPos = { x: e.clientX, y: e.clientY };
