@@ -1207,7 +1207,7 @@ class TabManager {
     }
   }
 
-  async handleTabUpdate(tab) {
+  async handleTabUpdate(tab, { currentBecameDuplicate = false } = {}) {
     if (!this._isValidTabForProcessing(tab)) return;
 
     const newUrlString = this._getTabUrlString(tab);
@@ -1232,6 +1232,13 @@ class TabManager {
     if (urlChanged || windowChanged) {
       if (oldCachedInfo) this._removeUrlFromCache(tab.id, oldCachedInfo.url);
       this._addUrlToCache(tab.id, newParsedUrl, tab.windowId);
+    }
+
+    // A service worker can wake on the URL-change event and initialize its
+    // cache after Chrome has already exposed the destination URL. In that
+    // case the cache alone cannot reveal that this tab just became the
+    // duplicate, so preserve the event's explicit navigation signal.
+    if (currentBecameDuplicate || urlChanged || windowChanged) {
       await this.checkForDuplicateAndFocusExisting(tab, { currentBecameDuplicate: true });
     } else if (tab.status === 'complete' && oldCachedInfo && oldCachedInfo.url.href === newParsedUrl.href) {
       await this.checkForDuplicateAndFocusExisting(tab, { currentBecameDuplicate: false });
@@ -1445,7 +1452,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!tabManager._isValidTabForProcessing(tabToProcess)) return;
 
   if (changeInfo.url || changeInfo.status === 'complete') {
-    await tabManager.handleTabUpdate(tabToProcess);
+    await tabManager.handleTabUpdate(tabToProcess, {
+      currentBecameDuplicate: typeof changeInfo.url === 'string' && changeInfo.url.length > 0
+    });
   }
 });
 
