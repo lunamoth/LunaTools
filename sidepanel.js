@@ -127,6 +127,8 @@ document.addEventListener('DOMContentLoaded', function() {
             completionRunId: null,
             unprocessedInputCount: 0
         };
+        let savedListMutationQueue = Promise.resolve();
+        let savedListLoadGeneration = 0;
 
         const canAutoFocusUrlInput = () => (
             UI.urlInput &&
@@ -1304,9 +1306,34 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
-        const loadSavedLists = async () => {
+        const enqueueSavedListMutation = (operation) => {
+            const queuedOperation = savedListMutationQueue
+                .catch(() => {})
+                .then(operation);
+            savedListMutationQueue = queuedOperation.catch(() => {});
+            return queuedOperation;
+        };
+
+        const mutateSavedLists = (mutator) => enqueueSavedListMutation(async () => {
             const lists = await getSavedLists();
-            if (!lists) return false;
+            if (!lists) return { saved: false, unavailable: true, lists: null };
+
+            const result = await mutator(lists) || {};
+            if (result.skipSave) {
+                return { ...result, saved: false, lists };
+            }
+
+            const saved = await saveLists(lists);
+            return { ...result, saved, lists };
+        });
+
+        const readSavedListsAfterPendingOperations = () =>
+            enqueueSavedListMutation(getSavedLists);
+
+        const loadSavedLists = async () => {
+            const loadGeneration = ++savedListLoadGeneration;
+            const lists = await readSavedListsAfterPendingOperations();
+            if (!lists || loadGeneration !== savedListLoadGeneration) return false;
             const listNames = Object.keys(lists);
             const currentSelectionInDropdown = UI.savedListsDropdown ? UI.savedListsDropdown.value : '';
 
@@ -1371,18 +1398,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (choice === 'save_and_new') {
                     let savedSuccessfully = false;
                     if (state.loadedListName) {
+                        const loadedListName = state.loadedListName;
                         const urlsToSave = UI.urlInput.value.trim();
-                        const lists = await getSavedLists();
-                        if (!lists) return;
-                        if (lists[state.loadedListName]) {
-                            lists[state.loadedListName].urls = urlsToSave;
-                            if (await saveLists(lists)) {
-                                state.originalLoadedListUrls = urlsToSave;
-                                Toast.show(`'${state.loadedListName}' 목록이 업데이트되었습니다.`, 'success');
-                                savedSuccessfully = true;
+                        const mutationResult = await mutateSavedLists((lists) => {
+                            if (!hasOwnListKey(lists, loadedListName)) {
+                                return { skipSave: true, missing: true };
                             }
-                        } else {
-                             Toast.show(`'${state.loadedListName}' 목록을 찾을 수 없어 저장하지 못했습니다.`, 'error');
+                            lists[loadedListName].urls = urlsToSave;
+                            return {};
+                        });
+                        if (mutationResult.saved) {
+                            state.originalLoadedListUrls = urlsToSave;
+                            Toast.show(`'${loadedListName}' 목록이 업데이트되었습니다.`, 'success');
+                            savedSuccessfully = true;
+                        } else if (mutationResult.missing) {
+                            Toast.show(`'${loadedListName}' 목록을 찾을 수 없어 저장하지 못했습니다.`, 'error');
                         }
                     } else {
                         const now = new Date(); const year = now.getFullYear(); const month = String(now.getMonth() + 1).padStart(2, '0'); const day = String(now.getDate()).padStart(2, '0'); let hours = now.getHours(); const minutes = String(now.getMinutes()).padStart(2, '0'); const ampm = hours >= 12 ? '오후' : '오전'; hours = hours % 12; hours = hours ? hours : 12;
@@ -1402,21 +1432,23 @@ document.addEventListener('DOMContentLoaded', function() {
                             } else if (!assertSafeListName(listName)) {
                                 return;
                             } else {
-                                const lists = await getSavedLists();
-                                if (!lists) return;
-                                if (lists[listName]) {
-                                    Toast.show(`'${listName}' 목록이 이미 존재합니다. 현재 편집 내용은 유지됩니다.`, 'error');
-                                } else {
-                                    const urlsToSave = UI.urlInput.value.trim();
-                                    lists[listName] = { urls: urlsToSave, createdAt: new Date().toISOString() };
-                                    if (await saveLists(lists)) {
-                                        state.originalLoadedListUrls = urlsToSave;
-                                        Toast.show(`'${listName}' 목록이 저장되었습니다.`, 'success');
-                                        await loadSavedLists();
-                                        if (UI.savedListsDropdown) UI.savedListsDropdown.value = listName;
-                                        state.loadedListName = listName;
-                                        savedSuccessfully = true;
+                                const urlsToSave = UI.urlInput.value.trim();
+                                const mutationResult = await mutateSavedLists((lists) => {
+                                    if (hasOwnListKey(lists, listName)) {
+                                        return { skipSave: true, alreadyExists: true };
                                     }
+                                    lists[listName] = { urls: urlsToSave, createdAt: new Date().toISOString() };
+                                    return {};
+                                });
+                                if (mutationResult.alreadyExists) {
+                                    Toast.show(`'${listName}' 목록이 이미 존재합니다. 현재 편집 내용은 유지됩니다.`, 'error');
+                                } else if (mutationResult.saved) {
+                                    state.originalLoadedListUrls = urlsToSave;
+                                    Toast.show(`'${listName}' 목록이 저장되었습니다.`, 'success');
+                                    await loadSavedLists();
+                                    if (UI.savedListsDropdown) UI.savedListsDropdown.value = listName;
+                                    state.loadedListName = listName;
+                                    savedSuccessfully = true;
                                 }
                             }
                         } else {
@@ -1435,21 +1467,26 @@ document.addEventListener('DOMContentLoaded', function() {
         const handleUpdateList = async () => {
             if (!state.loadedListName || !state.isDirty) return;
 
+            const loadedListName = state.loadedListName;
             const urlsToSave = UI.urlInput.value.trim();
-            const lists = await getSavedLists();
-            if (!lists) return;
-            if (!lists[state.loadedListName]) {
-                Toast.show(`'${state.loadedListName}' 목록을 찾을 수 없어 업데이트할 수 없습니다. 새 목록으로 저장해보세요.`, 'error');
+            const mutationResult = await mutateSavedLists((lists) => {
+                if (!hasOwnListKey(lists, loadedListName)) {
+                    return { skipSave: true, missing: true };
+                }
+                lists[loadedListName].urls = urlsToSave;
+                return {};
+            });
+            if (mutationResult.missing) {
+                Toast.show(`'${loadedListName}' 목록을 찾을 수 없어 업데이트할 수 없습니다. 새 목록으로 저장해보세요.`, 'error');
                 state.loadedListName = null;
                 state.isDirty = true;
                 await loadSavedLists();
                 return;
             }
-            lists[state.loadedListName].urls = urlsToSave;
-            if (await saveLists(lists)) {
+            if (mutationResult.saved) {
                 state.isDirty = false;
                 state.originalLoadedListUrls = urlsToSave;
-                Toast.show(`'${state.loadedListName}' 목록이 업데이트되었습니다.`, 'success');
+                Toast.show(`'${loadedListName}' 목록이 업데이트되었습니다.`, 'success');
                 await loadSavedLists();
                 if (UI.savedListsDropdown) UI.savedListsDropdown.blur();
             }
@@ -1480,23 +1517,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
 
-            const lists = await getSavedLists();
-            if (!lists) return false;
-            if (lists[listName] && listName !== state.loadedListName) {
-                const safeListName = escapeHtml(listName);
-                const overwrite = await Modal.show({
-                    title: '덮어쓰기 확인',
-                    body: `<strong>'${safeListName}'</strong> 목록이 이미 있습니다. 덮어쓰시겠습니까?`,
-                    danger: true,
-                    confirmText: '덮어쓰기'
-                });
-                if (!overwrite) return false;
-            }
-
             const urlsToSave = UI.urlInput.value.trim();
-            lists[listName] = { urls: urlsToSave, createdAt: new Date().toISOString() };
+            const loadedListName = state.loadedListName;
+            const mutationResult = await mutateSavedLists(async (lists) => {
+                if (hasOwnListKey(lists, listName) && listName !== loadedListName) {
+                    const safeListName = escapeHtml(listName);
+                    const overwrite = await Modal.show({
+                        title: '덮어쓰기 확인',
+                        body: `<strong>'${safeListName}'</strong> 목록이 이미 있습니다. 덮어쓰시겠습니까?`,
+                        danger: true,
+                        confirmText: '덮어쓰기'
+                    });
+                    if (!overwrite) return { skipSave: true, cancelled: true };
+                }
 
-            if (await saveLists(lists)) {
+                lists[listName] = { urls: urlsToSave, createdAt: new Date().toISOString() };
+                return {};
+            });
+
+            if (mutationResult.saved) {
                 state.isDirty = false;
                 state.loadedListName = listName;
                 state.originalLoadedListUrls = urlsToSave;
@@ -1543,7 +1582,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
-            const lists = await getSavedLists();
+            const lists = await readSavedListsAfterPendingOperations();
             if (!lists) {
                 if (UI.savedListsDropdown) UI.savedListsDropdown.value = state.loadedListName || '';
                 return;
@@ -1583,11 +1622,15 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             if (!confirmed) return;
 
-            const lists = await getSavedLists();
-            if (!lists) return;
-            delete lists[listName];
+            const mutationResult = await mutateSavedLists((lists) => {
+                if (!hasOwnListKey(lists, listName)) {
+                    return { skipSave: true, missing: true };
+                }
+                delete lists[listName];
+                return {};
+            });
 
-            if (await saveLists(lists)) {
+            if (mutationResult.saved) {
                 const wasCurrentlyLoaded = state.loadedListName === listName;
                 if (wasCurrentlyLoaded) {
                     _switchToNewListState();
@@ -1596,7 +1639,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     Toast.show(`'${listName}' 목록이 삭제되었습니다.`, 'success');
                 }
                 await loadSavedLists();
-            } else {
+            } else if (mutationResult.missing) {
+                Toast.show(`'${listName}' 목록을 찾을 수 없습니다. 목록이 이미 삭제되었을 수 있습니다.`, 'error');
+                await loadSavedLists();
+            } else if (!mutationResult.unavailable) {
                 Toast.show(`'${listName}' 목록 삭제에 실패했습니다. 변경사항이 저장되지 않았습니다.`, 'error');
                 await loadSavedLists();
             }
@@ -1623,22 +1669,29 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!assertSafeListName(newName)) return;
             if (newName === oldName) return;
 
-            const lists = await getSavedLists();
-            if (!lists) return;
-            if (!lists[oldName]) {
+            const mutationResult = await mutateSavedLists((lists) => {
+                if (!hasOwnListKey(lists, oldName)) {
+                    return { skipSave: true, missing: true };
+                }
+                if (hasOwnListKey(lists, newName)) {
+                    return { skipSave: true, alreadyExists: true };
+                }
+
+                lists[newName] = lists[oldName];
+                delete lists[oldName];
+                return {};
+            });
+            if (mutationResult.missing) {
                 Toast.show(`'${oldName}' 목록을 찾을 수 없어 이름을 변경하지 못했습니다.`, 'error');
                 await loadSavedLists();
                 return;
             }
-            if (lists[newName]) {
+            if (mutationResult.alreadyExists) {
                 await Modal.show({ title: '오류', body: '같은 이름의 목록이 이미 존재합니다.', hideCancel: true });
                 return;
             }
 
-            lists[newName] = lists[oldName];
-            delete lists[oldName];
-
-            if (await saveLists(lists)) {
+            if (mutationResult.saved) {
                 if (state.loadedListName === oldName) {
                     state.loadedListName = newName;
                 }
@@ -1725,7 +1778,7 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const handleExportLists = async () => {
-            const lists = await getSavedLists();
+            const lists = await readSavedListsAfterPendingOperations();
             if (!lists) return;
             if (Object.keys(lists).length === 0) {
                 Toast.show('내보낼 목록이 없습니다.', 'error');
@@ -1853,36 +1906,40 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
-            const currentLists = await getSavedLists();
-            if (!currentLists) return;
-            const conflicts = Object.keys(validImportedLists).filter(key => currentLists[key]);
-            let applyImport = true;
-            let newListsData = { ...currentLists };
+            const mutationResult = await mutateSavedLists(async (currentLists) => {
+                const conflicts = Object.keys(validImportedLists)
+                    .filter(key => hasOwnListKey(currentLists, key));
 
-            if (conflicts.length > 0) {
-                const safeConflicts = conflicts.map(name => escapeHtml(name)).join(', ');
-                const choice = await Modal.show({
-                    title: '목록 충돌 발생',
-                    body: `다음 목록이 이미 존재합니다: <strong>${safeConflicts}</strong>.<br>충돌하는 목록을 덮어쓰시겠습니까, 건너뛰시겠습니까? (충돌하지 않는 목록은 항상 추가됩니다)`,
-                    buttons: [
-                        { text: '가져오기 취소', value: 'cancel_import', isDefaultCancel: true },
-                        { text: '모두 건너뛰기', value: 'skip_all_conflicts' },
-                        { text: '모두 덮어쓰기', value: 'overwrite_all_conflicts', isDanger: true },
-                    ]
-                });
+                if (conflicts.length > 0) {
+                    const safeConflicts = conflicts.map(name => escapeHtml(name)).join(', ');
+                    const choice = await Modal.show({
+                        title: '목록 충돌 발생',
+                        body: `다음 목록이 이미 존재합니다: <strong>${safeConflicts}</strong>.<br>충돌하는 목록을 덮어쓰시겠습니까, 건너뛰시겠습니까? (충돌하지 않는 목록은 항상 추가됩니다)`,
+                        buttons: [
+                            { text: '가져오기 취소', value: 'cancel_import', isDefaultCancel: true },
+                            { text: '모두 건너뛰기', value: 'skip_all_conflicts' },
+                            { text: '모두 덮어쓰기', value: 'overwrite_all_conflicts', isDanger: true },
+                        ]
+                    });
 
-                if (choice === 'overwrite_all_conflicts') {
-                    for (const key in validImportedLists) { newListsData[key] = validImportedLists[key]; }
-                } else if (choice === 'skip_all_conflicts') {
-                    for (const key in validImportedLists) { if (!conflicts.includes(key)) newListsData[key] = validImportedLists[key]; }
+                    if (choice === 'overwrite_all_conflicts') {
+                        for (const key in validImportedLists) currentLists[key] = validImportedLists[key];
+                    } else if (choice === 'skip_all_conflicts') {
+                        for (const key in validImportedLists) {
+                            if (!conflicts.includes(key)) currentLists[key] = validImportedLists[key];
+                        }
+                    } else {
+                        return { skipSave: true, cancelled: true };
+                    }
                 } else {
-                    applyImport = false;
+                    for (const key in validImportedLists) currentLists[key] = validImportedLists[key];
                 }
-            } else {
-                newListsData = { ...currentLists, ...validImportedLists };
-            }
 
-            if (applyImport && await saveLists(newListsData)) {
+                return {};
+            });
+
+            if (mutationResult.saved) {
+                const newListsData = mutationResult.lists;
                 const skippedDetails = [];
                 if (skippedInvalidListNames > 0) skippedDetails.push(`이름 오류 ${skippedInvalidListNames}개 제외`);
                 if (renamedDuplicateListNames > 0) skippedDetails.push(`중복 이름 ${renamedDuplicateListNames}개 자동 변경`);
@@ -1900,7 +1957,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
                 await loadSavedLists();
-            } else if (!applyImport) {
+            } else if (mutationResult.cancelled) {
                 Toast.show('JSON 가져오기가 취소되었거나 변경사항이 없습니다.', 'info');
             }
         }
