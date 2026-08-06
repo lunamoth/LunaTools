@@ -1713,6 +1713,10 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const fetchAndApplyTabs = async (mode, queryOptions) => {
+            const inputValueAtStart = UI.urlInput ? UI.urlInput.value : '';
+            const loadedListNameAtStart = state.loadedListName;
+            const isDirtyAtStart = state.isDirty;
+
             try {
                 const tabs = await chrome.tabs.query(queryOptions);
                 let skippedTabs = 0;
@@ -1728,6 +1732,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 if (newUrls.length === 0) {
                     Toast.show('가져올 수 있는 탭이 없습니다. (http, https 프로토콜만 지원)', 'info');
+                    return;
+                }
+
+                const inputChangedWhileFetching =
+                    (UI.urlInput ? UI.urlInput.value : '') !== inputValueAtStart ||
+                    state.loadedListName !== loadedListNameAtStart ||
+                    state.isDirty !== isDirtyAtStart;
+                if (inputChangedWhileFetching) {
+                    Toast.show('탭 정보를 불러오는 동안 URL 목록이 변경되어 기존 입력을 보호하기 위해 적용하지 않았습니다. 다시 시도해주세요.', 'info', 5000);
                     return;
                 }
 
@@ -2195,6 +2208,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
             } catch (e) {
+                if (runId !== state.currentRunId) return;
                 console.error(`Error processing URL ${url}:`, e);
                 state.errorCount++;
                 if (currentSpan) {
@@ -3495,10 +3509,12 @@ document.addEventListener('DOMContentLoaded', function() {
           { errorMessagePrefix: CONSTANTS.MESSAGES.SESSION_SAVE_FAILED }
         );
 
-        // Preserve the typed name on a failed write. A successful clear also
-        // changes the current search filter, so refresh the list immediately.
+        // Preserve the typed name on a failed write and any text entered while
+        // the asynchronous snapshot/write was pending.
         if (saved && !overwriteId) {
-          sessionInput.value = '';
+          if (sessionInput.value.trim() === requestedName) {
+            sessionInput.value = '';
+          }
           renderSessions();
         }
       };
@@ -3535,7 +3551,9 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             return { name };
           });
-          sessionInput.value = '';
+          if (sessionInput.value.trim() === requestedName) {
+            sessionInput.value = '';
+          }
           renderSessions();
         } catch (saveError) {
           showToast(`❌ ${CONSTANTS.MESSAGES.SESSION_SAVE_FAILED}: ${escapeHtml(saveError.message)}`);
