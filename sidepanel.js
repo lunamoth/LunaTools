@@ -2704,6 +2704,7 @@ document.addEventListener('DOMContentLoaded', function() {
             MAX_IMPORT_FILE_SIZE_BYTES: 32 * 1024 * 1024,
             MAX_SAVE_TABS: 300,
             MAX_RESTORE_TABS: 300,
+            MAX_RESTORE_WINDOWS: 100,
             RESTORE_CONFIRM_TAB_THRESHOLD: 50,
             SESSION_ID_MAX_LENGTH: 256
         },
@@ -2728,7 +2729,10 @@ document.addEventListener('DOMContentLoaded', function() {
             IMPORT_TOO_MANY_TABS_IN_SESSION: (max) => `가져오기 제한 초과: 세션당 탭은 최대 ${max}개까지 가져올 수 있습니다.`,
             IMPORT_TOO_MANY_TOTAL_TABS: (max) => `가져오기 제한 초과: 전체 가져오기 탭은 최대 ${max}개까지 허용됩니다.`,
             RESTORE_TOO_MANY_TABS: (max) => `복원 제한 초과: 한 번에 복원할 수 있는 탭은 최대 ${max}개입니다.`,
+            RESTORE_TOO_MANY_WINDOWS: (max) => `복원 제한 초과: 한 세션에서 복원할 수 있는 창은 최대 ${max}개입니다.`,
+            IMPORT_TOO_MANY_WINDOWS_IN_SESSION: (max) => `가져오기 제한 초과: 세션당 창은 최대 ${max}개까지 허용됩니다.`,
             SAVE_TOO_MANY_TABS: (max) => `저장 제한 초과: 한 세션에 저장할 수 있는 탭은 최대 ${max}개입니다.`,
+            SAVE_TOO_MANY_WINDOWS: (max) => `저장 제한 초과: 한 세션에 저장할 수 있는 창은 최대 ${max}개입니다.`,
             SESSION_DATA_CORRUPTED: '저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 기존 데이터를 보호하기 위해 저장·편집 작업을 중단했습니다.',
             SESSION_DATA_WARNING: '⚠️ 저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 유효한 세션만 표시하며, 기존 데이터 보호를 위해 저장·편집을 차단합니다.',
             SESSION_SAVED_AND_TABS_CLOSED: (name, count) => `✅ '${escapeHtml(name)}'으로 저장하고 ${count}개의 탭을 닫았습니다.`,
@@ -2968,6 +2972,17 @@ document.addEventListener('DOMContentLoaded', function() {
         if (hasOwn(tab, 'groupInfo')) normalizedTab.groupInfo = normalizeSessionGroupInfo(tab.groupInfo);
 
         return normalizedTab;
+      };
+
+      const getSessionRestoreWindowCount = (tabs) => {
+        const windowKeys = new Set();
+        for (const tab of tabs) {
+          const windowKey = tab.windowId === undefined || tab.windowId === null
+            ? 'single-window'
+            : String(tab.windowId);
+          windowKeys.add(windowKey);
+        }
+        return windowKeys.size;
       };
 
       const isValidTab = (tab) => Boolean(normalizeSessionTab(tab));
@@ -3291,6 +3306,12 @@ document.addEventListener('DOMContentLoaded', function() {
         showToast(`❌ ${CONSTANTS.MESSAGES.SAVE_TOO_MANY_TABS(CONSTANTS.LIMITS.MAX_SAVE_TABS)}`);
         return false;
       };
+
+      const canSaveWindowCount = (tabs) => {
+        if (getSessionRestoreWindowCount(tabs) <= CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS) return true;
+        showToast(`❌ ${CONSTANTS.MESSAGES.SAVE_TOO_MANY_WINDOWS(CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS)}`);
+        return false;
+      };
       
       const restoreTabGroupsForWindow = async (createdTabs, windowId) => {
         if (!chrome.tabs?.group || !chrome.tabGroups?.update) return;
@@ -3332,6 +3353,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (validTabs.length > CONSTANTS.LIMITS.MAX_RESTORE_TABS) {
           throw new Error(CONSTANTS.MESSAGES.RESTORE_TOO_MANY_TABS(CONSTANTS.LIMITS.MAX_RESTORE_TABS));
+        }
+        const restoreWindowCount = getSessionRestoreWindowCount(validTabs);
+        if (restoreWindowCount > CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS) {
+          throw new Error(CONSTANTS.MESSAGES.RESTORE_TOO_MANY_WINDOWS(CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS));
         }
 
         const tabsByWindow = new Map();
@@ -3485,7 +3510,7 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
         }
-        if (!canSaveTabCount(tabs.length)) return;
+        if (!canSaveTabCount(tabs.length) || !canSaveWindowCount(tabs)) return;
 
         const saved = await updateAndSaveSessions(
           (sessions) => {
@@ -3525,7 +3550,7 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
         }
-        if (!canSaveTabCount(initialSnapshot.tabs.length)) return;
+        if (!canSaveTabCount(initialSnapshot.tabs.length) || !canSaveWindowCount(initialSnapshot.tabs)) return;
 
         if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(initialSnapshot.tabs.length))) return;
 
@@ -3536,7 +3561,7 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
         }
-        if (!canSaveTabCount(snapshot.tabs.length)) return;
+        if (!canSaveTabCount(snapshot.tabs.length) || !canSaveWindowCount(snapshot.tabs)) return;
 
         const requestedName = sessionInput.value.trim();
         let savedSession;
@@ -3651,13 +3676,19 @@ document.addEventListener('DOMContentLoaded', function() {
           showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
           return;
         }
-        const validTabCount = session.tabs.map(normalizeSessionTab).filter(Boolean).length;
+        const validTabs = session.tabs.map(normalizeSessionTab).filter(Boolean);
+        const validTabCount = validTabs.length;
         if (validTabCount === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
         }
         if (validTabCount > CONSTANTS.LIMITS.MAX_RESTORE_TABS) {
           showToast(`❌ ${CONSTANTS.MESSAGES.RESTORE_TOO_MANY_TABS(CONSTANTS.LIMITS.MAX_RESTORE_TABS)}`);
+          return;
+        }
+        const restoreWindowCount = getSessionRestoreWindowCount(validTabs);
+        if (restoreWindowCount > CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS) {
+          showToast(`❌ ${CONSTANTS.MESSAGES.RESTORE_TOO_MANY_WINDOWS(CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS)}`);
           return;
         }
         if (validTabCount >= CONSTANTS.LIMITS.RESTORE_CONFIRM_TAB_THRESHOLD &&
@@ -3865,6 +3896,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
           const tabs = session.tabs.map(normalizeImportedTab).filter(Boolean);
           if (tabs.length === 0) continue;
+          if (getSessionRestoreWindowCount(tabs) > CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS) {
+            throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_WINDOWS_IN_SESSION(CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS));
+          }
           totalTabCount += tabs.length;
           if (totalTabCount > CONSTANTS.LIMITS.MAX_IMPORT_TOTAL_TABS) {
             throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_TOTAL_TABS(CONSTANTS.LIMITS.MAX_IMPORT_TOTAL_TABS));

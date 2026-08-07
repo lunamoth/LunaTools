@@ -123,7 +123,7 @@
                 const role = el.getAttribute('role');
                 if (role && CONFIG.IGNORED_ROLES.has(role)) return false;
 
-                if (el.hasAttribute('inert')) return true;
+                if (el.hasAttribute('inert')) return false;
 
                 try {
                     if (elementMatches.call(el, CONFIG.EDITOR_SELECTOR)) return false;
