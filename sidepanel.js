@@ -1,4 +1,4 @@
-// 이 앱은 여러 창/탭에서 여러 사이드 패널 (여러 URL 열기, 세션 매니저) 을 열고 동시에 편집하는 것 자체를 지원하지 않고, 가정하지도 않습니다.
+// LunaTools 는 여러 창/탭에서 여러 URL 열기, 세션 매니저를 동시에 작업을 진행하는 것 자체를 지원하지 않고, 가정하지도 않습니다.
 document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
@@ -2722,6 +2722,7 @@ document.addEventListener('DOMContentLoaded', function() {
             PIN_FAILED: '고정 실패', NO_URLS_TO_COPY: '⚠️ 복사할 URL이 없습니다.', URLS_COPIED: '📋 모든 URL을 클립보드에 복사했습니다.',
             COPY_FAILED: '❌ 클립보드 복사에 실패했습니다.', NO_SESSIONS_TO_EXPORT: '⚠️ 내보낼 세션이 없습니다.',
             EXPORT_SUCCESS: '📤 모든 세션을 내보냈습니다.', EXPORT_FAILED: '❌ 세션 내보내기에 실패했습니다.',
+            EXPORT_BLOCKED_CORRUPTED: '❌ 저장된 세션 데이터에 유효하지 않은 항목이 있어 불완전한 백업 생성을 막았습니다. 옵션 페이지의 전체 백업 기능으로 원본 데이터를 먼저 보존해주세요.',
             IMPORT_FILE_TOO_LARGE: '❌ 파일이 너무 큽니다 (최대 32MiB)',
             IMPORT_FILE_READ_ERROR: '❌ 파일을 읽는 중 오류가 발생했습니다.', IMPORT_INVALID_FORMAT: '❌ 잘못된 파일 형식입니다.',
             IMPORT_NO_VALID_SESSIONS: '유효한 세션이 없습니다.',
@@ -3838,9 +3839,24 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       };
 
-      const handleExport = () => {
-        if (allSessions.length === 0) { showToast(CONSTANTS.MESSAGES.NO_SESSIONS_TO_EXPORT); return; }
-        const dataStr = JSON.stringify(allSessions);
+      const handleExport = async () => {
+        let sessionsToExport;
+        try {
+          const storedSessions = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
+          const inspected = inspectStoredSessions(storedSessions);
+          if (inspected.hasInvalidData) {
+            showToast(CONSTANTS.MESSAGES.EXPORT_BLOCKED_CORRUPTED, CONSTANTS.UI.TOAST_DURATION * 2);
+            return;
+          }
+          sessionsToExport = inspected.sessions;
+        } catch (error) {
+          const detail = error?.message ? ` (${error.message})` : '';
+          showToast(`${CONSTANTS.MESSAGES.EXPORT_FAILED}${detail}`);
+          return;
+        }
+
+        if (sessionsToExport.length === 0) { showToast(CONSTANTS.MESSAGES.NO_SESSIONS_TO_EXPORT); return; }
+        const dataStr = JSON.stringify(sessionsToExport);
         const blob = new Blob([dataStr], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const now = new Date();
@@ -3880,7 +3896,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const valid = [];
         let totalTabCount = 0;
         for (const session of imported) {
-          if (!isRecord(session)) continue;
+          if (!isRecord(session)) throw new Error('Invalid format');
           const sessionName = typeof session.name === 'string' ? session.name.trim() : '';
           if (!isValidSessionId(session.id) ||
               !sessionName ||
@@ -3888,14 +3904,14 @@ document.addEventListener('DOMContentLoaded', function() {
               (hasOwn(session, 'isPinned') && typeof session.isPinned !== 'boolean') ||
               !Array.isArray(session.tabs) ||
               session.tabs.length === 0) {
-            continue;
+            throw new Error('Invalid format');
           }
           if (session.tabs.length > CONSTANTS.LIMITS.MAX_TABS_PER_IMPORTED_SESSION) {
             throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_TABS_IN_SESSION(CONSTANTS.LIMITS.MAX_TABS_PER_IMPORTED_SESSION));
           }
 
-          const tabs = session.tabs.map(normalizeImportedTab).filter(Boolean);
-          if (tabs.length === 0) continue;
+          const tabs = session.tabs.map(normalizeImportedTab);
+          if (tabs.some(tab => !tab)) throw new Error('Invalid format');
           if (getSessionRestoreWindowCount(tabs) > CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS) {
             throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_WINDOWS_IN_SESSION(CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS));
           }

@@ -1,3 +1,5 @@
+// LunaTools 는 여러 창/탭에서 옵션 페이지를 열고 동시에 작업을 진행하는 것 자체를 지원하지 않고, 가정하지도 않습니다.
+
 document.addEventListener('DOMContentLoaded', () => {
     'use strict';
 
