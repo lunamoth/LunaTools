@@ -521,7 +521,13 @@
           return null;
         }
 
-        return { kind: 'page', regex: pattern, currentPage: pageNumber, originalMatch: match[0] };
+        return {
+          kind: 'page',
+          regex: pattern,
+          currentPage: pageNumber,
+          originalMatch: match[0],
+          originalPageText: match[1]
+        };
       }
       _createDatePatternInfo(url) {
         const match = KB_NAV_CONFIG.patterns.datePath.exec(url);
@@ -653,12 +659,13 @@
           }
         }
 
-        const { currentPage, originalMatch } = patternInfo;
+        const { currentPage, originalMatch, originalPageText } = patternInfo;
         let newPage = currentPage + direction;
         newPage = Math.max(KB_NAV_CONFIG.navigation.MIN_PAGE, newPage);
         newPage = Math.min(KB_NAV_CONFIG.navigation.MAX_PAGE, newPage);
         if (newPage === currentPage) return currentUrl;
-        const newPageStringInMatch = originalMatch.replace(String(currentPage), String(newPage));
+        const newPageText = String(newPage).padStart(originalPageText.length, '0');
+        const newPageStringInMatch = originalMatch.replace(originalPageText, newPageText);
         return currentUrl.replace(originalMatch, newPageStringInMatch);
       }
       shouldIgnoreUrl(url) {
