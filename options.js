@@ -45,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const MAX_MULTI_URL_INTERVAL_SECONDS = Math.floor(0x7FFFFFFF / 1000);
     const MAX_BACKUP_SESSION_COUNT = 250000;
     const MAX_BACKUP_TABS_PER_SESSION = 300;
+    const MAX_BACKUP_WINDOWS_PER_SESSION = 100;
     const MAX_BACKUP_TOTAL_SESSION_TABS = 550000;
     const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
     const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -268,6 +269,17 @@ document.addEventListener('DOMContentLoaded', () => {
         return Object.keys(normalized).length > 0 ? normalized : null;
     };
 
+    const getSessionRestoreWindowCount = (tabs) => {
+        const windowKeys = new Set();
+        for (const tab of tabs) {
+            const windowKey = tab.windowId === undefined || tab.windowId === null
+                ? 'single-window'
+                : String(tab.windowId);
+            windowKeys.add(windowKey);
+        }
+        return windowKeys.size;
+    };
+
     const normalizeSessions = (value) => {
         if (!Array.isArray(value)) {
             throw new Error('세션 데이터의 형식이 올바르지 않습니다.');
@@ -333,6 +345,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 return normalizedTab;
             });
+
+            if (getSessionRestoreWindowCount(normalizedTabs) > MAX_BACKUP_WINDOWS_PER_SESSION) {
+                throw new Error(`${sessionIndex + 1}번째 세션의 창 수가 너무 많습니다. 세션당 최대 ${MAX_BACKUP_WINDOWS_PER_SESSION}개까지 복원할 수 있습니다.`);
+            }
 
             if (hasOwn(session, 'isPinned') && typeof session.isPinned !== 'boolean') {
                 throw new Error(`${sessionIndex + 1}번째 세션의 고정 상태가 올바르지 않습니다.`);
