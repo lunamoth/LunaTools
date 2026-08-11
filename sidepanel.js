@@ -2714,7 +2714,9 @@ document.addEventListener('DOMContentLoaded', function() {
         SAVE_SCOPES: { CURRENT_WINDOW: 'current', ALL_WINDOWS: 'all' },
         MESSAGES: {
             STORAGE_ERROR: '저장 공간이 부족하거나 쓰기 오류가 발생했습니다.', GET_TABS_FAILED: '⚠️ 탭 정보를 가져오는데 실패했습니다.',
-            GET_TAB_GROUPS_FAILED: '⚠️ 탭 그룹 정보를 가져오지 못했습니다.', NO_VALID_TABS_TO_SAVE: '⚠️ 저장할 유효한 탭이 없습니다.',
+            GET_TAB_GROUPS_FAILED: '⚠️ 탭 그룹 정보를 가져오지 못했습니다.',
+            SESSION_TAB_GROUP_CAPTURE_FAILED: '⚠️ 탭 그룹 정보를 완전하게 가져오지 못해 세션 저장을 중단했습니다. 다시 시도해주세요.',
+            NO_VALID_TABS_TO_SAVE: '⚠️ 저장할 유효한 탭이 없습니다.',
             UPDATE_SESSION_NOT_FOUND: '⚠️ 업데이트할 세션을 찾을 수 없습니다.', SESSION_SAVE_FAILED: '세션 저장 실패',
             SESSION_NOT_FOUND: '⚠️ 세션을 찾을 수 없습니다.', createSessionDeletedMessage: (name) => `🗑️ '${escapeHtml(name)}' 세션을 삭제했습니다.`,
             SESSION_RESTORED: '✅ 세션을 복원했습니다.', DELETE_FAILED: '삭제 실패', NAME_CANNOT_BE_EMPTY: '⚠️ 이름은 비워둘 수 없습니다.',
@@ -3241,23 +3243,7 @@ document.addEventListener('DOMContentLoaded', function() {
             ? { currentWindow: true }
             : {};
           const tabs = await chrome.tabs.query(queryInfo);
-          if (tabs.length === 0) return { tabs: [], closingCandidates: [] };
-
-          const windowIds = [...new Set(
-            tabs
-              .map(tab => tab.windowId)
-              .filter(windowId => Number.isInteger(windowId))
-          )];
-          let allTabGroups = [];
-          const tabGroupResults = await Promise.allSettled(
-            windowIds.map(windowId => chrome.tabGroups.query({ windowId }))
-          );
-          allTabGroups = tabGroupResults
-            .filter(result => result.status === 'fulfilled' && Array.isArray(result.value))
-            .flatMap(result => result.value);
-          if (tabGroupResults.some(result => result.status === 'rejected')) {
-            showToast(CONSTANTS.MESSAGES.GET_TAB_GROUPS_FAILED);
-          }
+          if (tabs.length === 0) return { tabs: [], closingCandidates: [], captureFailed: false };
 
           const validTabEntries = tabs
             .map(tab => {
@@ -3273,6 +3259,41 @@ document.addEventListener('DOMContentLoaded', function() {
               };
             })
             .filter(({ normalizedUrl }) => Boolean(normalizedUrl));
+          const groupedTabs = validTabEntries
+            .map(({ tab }) => tab)
+            .filter(tab => Number.isInteger(tab.groupId) && tab.groupId > -1);
+          const groupedWindowIds = [...new Set(
+            groupedTabs
+              .map(tab => tab.windowId)
+              .filter(windowId => Number.isInteger(windowId))
+          )];
+          if (groupedTabs.length > 0 && typeof chrome.tabGroups?.query !== 'function') {
+            showToast(CONSTANTS.MESSAGES.SESSION_TAB_GROUP_CAPTURE_FAILED);
+            return { tabs: [], closingCandidates: [], captureFailed: true };
+          }
+
+          const tabGroupResults = await Promise.allSettled(
+            groupedWindowIds.map(windowId => chrome.tabGroups.query({ windowId }))
+          );
+          const allTabGroups = tabGroupResults
+            .filter(result => result.status === 'fulfilled' && Array.isArray(result.value))
+            .flatMap(result => result.value);
+          const capturedGroupKeys = new Set(
+            allTabGroups
+              .filter(group => Number.isInteger(group.id) && Number.isInteger(group.windowId))
+              .map(group => `${group.windowId}:${group.id}`)
+          );
+          const groupCaptureIncomplete =
+            tabGroupResults.some(result => result.status === 'rejected') ||
+            groupedTabs.some(tab =>
+              !Number.isInteger(tab.windowId) ||
+              !capturedGroupKeys.has(`${tab.windowId}:${tab.groupId}`)
+            );
+          if (groupCaptureIncomplete) {
+            showToast(CONSTANTS.MESSAGES.SESSION_TAB_GROUP_CAPTURE_FAILED);
+            return { tabs: [], closingCandidates: [], captureFailed: true };
+          }
+
           return {
             tabs: validTabEntries.map(({ tab, normalizedUrl }) => ({
               url: normalizedUrl,
@@ -3292,15 +3313,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 id: tab.id,
                 windowId: tab.windowId,
                 url: normalizedUrl
-              }))
+              })),
+            captureFailed: false
           };
         } catch (error) {
           showToast(CONSTANTS.MESSAGES.GET_TABS_FAILED);
-          return { tabs: [], closingCandidates: [] };
+          return { tabs: [], closingCandidates: [], captureFailed: true };
         }
       };
-
-      const getTabsToSave = async (scope) => (await getTabsSnapshot(scope)).tabs;
 
       const canSaveTabCount = (tabCount) => {
         if (tabCount <= CONSTANTS.LIMITS.MAX_SAVE_TABS) return true;
@@ -3506,7 +3526,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const handleSaveSession = async (scope, overwriteId = null, overwriteName = null) => {
         const requestedName = sessionInput.value.trim();
-        const tabs = await getTabsToSave(scope);
+        const snapshot = await getTabsSnapshot(scope);
+        if (snapshot.captureFailed) return;
+        const tabs = snapshot.tabs;
         if (tabs.length === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
@@ -3547,6 +3569,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const handleSaveAndCloseAll = async () => {
         const initialSnapshot = await getTabsSnapshot(CONSTANTS.SAVE_SCOPES.ALL_WINDOWS);
+        if (initialSnapshot.captureFailed) return;
         if (initialSnapshot.tabs.length === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
@@ -3558,6 +3581,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Re-capture after confirmation. Anything opened after this snapshot is
         // neither part of the saved session nor eligible for automatic closing.
         const snapshot = await getTabsSnapshot(CONSTANTS.SAVE_SCOPES.ALL_WINDOWS);
+        if (snapshot.captureFailed) return;
         if (snapshot.tabs.length === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;

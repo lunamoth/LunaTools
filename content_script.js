@@ -1309,6 +1309,7 @@
         DEFAULT_TARGET_CURRENCY: 'KRW',
         KOREAN_NUMERALS_MAP: { '일': '1', '이': '2', '삼': '3', '사': '4', '오': '5', '육': '6', '칠': '7', '팔': '8', '구': '9' },
         KOREAN_MAJOR_UNITS: [
+            { name: '경', value: 10000000000000000 },
             { name: '조', value: 1000000000000 },
             { name: '억', value: 100000000 },
             { name: '만', value: 10000 }
