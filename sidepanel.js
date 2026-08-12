@@ -2869,15 +2869,30 @@ document.addEventListener('DOMContentLoaded', function() {
       const SESSION_URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
       const SUPPORTED_TAB_GROUP_COLORS = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
 
+      const isValidSessionGroupInfo = (value, { requireComplete = false } = {}) => {
+        if (value === null || value === undefined) return !requireComplete;
+        if (!isRecord(value)) return false;
+        if (hasOwn(value, 'title') && typeof value.title !== 'string') return false;
+        if (hasOwn(value, 'color') && !SUPPORTED_TAB_GROUP_COLORS.has(value.color)) return false;
+        if (hasOwn(value, 'collapsed') && typeof value.collapsed !== 'boolean') return false;
+
+        return !requireComplete || (
+          hasOwn(value, 'color') &&
+          SUPPORTED_TAB_GROUP_COLORS.has(value.color) &&
+          hasOwn(value, 'collapsed') &&
+          typeof value.collapsed === 'boolean'
+        );
+      };
+
       const normalizeSessionGroupInfo = (value) => {
         if (value === null || value === undefined) return null;
-        if (!isRecord(value)) return null;
+        if (!isValidSessionGroupInfo(value)) return null;
 
         const normalized = {};
         if (hasOwn(value, 'title') && typeof value.title === 'string') {
           normalized.title = value.title.slice(0, CONSTANTS.UI.SESSION_NAME_MAX_LENGTH);
         }
-        if (hasOwn(value, 'color') && SUPPORTED_TAB_GROUP_COLORS.has(value.color)) {
+        if (hasOwn(value, 'color')) {
           normalized.color = value.color;
         }
         if (hasOwn(value, 'collapsed') && typeof value.collapsed === 'boolean') {
@@ -2956,16 +2971,7 @@ document.addEventListener('DOMContentLoaded', function() {
           return null;
         }
 
-        if (hasOwn(tab, 'groupInfo')) {
-          const groupInfo = tab.groupInfo;
-          const groupInfoOk = groupInfo === null || (
-            isRecord(groupInfo) &&
-            (!hasOwn(groupInfo, 'title') || typeof groupInfo.title === 'string') &&
-            (!hasOwn(groupInfo, 'color') || typeof groupInfo.color === 'string') &&
-            (!hasOwn(groupInfo, 'collapsed') || typeof groupInfo.collapsed === 'boolean')
-          );
-          if (!groupInfoOk) return null;
-        }
+        if (hasOwn(tab, 'groupInfo') && !isValidSessionGroupInfo(tab.groupInfo)) return null;
 
         const normalizedTab = { url: normalizedUrl };
         if (hasOwn(tab, 'title')) normalizedTab.title = tab.title;
@@ -3278,17 +3284,18 @@ document.addEventListener('DOMContentLoaded', function() {
           const allTabGroups = tabGroupResults
             .filter(result => result.status === 'fulfilled' && Array.isArray(result.value))
             .flatMap(result => result.value);
-          const capturedGroupKeys = new Set(
+          const capturedGroupsByKey = new Map(
             allTabGroups
               .filter(group => Number.isInteger(group.id) && Number.isInteger(group.windowId))
-              .map(group => `${group.windowId}:${group.id}`)
+              .map(group => [`${group.windowId}:${group.id}`, group])
           );
           const groupCaptureIncomplete =
             tabGroupResults.some(result => result.status === 'rejected') ||
-            groupedTabs.some(tab =>
-              !Number.isInteger(tab.windowId) ||
-              !capturedGroupKeys.has(`${tab.windowId}:${tab.groupId}`)
-            );
+            groupedTabs.some(tab => {
+              if (!Number.isInteger(tab.windowId)) return true;
+              const capturedGroup = capturedGroupsByKey.get(`${tab.windowId}:${tab.groupId}`);
+              return !isValidSessionGroupInfo(capturedGroup, { requireComplete: true });
+            });
           if (groupCaptureIncomplete) {
             showToast(CONSTANTS.MESSAGES.SESSION_TAB_GROUP_CAPTURE_FAILED);
             return { tabs: [], closingCandidates: [], captureFailed: true };
@@ -3302,7 +3309,7 @@ document.addEventListener('DOMContentLoaded', function() {
               groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
               groupInfo: Number.isInteger(tab.groupId) && tab.groupId > -1
                 ? normalizeSessionGroupInfo(
-                    allTabGroups.find(group => group.id === tab.groupId && group.windowId === tab.windowId) || null
+                    capturedGroupsByKey.get(`${tab.windowId}:${tab.groupId}`) || null
                   )
                 : null,
               windowId: Number.isInteger(tab.windowId) ? tab.windowId : undefined

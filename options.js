@@ -257,7 +257,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (typeof value.color !== 'string') {
                 throw new Error(`${contextMessage}의 탭 그룹 색상 데이터가 올바르지 않습니다.`);
             }
-            if (SUPPORTED_TAB_GROUP_COLORS.has(value.color)) normalized.color = value.color;
+            if (!SUPPORTED_TAB_GROUP_COLORS.has(value.color)) {
+                throw new Error(`${contextMessage}의 탭 그룹 색상 데이터가 올바르지 않습니다.`);
+            }
+            normalized.color = value.color;
         }
         if (hasOwn(value, 'collapsed')) {
             if (typeof value.collapsed !== 'boolean') {

@@ -1516,7 +1516,7 @@
     const REGEXES = {
         KOREAN_NUMERALS_REGEX_G: new RegExp(Object.keys(Config.KOREAN_NUMERALS_MAP).join('|'), 'gu'),
         KOREAN_NUMERIC_CLEANUP_REGEX_GI: /[^0-9\.\s천백십]/giu,
-        NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9억만천백십조일이삼사오육칠팔구영BMKbmk\.,\s]/giu,
+        NON_NUMERIC_RELATED_CHARS_REGEX_GI: /[0-9경조억만천백십일이삼사오육칠팔구영BMKbmk\.,\s]/giu,
         AMOUNT_ABBREVIATION_REGEX_I: new RegExp(`^(${NUMERIC_TOKEN_PATTERN_SOURCE})\\s*(BLN|MLN|TLN|BN|MN|TN|[BMKT])(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
         ENGLISH_MAGNITUDE_REGEX_I: new RegExp(`^(${NUMERIC_TOKEN_PATTERN_SOURCE})\\s*(${Object.keys(Config.MAGNITUDE_WORDS_EN).sort((a, b) => b.length - a.length).join('|')})(?:s)?(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])`, 'iu'),
         PLAIN_OZ_REGEX: new RegExp(`^(${NUMERIC_TOKEN_PATTERN_SOURCE})\\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$`, 'iu'),
@@ -2174,7 +2174,7 @@
             const numeric = NUMERIC_TOKEN_PATTERN_SOURCE;
             const magnitudeSuffix = String.raw`(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT])`;
             const numericWithMagnitude = `${numeric}\\s*${magnitudeSuffix}`;
-            const koreanOrPlainNumber = String.raw`[\d,\.\s천백십조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
+            const koreanOrPlainNumber = String.raw`[\d,\.\s천백십경조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
             return `${NUMERIC_TOKEN_START_BOUNDARY_SOURCE}(?:${numericWithMagnitude}|${numeric}|${koreanOrPlainNumber})`;
         },
         _isStrictCurrencyAmountText: function(amountText) {
@@ -2360,12 +2360,12 @@
 
             const candidateText = text.slice(candidate.startOffset, candidate.endOffset);
             const previousCharacter = candidate.startOffset > 0 ? text[candidate.startOffset - 1] : '';
-            const startsWithKoreanNumericCharacter = /^[천백십조억만일이삼사오육칠팔구영]/u.test(candidateText);
+            const startsWithKoreanNumericCharacter = /^[천백십경조억만일이삼사오육칠팔구영]/u.test(candidateText);
             const hasKoreanContextBeforeCandidate = /[ㄱ-ㅎㅏ-ㅣ가-힣]/u.test(previousCharacter);
             const startsWithSeparatedArabicAmount =
-                /^[천백십조억만일이삼사오육칠팔구영]\s+(?=[\d.])/u.test(candidateText);
+                /^[천백십경조억만일이삼사오육칠팔구영]\s+(?=[\d.])/u.test(candidateText);
             const adjacentArabicAmountMatch =
-                /^[천백십조억만일이삼사오육칠팔구영]+((?:\d|\.).*)$/u.exec(candidateText);
+                /^[천백십경조억만일이삼사오육칠팔구영]+((?:\d|\.).*)$/u.exec(candidateText);
 
             // 한글 숫자처럼 보이는 문맥 글자가 선택 영역의 시작에 붙은 경우에도
             // 뒤의 엄격한 아라비아 숫자만 금액으로 사용합니다. "이100달러"를
