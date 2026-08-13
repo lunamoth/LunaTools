@@ -1072,7 +1072,57 @@ class TabManager {
 
           try {
             if (liveDuplicate.active) {
-              await chrome.tabs.update(liveKeeper.id, { active: true }).catch(() => {});
+              try {
+                await chrome.tabs.update(liveKeeper.id, { active: true });
+
+                // Focusing the keeper is an asynchronous, destructive-operation
+                // prerequisite. Re-read both tabs afterwards: the keeper may have
+                // closed/navigated, or the user may have selected/changed the
+                // duplicate while Chrome was processing the focus request.
+                [liveKeeper, liveDuplicate] = await Promise.all([
+                  chrome.tabs.get(liveKeeper.id),
+                  chrome.tabs.get(liveDuplicate.id)
+                ]);
+              } catch (focusError) {
+                if (this._isTabNotFoundError(focusError)) {
+                  try {
+                    await chrome.tabs.get(liveKeeper.id);
+                  } catch (keeperError) {
+                    if (this._isTabNotFoundError(keeperError)) {
+                      this._removeUrlFromCache(liveKeeper.id, parsedUrl);
+                      this._forgetTabCreationOrder(liveKeeper.id);
+                    }
+                  }
+
+                  try {
+                    await chrome.tabs.get(liveDuplicate.id);
+                  } catch (duplicateError) {
+                    if (this._isTabNotFoundError(duplicateError)) {
+                      this._removeUrlFromCache(liveDuplicate.id, parsedUrl);
+                      this._forgetTabCreationOrder(liveDuplicate.id);
+                    }
+                  }
+                }
+                // Never remove the active duplicate unless the intended keeper
+                // was successfully focused and both tabs are still unchanged.
+                continue;
+              }
+
+              const focusedKeeperUrl = this._tryParseUrl(this._getTabUrlString(liveKeeper));
+              const duplicateUrlAfterFocus = this._tryParseUrl(this._getTabUrlString(liveDuplicate));
+              const focusStateIsSafe =
+                liveKeeper.active === true &&
+                liveKeeper.windowId === currentTab.windowId &&
+                focusedKeeperUrl?.href === parsedUrl.href &&
+                liveDuplicate.active === false &&
+                liveDuplicate.windowId === currentTab.windowId &&
+                duplicateUrlAfterFocus?.href === parsedUrl.href;
+
+              if (!focusStateIsSafe) {
+                this._refreshTabCacheFromLiveTab(liveKeeper);
+                this._refreshTabCacheFromLiveTab(liveDuplicate);
+                continue;
+              }
             }
 
             await chrome.tabs.remove(liveDuplicate.id);

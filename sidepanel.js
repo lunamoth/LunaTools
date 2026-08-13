@@ -2716,6 +2716,7 @@ document.addEventListener('DOMContentLoaded', function() {
             STORAGE_ERROR: '저장 공간이 부족하거나 쓰기 오류가 발생했습니다.', GET_TABS_FAILED: '⚠️ 탭 정보를 가져오는데 실패했습니다.',
             GET_TAB_GROUPS_FAILED: '⚠️ 탭 그룹 정보를 가져오지 못했습니다.',
             SESSION_TAB_GROUP_CAPTURE_FAILED: '⚠️ 탭 그룹 정보를 완전하게 가져오지 못해 세션 저장을 중단했습니다. 다시 시도해주세요.',
+            SESSION_TAB_GROUP_RESTORE_FAILED: '탭 그룹 정보를 복원하지 못했습니다.',
             NO_VALID_TABS_TO_SAVE: '⚠️ 저장할 유효한 탭이 없습니다.',
             UPDATE_SESSION_NOT_FOUND: '⚠️ 업데이트할 세션을 찾을 수 없습니다.', SESSION_SAVE_FAILED: '세션 저장 실패',
             SESSION_NOT_FOUND: '⚠️ 세션을 찾을 수 없습니다.', createSessionDeletedMessage: (name) => `🗑️ '${escapeHtml(name)}' 세션을 삭제했습니다.`,
@@ -3342,8 +3343,6 @@ document.addEventListener('DOMContentLoaded', function() {
       };
       
       const restoreTabGroupsForWindow = async (createdTabs, windowId) => {
-        if (!chrome.tabs?.group || !chrome.tabGroups?.update) return;
-
         const groupsToRestore = new Map();
         createdTabs.forEach(({ savedTab, createdTabId }) => {
           if (!createdTabId || savedTab.pinned || typeof savedTab.groupId !== 'number' || savedTab.groupId < 0) return;
@@ -3353,6 +3352,11 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           groupsToRestore.get(groupKey).tabIds.push(createdTabId);
         });
+
+        if (groupsToRestore.size === 0) return;
+        if (!chrome.tabs?.group || !chrome.tabGroups?.update) {
+          throw new Error(CONSTANTS.MESSAGES.SESSION_TAB_GROUP_RESTORE_FAILED);
+        }
 
         for (const { info, tabIds } of groupsToRestore.values()) {
           if (!tabIds.length) continue;
@@ -3368,7 +3372,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
           } catch (groupError) {
             console.warn('Failed to restore tab group:', groupError);
-            showToast(CONSTANTS.MESSAGES.GET_TAB_GROUPS_FAILED);
+            // A session layout is incomplete when any saved group cannot be
+            // reconstructed. Propagate the failure so restoreSessionTabs() can
+            // roll back the tabs created by this restore instead of reporting
+            // a misleading success.
+            throw new Error(CONSTANTS.MESSAGES.SESSION_TAB_GROUP_RESTORE_FAILED);
           }
         }
       };
