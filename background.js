@@ -17,6 +17,12 @@ const FIXED_EURO_CONVERSION_RATES = Object.freeze({
   // 불가리아는 2026-01-01부터 EUR을 도입했으며 공식 고정 환산율은 EUR 1 = BGN 1.95583입니다.
   BGN: 1.95583
 });
+const REQUIRED_EXCHANGE_RATE_CODES = Object.freeze([
+  'USD', 'EUR', 'JPY', 'GBP', 'AUD', 'CAD', 'CHF', 'CNY', 'HKD', 'NZD',
+  'SEK', 'KRW', 'SGD', 'NOK', 'MXN', 'INR', 'ZAR', 'TRY', 'BRL', 'DKK',
+  'PLN', 'THB', 'IDR', 'HUF', 'CZK', 'ILS', 'PHP', 'MYR', 'RON', 'BGN',
+  'ISK'
+]);
 const CONTEXT_MENU_ID_MERGE_TABS = "lunaToolsMergeTabsContextMenu";
 const BADGE_ALERT_THRESHOLD = 100;
 const CURRENCY_CODE_REGEX = /^[A-Z]{3}$/;
@@ -260,7 +266,13 @@ function normalizeExchangeRateTable(candidate) {
   if (base !== EXCHANGE_RATE_BASE_CURRENCY || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return null;
   }
-  if (!Number.isFinite(timestamp) || timestamp <= 0 || !candidate.rates || typeof candidate.rates !== 'object') {
+  if (
+    !Number.isFinite(timestamp) ||
+    timestamp <= 0 ||
+    !candidate.rates ||
+    typeof candidate.rates !== 'object' ||
+    Array.isArray(candidate.rates)
+  ) {
     return null;
   }
 
@@ -274,8 +286,7 @@ function normalizeExchangeRateTable(candidate) {
   }
 
   Object.assign(rates, FIXED_EURO_CONVERSION_RATES);
-
-  if (Object.keys(rates).length < 2) return null;
+  if (!REQUIRED_EXCHANGE_RATE_CODES.every(code => isPositiveFiniteNumber(rates[code]))) return null;
 
   return {
     schemaVersion: EXCHANGE_RATE_SCHEMA_VERSION,
@@ -371,7 +382,7 @@ async function fetchAndStoreExchangeRateTable() {
 
       const table = normalizeExchangeRateTable({
         schemaVersion: EXCHANGE_RATE_SCHEMA_VERSION,
-        base: data?.base || EXCHANGE_RATE_BASE_CURRENCY,
+        base: data?.base,
         date: data?.date,
         rates: data?.rates,
         timestamp: Date.now(),

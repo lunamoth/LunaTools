@@ -2948,7 +2948,8 @@
                 !Number.isFinite(timestamp) ||
                 timestamp <= 0 ||
                 !candidate.rates ||
-                typeof candidate.rates !== 'object'
+                typeof candidate.rates !== 'object' ||
+                Array.isArray(candidate.rates)
             ) {
                 return null;
             }
@@ -2962,7 +2963,9 @@
                 }
             }
             Object.assign(rates, Config.FIXED_EURO_CONVERSION_RATES);
-            if (Object.keys(rates).length < 2) return null;
+            if (!Object.keys(Config.CURRENCY_FLAGS).every(code => ApiService._isPositiveFiniteNumber(rates[code]))) {
+                return null;
+            }
 
             return {
                 base: Config.EXCHANGE_RATE_BASE_CURRENCY,
