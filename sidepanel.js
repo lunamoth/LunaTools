@@ -2903,6 +2903,46 @@ document.addEventListener('DOMContentLoaded', function() {
         return Object.keys(normalized).length > 0 ? normalized : null;
       };
 
+      const isValidSessionTabGroupState = (tab) => {
+        const groupId = hasOwn(tab, 'groupId') ? tab.groupId : -1;
+        if (!Number.isSafeInteger(groupId) || groupId < -1) return false;
+
+        if (groupId >= 0) {
+          return tab.pinned !== true &&
+            hasOwn(tab, 'groupInfo') &&
+            isValidSessionGroupInfo(tab.groupInfo, { requireComplete: true });
+        }
+
+        return !hasOwn(tab, 'groupInfo') || tab.groupInfo === null || tab.groupInfo === undefined;
+      };
+
+      const hasConsistentSessionGroupMetadata = (tabs) => {
+        const groupMetadataByKey = new Map();
+
+        for (const tab of tabs) {
+          if (!Number.isSafeInteger(tab.groupId) || tab.groupId < 0) continue;
+
+          const windowKey = tab.windowId === undefined || tab.windowId === null
+            ? 'single-window'
+            : String(tab.windowId);
+          const groupKey = `${windowKey}:${tab.groupId}`;
+          const groupInfo = normalizeSessionGroupInfo(tab.groupInfo);
+          if (!isValidSessionGroupInfo(groupInfo, { requireComplete: true })) return false;
+
+          const signature = JSON.stringify([
+            typeof groupInfo.title === 'string' ? groupInfo.title : '',
+            groupInfo.color,
+            groupInfo.collapsed
+          ]);
+          if (groupMetadataByKey.has(groupKey) && groupMetadataByKey.get(groupKey) !== signature) {
+            return false;
+          }
+          groupMetadataByKey.set(groupKey, signature);
+        }
+
+        return true;
+      };
+
       const isValidSessionHostname = (hostname) => {
         const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
         if (!normalizedHostname || normalizedHostname.length > 253) return false;
@@ -2967,12 +3007,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if ((hasOwn(tab, 'title') && typeof tab.title !== 'string') ||
             (hasOwn(tab, 'pinned') && typeof tab.pinned !== 'boolean') ||
-            (hasOwn(tab, 'groupId') && !Number.isInteger(tab.groupId)) ||
+            (hasOwn(tab, 'groupId') && (!Number.isSafeInteger(tab.groupId) || tab.groupId < -1)) ||
             (hasOwn(tab, 'windowId') && !Number.isInteger(tab.windowId))) {
           return null;
         }
 
-        if (hasOwn(tab, 'groupInfo') && !isValidSessionGroupInfo(tab.groupInfo)) return null;
+        if (!isValidSessionTabGroupState(tab)) return null;
 
         const normalizedTab = { url: normalizedUrl };
         if (hasOwn(tab, 'title')) normalizedTab.title = tab.title;
@@ -3006,17 +3046,21 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const isValidSession = (session) => {
-        return session &&
-          typeof session === 'object' &&
-          !Array.isArray(session) &&
-          isValidSessionId(session.id) &&
-          typeof session.name === 'string' &&
-          session.name.trim().length > 0 &&
-          session.name.length <= CONSTANTS.UI.SESSION_NAME_MAX_LENGTH &&
-          (!hasOwn(session, 'isPinned') || typeof session.isPinned === 'boolean') &&
-          Array.isArray(session.tabs) &&
-          session.tabs.length > 0 &&
-          session.tabs.every(isValidTab);
+        if (!session ||
+            typeof session !== 'object' ||
+            Array.isArray(session) ||
+            !isValidSessionId(session.id) ||
+            typeof session.name !== 'string' ||
+            session.name.trim().length === 0 ||
+            session.name.length > CONSTANTS.UI.SESSION_NAME_MAX_LENGTH ||
+            (hasOwn(session, 'isPinned') && typeof session.isPinned !== 'boolean') ||
+            !Array.isArray(session.tabs) ||
+            session.tabs.length === 0) {
+          return false;
+        }
+
+        const normalizedTabs = session.tabs.map(normalizeSessionTab);
+        return normalizedTabs.every(Boolean) && hasConsistentSessionGroupMetadata(normalizedTabs);
       };
 
       const inspectStoredSessions = (value) => {
@@ -3345,7 +3389,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const restoreTabGroupsForWindow = async (createdTabs, windowId) => {
         const groupsToRestore = new Map();
         createdTabs.forEach(({ savedTab, createdTabId }) => {
-          if (!createdTabId || savedTab.pinned || typeof savedTab.groupId !== 'number' || savedTab.groupId < 0) return;
+          if (!Number.isInteger(createdTabId) || savedTab.pinned || typeof savedTab.groupId !== 'number' || savedTab.groupId < 0) return;
           const groupKey = String(savedTab.groupId);
           if (!groupsToRestore.has(groupKey)) {
             groupsToRestore.set(groupKey, { info: savedTab.groupInfo || null, tabIds: [] });
@@ -3360,9 +3404,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
         for (const { info, tabIds } of groupsToRestore.values()) {
           if (!tabIds.length) continue;
+          const groupInfo = normalizeSessionGroupInfo(info);
+          if (!isValidSessionGroupInfo(groupInfo, { requireComplete: true })) {
+            throw new Error(CONSTANTS.MESSAGES.SESSION_TAB_GROUP_RESTORE_FAILED);
+          }
           try {
             const newGroupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
-            const groupInfo = normalizeSessionGroupInfo(info);
             const updateProperties = {};
             if (groupInfo && typeof groupInfo.title === 'string') updateProperties.title = groupInfo.title;
             if (groupInfo && SUPPORTED_TAB_GROUP_COLORS.has(groupInfo.color)) updateProperties.color = groupInfo.color;
@@ -3382,7 +3429,13 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const restoreSessionTabs = async (session) => {
-        const validTabs = session.tabs.map(normalizeSessionTab).filter(Boolean);
+        const normalizedTabs = Array.isArray(session?.tabs)
+          ? session.tabs.map(normalizeSessionTab)
+          : [];
+        if (normalizedTabs.some(tab => !tab) || !hasConsistentSessionGroupMetadata(normalizedTabs)) {
+          throw new Error('세션 데이터의 탭 그룹 정보가 올바르지 않습니다.');
+        }
+        const validTabs = normalizedTabs;
         if (validTabs.length === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
           return;
@@ -3407,7 +3460,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
           for (const windowTabs of tabsByWindow.values()) {
             const [firstTab, ...remainingTabs] = windowTabs;
-            const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: createdWindowIds.length === 0 });
+            const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: false });
             if (!Number.isInteger(createdWindow?.id)) {
               throw new Error('복원된 창의 식별자를 확인할 수 없습니다.');
             }
@@ -3427,13 +3480,22 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             createdTabs.push({ savedTab: firstTab, createdTabId: createdFirstTab.id });
-            createdRestoreTabs.push({
+            const firstRestoreTab = {
               tabId: createdFirstTab.id,
               windowId: createdWindowId,
-              expectedUrl: firstTab.url
-            });
+              expectedUrl: firstTab.url,
+              expectedPinned: Boolean(createdFirstTab.pinned),
+              initialLastAccessed: Number.isFinite(createdFirstTab.lastAccessed)
+                ? createdFirstTab.lastAccessed
+                : null
+            };
+            createdRestoreTabs.push(firstRestoreTab);
             if (firstTab.pinned) {
-              await chrome.tabs.update(createdFirstTab.id, { pinned: true });
+              const pinnedFirstTab = await chrome.tabs.update(createdFirstTab.id, { pinned: true });
+              firstRestoreTab.expectedPinned = true;
+              if (Number.isFinite(pinnedFirstTab?.lastAccessed)) {
+                firstRestoreTab.initialLastAccessed = pinnedFirstTab.lastAccessed;
+              }
             }
 
             for (const savedTab of remainingTabs) {
@@ -3450,7 +3512,11 @@ document.addEventListener('DOMContentLoaded', function() {
               createdRestoreTabs.push({
                 tabId: createdTab.id,
                 windowId: createdWindowId,
-                expectedUrl: savedTab.url
+                expectedUrl: savedTab.url,
+                expectedPinned: Boolean(createdTab.pinned),
+                initialLastAccessed: Number.isFinite(createdTab.lastAccessed)
+                  ? createdTab.lastAccessed
+                  : null
               });
             }
 
@@ -3464,9 +3530,16 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
           let rollbackFailureCount = 0;
           let preservedChangedTabCount = 0;
+          let focusedWindowId = null;
+
+          try {
+            const focusedWindow = await chrome.windows.getLastFocused();
+            if (Number.isInteger(focusedWindow?.id)) focusedWindowId = focusedWindow.id;
+          } catch (_) {
+          }
 
           // 창 전체를 닫으면 복원 도중 사용자가 그 창에 추가하거나 이동한 탭까지
-          // 함께 사라질 수 있습니다. 이번 복원에서 만든 탭만, URL과 창이 그대로일 때만 정리합니다.
+          // 함께 사라질 수 있습니다. 이번 복원에서 만든 탭만, 사용 흔적과 상태가 그대로일 때만 정리합니다.
           for (const restoreTab of [...createdRestoreTabs].reverse()) {
             try {
               const liveTab = await chrome.tabs.get(restoreTab.tabId);
@@ -3476,8 +3549,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 ? navigationState.pendingUrl === restoreTab.expectedUrl &&
                   (!navigationState.committedUrl || navigationState.committedUrl === restoreTab.expectedUrl)
                 : navigationState.committedUrl === restoreTab.expectedUrl;
+              const isSelectedInFocusedWindow = liveTab.windowId === focusedWindowId &&
+                (liveTab.active === true || liveTab.highlighted === true);
+              const wasAccessedAfterCreation = Number.isFinite(restoreTab.initialLastAccessed) &&
+                Number.isFinite(liveTab.lastAccessed) &&
+                liveTab.lastAccessed > restoreTab.initialLastAccessed;
+              const hasPinnedStateChanged = Boolean(liveTab.pinned) !== restoreTab.expectedPinned;
 
-              if (!isStillInRestoreWindow || !isStillOnRestoreUrl) {
+              if (!isStillInRestoreWindow ||
+                  !isStillOnRestoreUrl ||
+                  isSelectedInFocusedWindow ||
+                  wasAccessedAfterCreation ||
+                  hasPinnedStateChanged) {
                 preservedChangedTabCount += 1;
                 continue;
               }
@@ -3500,7 +3583,7 @@ document.addEventListener('DOMContentLoaded', function() {
             ? ' 변경되지 않은 복원 탭은 모두 정리했습니다.'
             : ` 복원 탭 중 ${rollbackFailureCount}개를 정리하지 못했습니다.`;
           if (preservedChangedTabCount > 0) {
-            rollbackStatus += ` 사용자가 이동하거나 주소를 변경한 탭 ${preservedChangedTabCount}개는 보존했습니다.`;
+            rollbackStatus += ` 사용자가 선택·고정하거나 이동·주소를 변경한 탭 ${preservedChangedTabCount}개는 보존했습니다.`;
           }
           throw new Error(`${reason}${rollbackStatus}`);
         }
@@ -3951,6 +4034,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
           const tabs = session.tabs.map(normalizeImportedTab);
           if (tabs.some(tab => !tab)) throw new Error('Invalid format');
+          if (!hasConsistentSessionGroupMetadata(tabs)) throw new Error('Invalid format');
           if (getSessionRestoreWindowCount(tabs) > CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS) {
             throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_WINDOWS_IN_SESSION(CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS));
           }

@@ -240,8 +240,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    const normalizeSessionGroupInfo = (value, contextMessage) => {
-        if (value === null || value === undefined) return null;
+    const normalizeSessionGroupInfo = (value, contextMessage, { requireComplete = false } = {}) => {
+        if (value === null || value === undefined) {
+            if (requireComplete) {
+                throw new Error(`${contextMessage}의 탭 그룹 데이터가 누락되었습니다.`);
+            }
+            return null;
+        }
         if (!isRecord(value)) {
             throw new Error(`${contextMessage}의 탭 그룹 데이터가 올바르지 않습니다.`);
         }
@@ -269,6 +274,10 @@ document.addEventListener('DOMContentLoaded', () => {
             normalized.collapsed = value.collapsed;
         }
 
+        if (requireComplete && (!hasOwn(normalized, 'color') || !hasOwn(normalized, 'collapsed'))) {
+            throw new Error(`${contextMessage}의 탭 그룹 데이터가 불완전합니다.`);
+        }
+
         return Object.keys(normalized).length > 0 ? normalized : null;
     };
 
@@ -281,6 +290,30 @@ document.addEventListener('DOMContentLoaded', () => {
             windowKeys.add(windowKey);
         }
         return windowKeys.size;
+    };
+
+    const validateSessionGroupMetadata = (tabs, contextMessage) => {
+        const groupMetadataByKey = new Map();
+
+        for (const tab of tabs) {
+            if (!Number.isSafeInteger(tab.groupId) || tab.groupId < 0) continue;
+
+            const windowKey = tab.windowId === undefined || tab.windowId === null
+                ? 'single-window'
+                : String(tab.windowId);
+            const groupKey = `${windowKey}:${tab.groupId}`;
+            const groupInfo = tab.groupInfo;
+            const signature = JSON.stringify([
+                typeof groupInfo?.title === 'string' ? groupInfo.title : '',
+                groupInfo?.color,
+                groupInfo?.collapsed
+            ]);
+
+            if (groupMetadataByKey.has(groupKey) && groupMetadataByKey.get(groupKey) !== signature) {
+                throw new Error(`${contextMessage}의 같은 탭 그룹에 서로 다른 그룹 정보가 들어 있습니다.`);
+            }
+            groupMetadataByKey.set(groupKey, signature);
+        }
     };
 
     const normalizeSessions = (value) => {
@@ -331,7 +364,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const validTab = normalizedUrl &&
                     (!hasOwn(tab, 'title') || typeof tab.title === 'string') &&
                     (!hasOwn(tab, 'pinned') || typeof tab.pinned === 'boolean') &&
-                    (!hasOwn(tab, 'groupId') || Number.isInteger(tab.groupId)) &&
+                    (!hasOwn(tab, 'groupId') || (Number.isSafeInteger(tab.groupId) && tab.groupId >= -1)) &&
                     (!hasOwn(tab, 'windowId') || Number.isInteger(tab.windowId));
 
                 if (!validTab) {
@@ -343,11 +376,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (hasOwn(tab, 'pinned')) normalizedTab.pinned = tab.pinned;
                 if (hasOwn(tab, 'groupId')) normalizedTab.groupId = tab.groupId;
                 if (hasOwn(tab, 'windowId')) normalizedTab.windowId = tab.windowId;
-                if (hasOwn(tab, 'groupInfo')) {
-                    normalizedTab.groupInfo = normalizeSessionGroupInfo(tab.groupInfo, `${sessionIndex + 1}번째 세션의 ${tabIndex + 1}번째 탭`);
+                const tabContext = `${sessionIndex + 1}번째 세션의 ${tabIndex + 1}번째 탭`;
+                const groupId = hasOwn(tab, 'groupId') ? tab.groupId : -1;
+                if (groupId >= 0) {
+                    if (tab.pinned === true) {
+                        throw new Error(`${tabContext}은 고정 탭과 탭 그룹 상태를 동시에 가질 수 없습니다.`);
+                    }
+                    normalizedTab.groupInfo = normalizeSessionGroupInfo(
+                        tab.groupInfo,
+                        tabContext,
+                        { requireComplete: true }
+                    );
+                } else if (hasOwn(tab, 'groupInfo')) {
+                    if (tab.groupInfo !== null && tab.groupInfo !== undefined) {
+                        throw new Error(`${tabContext}의 탭 그룹 데이터가 그룹 ID와 일치하지 않습니다.`);
+                    }
+                    normalizedTab.groupInfo = null;
                 }
                 return normalizedTab;
             });
+
+            validateSessionGroupMetadata(normalizedTabs, `${sessionIndex + 1}번째 세션`);
 
             if (getSessionRestoreWindowCount(normalizedTabs) > MAX_BACKUP_WINDOWS_PER_SESSION) {
                 throw new Error(`${sessionIndex + 1}번째 세션의 창 수가 너무 많습니다. 세션당 최대 ${MAX_BACKUP_WINDOWS_PER_SESSION}개까지 복원할 수 있습니다.`);
