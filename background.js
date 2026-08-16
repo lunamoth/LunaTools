@@ -6,13 +6,14 @@ const API_TIMEOUT_MS_EXCHANGE_RATE = 7000;
 const EXCHANGE_RATE_STORAGE_KEY = "lunaToolsExchangeRateTableV1";
 const EXCHANGE_RATE_SCHEMA_VERSION = 1;
 const EXCHANGE_RATE_BASE_CURRENCY = "EUR";
+const EXCHANGE_RATE_SOURCE = 'Frankfurter v2 (ECB)';
 const EXCHANGE_RATE_CACHE_DURATION_MS = 24 * 60 * 60 * 1000;
 const EXCHANGE_RATE_STALE_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const EXCHANGE_RATE_PUBLICATION_TIME_ZONE = 'Europe/Berlin';
-// ECB/Frankfurter는 유럽 현지 시각 약 16:00에 갱신됩니다. 전파 지연을 고려해 30분의 유예를 둡니다.
+// ECB/Frankfurter v2는 유럽 현지 시각 약 16:00에 갱신됩니다. 전파 지연을 고려해 30분의 유예를 둡니다.
 const EXCHANGE_RATE_PUBLICATION_CUTOFF_MINUTES = (16 * 60) + 30;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const EXCHANGE_RATE_API_URL = `https://api.frankfurter.dev/v1/latest?base=${EXCHANGE_RATE_BASE_CURRENCY}`;
+const EXCHANGE_RATE_API_URL = `https://api.frankfurter.dev/v2/rates?base=${EXCHANGE_RATE_BASE_CURRENCY}&providers=ECB`;
 const FIXED_EURO_CONVERSION_RATES = Object.freeze({
   // 불가리아는 2026-01-01부터 EUR을 도입했으며 공식 고정 환산율은 EUR 1 = BGN 1.95583입니다.
   BGN: 1.95583
@@ -165,6 +166,58 @@ function isPositiveFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
+function normalizeFrankfurterV2RatesResponse(candidate) {
+  if (!Array.isArray(candidate) || candidate.length === 0 || candidate.length > 500) {
+    return null;
+  }
+
+  const rates = {};
+  const rateDates = {};
+
+  for (const row of candidate) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+
+    const base = normalizeCurrencyCode(row.base);
+    const quote = normalizeCurrencyCode(row.quote);
+    const date = typeof row.date === 'string' ? row.date.trim() : '';
+    const rate = Number(row.rate);
+
+    if (
+      base !== EXCHANGE_RATE_BASE_CURRENCY ||
+      !CURRENCY_CODE_REGEX.test(quote) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      !isPositiveFiniteNumber(rate) ||
+      Object.prototype.hasOwnProperty.call(rates, quote)
+    ) {
+      return null;
+    }
+
+    rates[quote] = rate;
+    rateDates[quote] = date;
+  }
+
+  // 고정 환산율로 보완하는 통화와 기준 통화를 제외한 필수 통화가 모두
+  // ECB 응답에 있어야 합니다. 서로 다른 기준일이 섞였다면 가장 오래된
+  // 기준일을 표 전체의 날짜로 사용해 오래된 값을 최신으로 표시하지 않습니다.
+  const requiredApiCodes = REQUIRED_EXCHANGE_RATE_CODES.filter(code =>
+    code !== EXCHANGE_RATE_BASE_CURRENCY &&
+    !Object.prototype.hasOwnProperty.call(FIXED_EURO_CONVERSION_RATES, code)
+  );
+  if (!requiredApiCodes.every(code => isPositiveFiniteNumber(rates[code]) && rateDates[code])) {
+    return null;
+  }
+
+  const date = requiredApiCodes.reduce((oldestDate, code) =>
+    !oldestDate || rateDates[code] < oldestDate ? rateDates[code] : oldestDate
+  , '');
+
+  return {
+    base: EXCHANGE_RATE_BASE_CURRENCY,
+    date,
+    rates
+  };
+}
+
 function formatUtcDate(date) {
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -294,7 +347,7 @@ function normalizeExchangeRateTable(candidate) {
     date,
     rates,
     timestamp,
-    source: 'Frankfurter v1'
+    source: EXCHANGE_RATE_SOURCE
   };
 }
 
@@ -380,13 +433,16 @@ async function fetchAndStoreExchangeRateTable() {
         throw new Error(`API processing error: ${error?.message || 'Invalid JSON response.'}`);
       }
 
+      const apiTable = normalizeFrankfurterV2RatesResponse(data);
+      if (!apiTable) {
+        throw new Error('API response error: Invalid or incomplete Frankfurter v2 exchange-rate table.');
+      }
+
       const table = normalizeExchangeRateTable({
         schemaVersion: EXCHANGE_RATE_SCHEMA_VERSION,
-        base: data?.base,
-        date: data?.date,
-        rates: data?.rates,
+        ...apiTable,
         timestamp: Date.now(),
-        source: 'Frankfurter v1'
+        source: EXCHANGE_RATE_SOURCE
       });
 
       if (!table) {
@@ -867,7 +923,13 @@ class TabManager {
         return; // 정렬할 일반 탭이 없거나 하나뿐이면 종료
       }
 
-      const tabsWithParsedUrls = unpinnedTabs.map(tab => {
+      // 탭 그룹의 구성원을 따로 이동하면 그룹이 분리되거나 해제될 수 있습니다.
+      // 그룹은 내부 순서를 유지하는 하나의 정렬 단위로 취급하고, 일반 탭만
+      // 단일 탭 단위로 취급합니다.
+      const sortUnits = [];
+      const groupedUnitsById = new Map();
+
+      for (const tab of unpinnedTabs) {
         const cachedInfo = this.urlCache.get(tab.id);
         let parsedUrl = cachedInfo?.url;
         if (!parsedUrl) {
@@ -877,27 +939,68 @@ class TabManager {
             this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
           }
         }
-        return { ...tab, parsedUrl };
-      }).filter(tab => tab.parsedUrl);
 
-      if (tabsWithParsedUrls.length <= 1) return;
+        const isGrouped = Number.isInteger(tab.groupId) && tab.groupId >= 0;
+        if (isGrouped) {
+          let unit = groupedUnitsById.get(tab.groupId);
+          if (!unit) {
+            unit = {
+              type: 'group',
+              id: tab.groupId,
+              tabs: [],
+              parsedUrl: null,
+              originalOrder: sortUnits.length
+            };
+            groupedUnitsById.set(tab.groupId, unit);
+            sortUnits.push(unit);
+          }
+          unit.tabs.push(tab);
+          if (!unit.parsedUrl && parsedUrl) unit.parsedUrl = parsedUrl;
+          continue;
+        }
 
-      tabsWithParsedUrls.sort((a, b) => this._compareTabUrls(a.parsedUrl, b.parsedUrl));
-      
-      const sortedTabIds = tabsWithParsedUrls.map(tab => tab.id);
+        sortUnits.push({
+          type: 'tab',
+          id: tab.id,
+          tabs: [tab],
+          parsedUrl,
+          originalOrder: sortUnits.length
+        });
+      }
 
-      // 최적화: 이미 정렬된 상태인지 확인 (일반 탭 기준)
-      const currentUnpinnedSortableTabIds = unpinnedTabs
-        .map(tab => tab.id)
-        .filter(id => sortedTabIds.includes(id));
-      
-      if (JSON.stringify(sortedTabIds) === JSON.stringify(currentUnpinnedSortableTabIds)) {
+      const sortableUnits = sortUnits.filter(unit => unit.parsedUrl);
+      if (sortableUnits.length <= 1) return;
+
+      if (groupedUnitsById.size > 0 && typeof chrome.tabGroups?.move !== 'function') {
+        // 그룹 단위 이동을 지원하지 않는 환경에서는 그룹을 깨뜨릴 수 있는
+        // 개별 탭 이동으로 대체하지 않습니다.
         return;
       }
 
-      // 고정된 탭 바로 뒤로 이동
-      const targetIndex = pinnedTabs.length;
-      await chrome.tabs.move(sortedTabIds, { index: targetIndex });
+      sortableUnits.sort((a, b) =>
+        this._compareTabUrls(a.parsedUrl, b.parsedUrl) || a.originalOrder - b.originalOrder
+      );
+
+      // URL을 확인할 수 없는 chrome:// 등의 탭/그룹은 현재 슬롯에 고정하고,
+      // 정렬 가능한 단위끼리만 자리를 바꿉니다.
+      let nextSortableUnitIndex = 0;
+      const sortedUnits = sortUnits.map(unit =>
+        unit.parsedUrl ? sortableUnits[nextSortableUnitIndex++] : unit
+      );
+      const getUnitKey = unit => `${unit.type}:${unit.id}`;
+      if (sortedUnits.every((unit, index) => getUnitKey(unit) === getUnitKey(sortUnits[index]))) {
+        return;
+      }
+
+      let targetIndex = pinnedTabs.length;
+      for (const unit of sortedUnits) {
+        if (unit.type === 'group') {
+          await chrome.tabGroups.move(unit.id, { windowId, index: targetIndex });
+        } else if (typeof unit.id === 'number') {
+          await chrome.tabs.move(unit.id, { windowId, index: targetIndex });
+        }
+        targetIndex += unit.tabs.length;
+      }
 
     } catch (error) {
       // 오류 처리는 기존과 동일하게 유지
@@ -1204,24 +1307,13 @@ class TabManager {
                 id: tab.id,
                 windowId: win.id,
                 pinned: !!tab.pinned,
+                groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
                 index: typeof tab.index === 'number' ? tab.index : 0
               }))
           : []
       );
       
       if (tabsToMoveDetails.length > 0) {
-          const processMovedTabForCache = (movedTab) => {
-              if (movedTab && this._isValidTabForProcessing(movedTab)) {
-                  const urlString = this._getTabUrlString(movedTab);
-                  const parsedUrl = this._tryParseUrl(urlString);
-                  if (parsedUrl) {
-                      const oldCacheEntry = this.urlCache.get(movedTab.id);
-                      if (oldCacheEntry) this._removeUrlFromCache(movedTab.id, oldCacheEntry.url);
-                      this._addUrlToCache(movedTab.id, parsedUrl, movedTab.windowId);
-                  }
-              }
-          };
-
           const sortBySourceWindowAndIndex = (a, b) => {
               if (a.windowId !== b.windowId) return a.windowId - b.windowId;
               return a.index - b.index;
@@ -1229,6 +1321,40 @@ class TabManager {
 
           const pinnedTabsToMove = tabsToMoveDetails.filter(tab => tab.pinned).sort(sortBySourceWindowAndIndex);
           const unpinnedTabsToMove = tabsToMoveDetails.filter(tab => !tab.pinned).sort(sortBySourceWindowAndIndex);
+          const unpinnedMoveUnits = [];
+          const groupedMoveUnitsByKey = new Map();
+
+          for (const tabDetail of unpinnedTabsToMove) {
+              if (tabDetail.groupId >= 0) {
+                  const groupKey = `${tabDetail.windowId}:${tabDetail.groupId}`;
+                  let groupUnit = groupedMoveUnitsByKey.get(groupKey);
+                  if (!groupUnit) {
+                      groupUnit = {
+                          type: 'group',
+                          id: tabDetail.groupId,
+                          windowId: tabDetail.windowId,
+                          index: tabDetail.index,
+                          tabs: []
+                      };
+                      groupedMoveUnitsByKey.set(groupKey, groupUnit);
+                      unpinnedMoveUnits.push(groupUnit);
+                  }
+                  groupUnit.tabs.push(tabDetail);
+              } else {
+                  unpinnedMoveUnits.push({
+                      type: 'tab',
+                      id: tabDetail.id,
+                      windowId: tabDetail.windowId,
+                      index: tabDetail.index,
+                      tabs: [tabDetail]
+                  });
+              }
+          }
+
+          if (groupedMoveUnitsByKey.size > 0 && typeof chrome.tabGroups?.move !== 'function') {
+              console.warn('LunaTools: 탭 그룹을 보존할 수 없어 창 합치기를 중단했습니다.');
+              return;
+          }
 
           const targetTabsBeforeMove = await chrome.tabs.query({ windowId: targetWindowId });
           let nextPinnedInsertIndex = targetTabsBeforeMove.filter(tab => tab.pinned).length;
@@ -1241,22 +1367,29 @@ class TabManager {
                       if (repinnedTab) movedTab = repinnedTab;
                   }
                   nextPinnedInsertIndex += 1;
-                  processMovedTabForCache(movedTab);
               } catch (err) {
-                  const cachedInfo = this.urlCache.get(tabDetail.id);
-                  if (cachedInfo) this._removeUrlFromCache(tabDetail.id, cachedInfo.url);
+                  console.warn(`LunaTools: 고정 탭 ${tabDetail.id} 이동 실패`, err);
               }
           }
 
-          for (const tabDetail of unpinnedTabsToMove) {
+          for (const moveUnit of unpinnedMoveUnits) {
               try {
-                  const movedTab = await chrome.tabs.move(tabDetail.id, { windowId: targetWindowId, index: -1 });
-                  processMovedTabForCache(movedTab);
+                  if (moveUnit.type === 'group') {
+                      await chrome.tabGroups.move(moveUnit.id, { windowId: targetWindowId, index: -1 });
+                  } else {
+                      await chrome.tabs.move(moveUnit.id, { windowId: targetWindowId, index: -1 });
+                  }
               } catch (err) {
-                  const cachedInfo = this.urlCache.get(tabDetail.id);
-                  if (cachedInfo) this._removeUrlFromCache(tabDetail.id, cachedInfo.url);
+                  const unitLabel = moveUnit.type === 'group'
+                      ? `탭 그룹 ${moveUnit.id}`
+                      : `탭 ${moveUnit.id}`;
+                  console.warn(`LunaTools: ${unitLabel} 이동 실패`, err);
               }
           }
+
+          // 그룹 이동은 여러 탭의 windowId/groupId를 한 번에 바꿉니다.
+          // 실제 브라우저 상태를 다시 읽어 캐시를 완전히 동기화합니다.
+          await this.initializeCache();
       }
 
       const remainingWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });

@@ -10,9 +10,9 @@ LunaTools는 아래에 명시된 오픈소스 덕분에 만들어질 수 있었�
 
 ### Frankfurter
 
-- **용도**: 환율 변환 기능에 필요한 최신 영업일 기준 환율 데이터를 가져오기 위해 사용됩니다. 환율은 매일 약 16:00 CET에 갱신됩니다.
+- **용도**: 환율 변환 기능에 필요한 최신 영업일 기준 유럽중앙은행(ECB) 환율 데이터를 가져오기 위해 사용됩니다. 환율은 매일 약 16:00 CET에 갱신됩니다.
 - **서비스 및 문서**: https://frankfurter.dev/
-- **API**: https://api.frankfurter.dev/v1/
+- **API**: Frankfurter v2의 ECB 공급처 필터 사용 (`https://api.frankfurter.dev/v2/rates?base=EUR&providers=ECB`)
 - **소스 코드**: https://github.com/lineofflight/frankfurter
 - **라이선스**: MIT License (아래 전문 참고)
 
