@@ -2739,6 +2739,7 @@ document.addEventListener('DOMContentLoaded', function() {
             SAVE_TOO_MANY_WINDOWS: (max) => `저장 제한 초과: 한 세션에 저장할 수 있는 창은 최대 ${max}개입니다.`,
             SESSION_DATA_CORRUPTED: '저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 기존 데이터를 보호하기 위해 저장·편집 작업을 중단했습니다.',
             SESSION_DATA_WARNING: '⚠️ 저장된 세션 데이터에 유효하지 않은 항목이 있습니다. 유효한 세션만 표시하며, 기존 데이터 보호를 위해 저장·편집을 차단합니다.',
+            SESSION_TABS_CHANGED_DURING_CONFIRM: '⚠️ 확인하는 동안 탭 구성이 변경되어 저장·닫기를 중단했습니다. 현재 상태를 확인한 뒤 다시 시도해주세요.',
             SESSION_SAVED_AND_TABS_CLOSED: (name, count) => `✅ '${escapeHtml(name)}'으로 저장하고 ${count}개의 탭을 닫았습니다.`,
             SESSION_SAVED_TABS_CLOSE_FAILED: (name) => `⚠️ 탭 닫기 실패. '${escapeHtml(name)}' 세션은 저장되었습니다.`,
             SESSION_SAVED_TABS_PARTIALLY_CLOSED: (name, closed, failed) => `⚠️ '${escapeHtml(name)}' 세션은 저장했습니다. ${closed}개 탭을 닫았고 ${failed}개는 상태 변경으로 남겨두었습니다.`,
@@ -2992,10 +2993,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const isStableSessionClosingCandidate = (liveTab, candidate) => {
         const navigationState = getSessionTabNavigationState(liveTab);
+        const wasAccessedAfterSnapshot = Number.isFinite(candidate?.lastAccessed) &&
+          Number.isFinite(liveTab?.lastAccessed) &&
+          liveTab.lastAccessed > candidate.lastAccessed;
         return liveTab?.windowId === candidate?.windowId &&
+          !wasAccessedAfterSnapshot &&
           !navigationState.hasPendingUrl &&
           navigationState.committedUrl === candidate?.url;
       };
+
+      const getSessionClosingCandidateSignature = (snapshot) => JSON.stringify(
+        (Array.isArray(snapshot?.closingCandidates) ? snapshot.closingCandidates : [])
+          .map(candidate => [
+            candidate.id,
+            candidate.windowId,
+            candidate.url,
+            Number.isFinite(candidate.lastAccessed) ? candidate.lastAccessed : null
+          ])
+          .sort((left, right) => left[0] - right[0])
+      );
 
       const isValidUrl = (url) => Boolean(normalizeSessionUrl(url));
 
@@ -3364,7 +3380,8 @@ document.addEventListener('DOMContentLoaded', function() {
               .map(({ tab, normalizedUrl }) => ({
                 id: tab.id,
                 windowId: tab.windowId,
-                url: normalizedUrl
+                url: normalizedUrl,
+                lastAccessed: Number.isFinite(tab.lastAccessed) ? tab.lastAccessed : null
               })),
             captureFailed: false
           };
@@ -3676,12 +3693,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(initialSnapshot.tabs.length))) return;
 
-        // Re-capture after confirmation. Anything opened after this snapshot is
-        // neither part of the saved session nor eligible for automatic closing.
+        // Re-capture after confirmation, but never expand or change the
+        // destructive target set without renewed user consent.
         const snapshot = await getTabsSnapshot(CONSTANTS.SAVE_SCOPES.ALL_WINDOWS);
         if (snapshot.captureFailed) return;
         if (snapshot.tabs.length === 0) {
           showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
+          return;
+        }
+        if (getSessionClosingCandidateSignature(initialSnapshot) !==
+            getSessionClosingCandidateSignature(snapshot)) {
+          showToast(
+            CONSTANTS.MESSAGES.SESSION_TABS_CHANGED_DURING_CONFIRM,
+            CONSTANTS.UI.TOAST_DURATION * 1.5
+          );
           return;
         }
         if (!canSaveTabCount(snapshot.tabs.length) || !canSaveWindowCount(snapshot.tabs)) return;
@@ -3741,25 +3766,24 @@ document.addEventListener('DOMContentLoaded', function() {
           let failedCount = 0;
           for (const candidate of candidatesToClose) {
             try {
-              // The first verification pass can take noticeable time with a
-              // large session. Re-check immediately before each destructive
-              // removal so navigation/window changes made meanwhile survive.
-              const liveTab = await chrome.tabs.get(candidate.id);
-              if (!isStableSessionClosingCandidate(liveTab, candidate)) {
-                changedCount++;
-                continue;
-              }
-
               // Verification and removal can span several seconds for a large
               // session. Refresh the protected foreground tab immediately
-              // before every destructive removal so a tab selected while the
-              // closing loop is running is never removed.
+              // before the final state read for every destructive removal.
               const [activeTabBeforeRemoval] = await chrome.tabs.query({
                 active: true,
                 lastFocusedWindow: true
               });
               if (activeTabBeforeRemoval?.id === candidate.id) {
                 protectedTabIds.add(candidate.id);
+                changedCount++;
+                continue;
+              }
+
+              // Keep the state read as the final asynchronous operation before
+              // removal. URL/window changes, pending navigation, and any tab
+              // accessed since the snapshot all make the candidate ineligible.
+              const liveTab = await chrome.tabs.get(candidate.id);
+              if (!isStableSessionClosingCandidate(liveTab, candidate)) {
                 changedCount++;
                 continue;
               }
