@@ -2134,10 +2134,20 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 const currentTab = await chrome.tabs.get(createdTab.id);
                 const currentUrl = normalizeUrlForOpening(currentTab.pendingUrl || currentTab.url || '');
+                const createdGroupId = Number.isInteger(createdTab.groupId) ? createdTab.groupId : -1;
+                const currentGroupId = Number.isInteger(currentTab.groupId) ? currentTab.groupId : -1;
+                const wasAccessedAfterCreation = Number.isFinite(createdTab.lastAccessed) &&
+                    Number.isFinite(currentTab.lastAccessed) &&
+                    currentTab.lastAccessed > createdTab.lastAccessed;
+                const structureChanged = currentTab.windowId !== createdTab.windowId ||
+                    currentTab.index !== createdTab.index ||
+                    Boolean(currentTab.pinned) !== Boolean(createdTab.pinned) ||
+                    currentGroupId !== createdGroupId;
 
                 // Once the user has interacted with the tab, it no longer belongs
                 // exclusively to the cancelled run and must not be removed.
-                if (currentTab.active || currentTab.pinned || currentUrl !== expectedUrl) return;
+                if (currentTab.active || currentTab.highlighted || currentTab.pinned ||
+                    wasAccessedAfterCreation || structureChanged || currentUrl !== expectedUrl) return;
 
                 await chrome.tabs.remove(createdTab.id);
             } catch (error) {
@@ -2991,12 +3001,22 @@ document.addEventListener('DOMContentLoaded', function() {
         };
       };
 
-      const isStableSessionClosingCandidate = (liveTab, candidate) => {
+      const getSessionTabGroupId = (tab) => Number.isInteger(tab?.groupId) ? tab.groupId : -1;
+
+      const isStableSessionClosingCandidate = (
+        liveTab,
+        candidate,
+        { expectedIndex = candidate?.index } = {}
+      ) => {
         const navigationState = getSessionTabNavigationState(liveTab);
         const wasAccessedAfterSnapshot = Number.isFinite(candidate?.lastAccessed) &&
           Number.isFinite(liveTab?.lastAccessed) &&
           liveTab.lastAccessed > candidate.lastAccessed;
         return liveTab?.windowId === candidate?.windowId &&
+          Number.isInteger(expectedIndex) &&
+          liveTab?.index === expectedIndex &&
+          Boolean(liveTab?.pinned) === Boolean(candidate?.pinned) &&
+          getSessionTabGroupId(liveTab) === getSessionTabGroupId(candidate) &&
           !wasAccessedAfterSnapshot &&
           !navigationState.hasPendingUrl &&
           navigationState.committedUrl === candidate?.url;
@@ -3007,7 +3027,10 @@ document.addEventListener('DOMContentLoaded', function() {
           .map(candidate => [
             candidate.id,
             candidate.windowId,
+            candidate.index,
             candidate.url,
+            Boolean(candidate.pinned),
+            getSessionTabGroupId(candidate),
             Number.isFinite(candidate.lastAccessed) ? candidate.lastAccessed : null
           ])
           .sort((left, right) => left[0] - right[0])
@@ -3376,11 +3399,16 @@ document.addEventListener('DOMContentLoaded', function() {
               windowId: Number.isInteger(tab.windowId) ? tab.windowId : undefined
             })),
             closingCandidates: validTabEntries
-              .filter(({ tab }) => Number.isInteger(tab.id) && Number.isInteger(tab.windowId))
+              .filter(({ tab }) => Number.isInteger(tab.id) &&
+                Number.isInteger(tab.windowId) &&
+                Number.isInteger(tab.index))
               .map(({ tab, normalizedUrl }) => ({
                 id: tab.id,
                 windowId: tab.windowId,
+                index: tab.index,
                 url: normalizedUrl,
+                pinned: Boolean(tab.pinned),
+                groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
                 lastAccessed: Number.isFinite(tab.lastAccessed) ? tab.lastAccessed : null
               })),
             captureFailed: false
@@ -3764,6 +3792,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
           let closedCount = 0;
           let failedCount = 0;
+          const closedSnapshotIndicesByWindow = new Map();
           for (const candidate of candidatesToClose) {
             try {
               // Verification and removal can span several seconds for a large
@@ -3780,15 +3809,23 @@ document.addEventListener('DOMContentLoaded', function() {
               }
 
               // Keep the state read as the final asynchronous operation before
-              // removal. URL/window changes, pending navigation, and any tab
-              // accessed since the snapshot all make the candidate ineligible.
+              // removal. Navigation, structural changes, and any tab accessed
+              // since the snapshot all make the candidate ineligible. Account
+              // only for index shifts caused by removals completed in this loop.
+              const closedSnapshotIndices = closedSnapshotIndicesByWindow.get(candidate.windowId) || [];
+              const expectedIndex = candidate.index - closedSnapshotIndices.reduce(
+                (count, closedIndex) => count + (closedIndex < candidate.index ? 1 : 0),
+                0
+              );
               const liveTab = await chrome.tabs.get(candidate.id);
-              if (!isStableSessionClosingCandidate(liveTab, candidate)) {
+              if (!isStableSessionClosingCandidate(liveTab, candidate, { expectedIndex })) {
                 changedCount++;
                 continue;
               }
 
               await chrome.tabs.remove(candidate.id);
+              closedSnapshotIndices.push(candidate.index);
+              closedSnapshotIndicesByWindow.set(candidate.windowId, closedSnapshotIndices);
               closedCount++;
             } catch (closeError) {
               const closeErrorMessage = String(closeError?.message || '').toLowerCase();
