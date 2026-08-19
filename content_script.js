@@ -16,6 +16,20 @@
     );
   }
 
+  function getExplicitRulePort(entry, hasHttpScheme) {
+    const withoutScheme = hasHttpScheme ? entry.replace(/^https?:\/\//i, '') : entry;
+    const authority = withoutScheme.split(/[/?#]/u, 1)[0];
+    const portMatch = authority.match(/:(\d{1,5})$/u);
+    return portMatch ? String(Number(portMatch[1])) : '';
+  }
+
+  function getEffectiveUrlPort(url) {
+    if (url.port) return url.port;
+    if (url.protocol === 'http:') return '80';
+    if (url.protocol === 'https:') return '443';
+    return '';
+  }
+
   function parseSiteRule(rawRule, { allowPath = false } = {}) {
     const entry = String(rawRule || '').trim();
     if (!entry) return null;
@@ -34,6 +48,8 @@
 
       return {
         hostname,
+        protocol: hasHttpScheme ? parsed.protocol : '',
+        port: getExplicitRulePort(entry, hasHttpScheme),
         pathname,
         search: allowPath ? parsed.search : '',
         hash: allowPath && parsed.hash ? parsed.hash.replace(/\/+$/, '') : ''
@@ -51,7 +67,11 @@
 
   function matchesLockedSiteRule(currentUrl, rawRule) {
     const rule = parseSiteRule(rawRule);
-    return Boolean(rule && matchesHostnameRule(currentUrl.hostname, rule.hostname));
+    return Boolean(
+      rule &&
+      matchesHostnameRule(currentUrl.hostname, rule.hostname) &&
+      (!rule.port || getEffectiveUrlPort(currentUrl) === rule.port)
+    );
   }
 
   function includesSearchParameters(currentSearch, expectedSearch) {
@@ -89,6 +109,14 @@
     }
 
     if (!matchesHostnameRule(currentUrl.hostname, structuredRule.hostname)) {
+      return false;
+    }
+
+    if (structuredRule.protocol && currentUrl.protocol !== structuredRule.protocol) {
+      return false;
+    }
+
+    if (structuredRule.port && getEffectiveUrlPort(currentUrl) !== structuredRule.port) {
       return false;
     }
 
