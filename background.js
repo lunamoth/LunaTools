@@ -1076,6 +1076,10 @@ class TabManager {
     return liveUrl;
   }
 
+  _isTabInSplitView(tab) {
+    return Number.isInteger(tab?.splitViewId) && tab.splitViewId >= 0;
+  }
+
   _selectDuplicateTabToKeep(liveTabs, currentTabId, currentBecameDuplicate) {
     const pinnedTabs = liveTabs.filter(tab => Boolean(tab.pinned));
     const candidates = pinnedTabs.length > 0 ? pinnedTabs : liveTabs;
@@ -1136,7 +1140,10 @@ class TabManager {
           currentBecameDuplicate
         );
         const tabsToRemove = liveDuplicateTabs
-          .filter(tab => tab.id !== tabToKeep.id)
+          // Never close a Split View participant automatically. If one or more
+          // split tabs share the URL, remove only ordinary duplicates and leave
+          // the split relationship intact.
+          .filter(tab => tab.id !== tabToKeep.id && !this._isTabInSplitView(tab))
           .sort((a, b) => this._compareTabAge(b, a));
 
         for (const duplicateTab of tabsToRemove) {
@@ -1183,6 +1190,12 @@ class TabManager {
             this._refreshTabCacheFromLiveTab(liveDuplicate);
             continue;
           }
+          // The tab may have entered Split View after the initial duplicate scan.
+          // Re-check the live object immediately before any focus/removal workflow.
+          if (this._isTabInSplitView(liveDuplicate)) {
+            this._refreshTabCacheFromLiveTab(liveDuplicate);
+            continue;
+          }
 
           try {
             if (liveDuplicate.active) {
@@ -1219,6 +1232,14 @@ class TabManager {
                 }
                 // Never remove the active duplicate unless the intended keeper
                 // was successfully focused and both tabs are still unchanged.
+                continue;
+              }
+
+              // The duplicate can enter Split View while focus is moving to
+              // the keeper. Use the post-focus live state, not the earlier snapshot.
+              if (this._isTabInSplitView(liveDuplicate)) {
+                this._refreshTabCacheFromLiveTab(liveKeeper);
+                this._refreshTabCacheFromLiveTab(liveDuplicate);
                 continue;
               }
 
