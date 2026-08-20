@@ -3003,6 +3003,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const getSessionTabGroupId = (tab) => Number.isInteger(tab?.groupId) ? tab.groupId : -1;
 
+      const getSessionGroupInfoSignature = (groupInfo) => {
+        const normalizedGroupInfo = normalizeSessionGroupInfo(groupInfo);
+        if (!isValidSessionGroupInfo(normalizedGroupInfo, { requireComplete: true })) return null;
+        return JSON.stringify([
+          typeof normalizedGroupInfo.title === 'string' ? normalizedGroupInfo.title : '',
+          normalizedGroupInfo.color,
+          normalizedGroupInfo.collapsed
+        ]);
+      };
+
       const isStableSessionClosingCandidate = (
         liveTab,
         candidate,
@@ -3022,6 +3032,31 @@ document.addEventListener('DOMContentLoaded', function() {
           navigationState.committedUrl === candidate?.url;
       };
 
+      const isStableSessionClosingCandidateWithGroup = async (
+        liveTab,
+        candidate,
+        options = {}
+      ) => {
+        if (!isStableSessionClosingCandidate(liveTab, candidate, options)) return false;
+
+        const groupId = getSessionTabGroupId(candidate);
+        if (groupId < 0) return true;
+        if (typeof chrome.tabGroups?.get !== 'function') return false;
+
+        const expectedGroupSignature = getSessionGroupInfoSignature(candidate?.groupInfo);
+        if (!expectedGroupSignature) return false;
+
+        try {
+          const liveGroup = await chrome.tabGroups.get(groupId);
+          if (!Number.isInteger(liveGroup?.windowId) || liveGroup.windowId !== candidate.windowId) {
+            return false;
+          }
+          return getSessionGroupInfoSignature(liveGroup) === expectedGroupSignature;
+        } catch (_) {
+          return false;
+        }
+      };
+
       const getSessionClosingCandidateSignature = (snapshot) => JSON.stringify(
         (Array.isArray(snapshot?.closingCandidates) ? snapshot.closingCandidates : [])
           .map(candidate => [
@@ -3031,6 +3066,9 @@ document.addEventListener('DOMContentLoaded', function() {
             candidate.url,
             Boolean(candidate.pinned),
             getSessionTabGroupId(candidate),
+            getSessionTabGroupId(candidate) >= 0
+              ? getSessionGroupInfoSignature(candidate.groupInfo)
+              : null,
             Number.isFinite(candidate.lastAccessed) ? candidate.lastAccessed : null
           ])
           .sort((left, right) => left[0] - right[0])
@@ -3409,6 +3447,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 url: normalizedUrl,
                 pinned: Boolean(tab.pinned),
                 groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
+                groupInfo: Number.isInteger(tab.groupId) && tab.groupId > -1
+                  ? normalizeSessionGroupInfo(
+                      capturedGroupsByKey.get(`${tab.windowId}:${tab.groupId}`) || null
+                    )
+                  : null,
                 lastAccessed: Number.isFinite(tab.lastAccessed) ? tab.lastAccessed : null
               })),
             captureFailed: false
@@ -3431,7 +3474,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return false;
       };
       
-      const restoreTabGroupsForWindow = async (createdTabs, windowId) => {
+      const restoreTabGroupsForWindow = async (createdTabs, windowId, onGroupCreated = null) => {
         const groupsToRestore = new Map();
         createdTabs.forEach(({ savedTab, createdTabId }) => {
           if (!Number.isInteger(createdTabId) || savedTab.pinned || typeof savedTab.groupId !== 'number' || savedTab.groupId < 0) return;
@@ -3455,6 +3498,9 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           try {
             const newGroupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
+            if (typeof onGroupCreated === 'function') {
+              tabIds.forEach(tabId => onGroupCreated(tabId, newGroupId));
+            }
             const updateProperties = {};
             if (groupInfo && typeof groupInfo.title === 'string') updateProperties.title = groupInfo.title;
             if (groupInfo && SUPPORTED_TAB_GROUP_COLORS.has(groupInfo.color)) updateProperties.color = groupInfo.color;
@@ -3530,6 +3576,7 @@ document.addEventListener('DOMContentLoaded', function() {
               windowId: createdWindowId,
               expectedUrl: firstTab.url,
               expectedPinned: Boolean(createdFirstTab.pinned),
+              expectedGroupId: -1,
               initialLastAccessed: Number.isFinite(createdFirstTab.lastAccessed)
                 ? createdFirstTab.lastAccessed
                 : null
@@ -3559,13 +3606,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 windowId: createdWindowId,
                 expectedUrl: savedTab.url,
                 expectedPinned: Boolean(createdTab.pinned),
+                expectedGroupId: -1,
                 initialLastAccessed: Number.isFinite(createdTab.lastAccessed)
                   ? createdTab.lastAccessed
                   : null
               });
             }
 
-            await restoreTabGroupsForWindow(createdTabs, createdWindowId);
+            await restoreTabGroupsForWindow(createdTabs, createdWindowId, (tabId, groupId) => {
+              const restoreTab = createdRestoreTabs.find(item => item.tabId === tabId);
+              if (restoreTab) restoreTab.expectedGroupId = groupId;
+            });
           }
 
           if (createdWindowIds.length > 0) {
@@ -3600,12 +3651,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 Number.isFinite(liveTab.lastAccessed) &&
                 liveTab.lastAccessed > restoreTab.initialLastAccessed;
               const hasPinnedStateChanged = Boolean(liveTab.pinned) !== restoreTab.expectedPinned;
+              const hasGroupMembershipChanged = getSessionTabGroupId(liveTab) !==
+                (Number.isInteger(restoreTab.expectedGroupId) ? restoreTab.expectedGroupId : -1);
 
               if (!isStillInRestoreWindow ||
                   !isStillOnRestoreUrl ||
                   isSelectedInFocusedWindow ||
                   wasAccessedAfterCreation ||
-                  hasPinnedStateChanged) {
+                  hasPinnedStateChanged ||
+                  hasGroupMembershipChanged) {
                 preservedChangedTabCount += 1;
                 continue;
               }
@@ -3775,7 +3829,7 @@ document.addEventListener('DOMContentLoaded', function() {
               // A raw pendingUrl means navigation is still in flight even when
               // its scheme is unsupported and normalization returns null. Keep
               // such tabs instead of closing content that was not stably saved.
-              if (isStableSessionClosingCandidate(liveTab, candidate)) {
+              if (await isStableSessionClosingCandidateWithGroup(liveTab, candidate)) {
                 verifiedCandidates.push(candidate);
               } else {
                 changedCount++;
@@ -3818,7 +3872,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 0
               );
               const liveTab = await chrome.tabs.get(candidate.id);
-              if (!isStableSessionClosingCandidate(liveTab, candidate, { expectedIndex })) {
+              if (!(await isStableSessionClosingCandidateWithGroup(liveTab, candidate, { expectedIndex }))) {
                 changedCount++;
                 continue;
               }
