@@ -3025,6 +3025,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return liveTab?.windowId === candidate?.windowId &&
           Number.isInteger(expectedIndex) &&
           liveTab?.index === expectedIndex &&
+          Boolean(liveTab?.active) === Boolean(candidate?.active) &&
           Boolean(liveTab?.pinned) === Boolean(candidate?.pinned) &&
           getSessionTabGroupId(liveTab) === getSessionTabGroupId(candidate) &&
           !wasAccessedAfterSnapshot &&
@@ -3051,10 +3052,18 @@ document.addEventListener('DOMContentLoaded', function() {
           if (!Number.isInteger(liveGroup?.windowId) || liveGroup.windowId !== candidate.windowId) {
             return false;
           }
-          return getSessionGroupInfoSignature(liveGroup) === expectedGroupSignature;
+          if (getSessionGroupInfoSignature(liveGroup) !== expectedGroupSignature) {
+            return false;
+          }
         } catch (_) {
           return false;
         }
+
+        // 그룹 조회를 기다리는 동안 탭이 활성화되거나 이동·탐색될 수 있습니다.
+        // 삭제 직전 판단에는 그룹 조회 뒤 다시 읽은 최신 탭 상태를 사용합니다.
+        // tabs.get() 실패는 호출자가 이미 닫힌 탭과 실제 오류를 구분하도록 전달합니다.
+        const latestLiveTab = await chrome.tabs.get(candidate.id);
+        return isStableSessionClosingCandidate(latestLiveTab, candidate, options);
       };
 
       const getSessionClosingCandidateSignature = (snapshot) => JSON.stringify(
@@ -3064,6 +3073,7 @@ document.addEventListener('DOMContentLoaded', function() {
             candidate.windowId,
             candidate.index,
             candidate.url,
+            Boolean(candidate.active),
             Boolean(candidate.pinned),
             getSessionTabGroupId(candidate),
             getSessionTabGroupId(candidate) >= 0
@@ -3445,6 +3455,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 windowId: tab.windowId,
                 index: tab.index,
                 url: normalizedUrl,
+                active: Boolean(tab.active),
                 pinned: Boolean(tab.pinned),
                 groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
                 groupInfo: Number.isInteger(tab.groupId) && tab.groupId > -1
@@ -3842,7 +3853,17 @@ document.addEventListener('DOMContentLoaded', function() {
           // Protect a tab selected while verification was running.
           const [latestActiveTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
           if (Number.isInteger(latestActiveTab?.id)) protectedTabIds.add(latestActiveTab.id);
-          const candidatesToClose = verifiedCandidates.filter(candidate => !protectedTabIds.has(candidate.id));
+          const candidatesToClose = verifiedCandidates
+            .filter(candidate => !protectedTabIds.has(candidate.id))
+            .sort((a, b) => {
+              if (a.windowId !== b.windowId) return a.windowId - b.windowId;
+
+              // 각 창의 활성 탭을 먼저 닫으면 Chrome이 다음 탭을 자동 활성화해
+              // lastAccessed를 바꿉니다. 활성 탭을 마지막에 닫아, 확장 프로그램
+              // 자체 동작을 사용자 변경으로 오인해 탭을 남기는 일을 막습니다.
+              if (Boolean(a.active) !== Boolean(b.active)) return a.active ? 1 : -1;
+              return a.index - b.index;
+            });
 
           let closedCount = 0;
           let failedCount = 0;
