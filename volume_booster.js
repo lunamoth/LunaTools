@@ -130,6 +130,8 @@
         #pendingDetachedMediaRefs = new Set();
         #hasSetupMedia = false;
         #userHasInteracted = false; 
+        #targetVolume = 1.0;
+        #allowNewSetup = false;
 
         setUserInteracted() {
             this.#userHasInteracted = true;
@@ -170,14 +172,18 @@
         }
 
         async updateAllVolumes(isActivated, multiplier) {
+            // 비동기 AudioContext 재개가 역순으로 끝나더라도 마지막 사용자 상태를 적용합니다.
+            this.#targetVolume = isActivated ? multiplier : 1.0;
+            this.#allowNewSetup = isActivated;
+
             const context = await this.ensureContextIsRunning();
             if (!context) return; 
-            const volume = isActivated ? multiplier : 1.0;
+            const volume = this.#targetVolume;
             this.#applyVolume(
                 this.#findAllMediaElements(document.documentElement),
                 volume,
                 context,
-                isActivated
+                this.#allowNewSetup
             );
             this.#applyVolumeToDetachedMedia(volume, context);
         }
@@ -201,28 +207,35 @@
             }
         }
 
-        async processNewNodes(nodeList, isActivated, multiplier) {
+        async processNewNodes(nodeList) {
             const context = await this.ensureContextIsRunning();
             if (!context || !nodeList?.length) return; 
 
             const newMediaElements = this.#findMediaInNodes(nodeList);
             if (newMediaElements.length === 0) return;
 
-            const volume = isActivated ? multiplier : 1.0;
-            this.#applyVolume(newMediaElements, volume, context, isActivated);
+            this.#applyVolume(
+                newMediaElements,
+                this.#targetVolume,
+                context,
+                this.#allowNewSetup
+            );
         }
 
-        handleAddedNodes(nodeList, isActivated, multiplier) {
+        handleAddedNodes(nodeList) {
             if (!this.#hasSetupMedia || !this.#audioContext || !nodeList?.length) return;
 
-            const volume = isActivated ? multiplier : 1.0;
             for (const media of this.#findMediaInNodes(nodeList)) {
                 if (!media.isConnected) continue;
 
                 this.#cancelPendingDetachedCleanup(media);
                 const audioComponents = this.#setup(media, false);
                 if (audioComponents?.connected) {
-                    audioComponents.gainNode.gain.setTargetAtTime(volume, this.#audioContext.currentTime, 0.05);
+                    audioComponents.gainNode.gain.setTargetAtTime(
+                        this.#targetVolume,
+                        this.#audioContext.currentTime,
+                        0.05
+                    );
                 }
             }
         }
@@ -258,7 +271,11 @@
 
                 const audioComponents = this.#setup(mediaElement, false);
                 if (audioComponents?.connected) {
-                    audioComponents.gainNode.gain.setTargetAtTime(1.0, context.currentTime, 0.05);
+                    audioComponents.gainNode.gain.setTargetAtTime(
+                        this.#targetVolume,
+                        context.currentTime,
+                        0.05
+                    );
                     this.#forgetDisconnectedMedia(mediaElement);
                 }
             }
@@ -519,7 +536,7 @@
                 } else {
                     const nodes = Array.from(this.#pendingAddedNodes);
                     this.#pendingAddedNodes.clear();
-                    await this.#audioProcessor.processNewNodes(nodes, this.#isActivated, CONFIG.VOLUME_MULTIPLIER);
+                    await this.#audioProcessor.processNewNodes(nodes);
                 }
             } finally {
                 this.#isFlushingPendingNodes = false;
@@ -599,11 +616,7 @@
 
                 if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
                 if (addedNodes.length > 0) {
-                    this.#audioProcessor.handleAddedNodes(
-                        addedNodes,
-                        this.#isActivated,
-                        CONFIG.VOLUME_MULTIPLIER
-                    );
+                    this.#audioProcessor.handleAddedNodes(addedNodes);
                     if (this.#isActivated) {
                         this.#queueAddedNodes(addedNodes);
                     } else {
