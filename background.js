@@ -1080,6 +1080,24 @@ class TabManager {
     return Number.isInteger(tab?.splitViewId) && tab.splitViewId >= 0;
   }
 
+  async _canAutomaticallyRemoveTabFromGroup(tab) {
+    const groupId = Number.isInteger(tab?.groupId) ? tab.groupId : -1;
+    if (groupId < 0) return true;
+
+    // Shared tab-group changes are propagated to collaborators, while LunaTools
+    // cannot recreate the group's shared identity. If the group state cannot be
+    // proven safe, preserve the tab instead of performing an automatic removal.
+    if (typeof chrome.tabGroups?.get !== 'function') return false;
+    try {
+      const group = await chrome.tabGroups.get(groupId);
+      return Number.isInteger(group?.windowId) &&
+        group.windowId === tab.windowId &&
+        group.shared !== true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   _selectDuplicateTabToKeep(liveTabs, currentTabId, currentBecameDuplicate) {
     const pinnedTabs = liveTabs.filter(tab => Boolean(tab.pinned));
     const candidates = pinnedTabs.length > 0 ? pinnedTabs : liveTabs;
@@ -1258,6 +1276,41 @@ class TabManager {
                 this._refreshTabCacheFromLiveTab(liveDuplicate);
                 continue;
               }
+            }
+
+            const duplicateGroupId = Number.isInteger(liveDuplicate.groupId)
+              ? liveDuplicate.groupId
+              : -1;
+            if (!(await this._canAutomaticallyRemoveTabFromGroup(liveDuplicate))) {
+              this._refreshTabCacheFromLiveTab(liveKeeper);
+              this._refreshTabCacheFromLiveTab(liveDuplicate);
+              continue;
+            }
+
+            // The group lookup above is asynchronous. Re-read both tabs and
+            // require the duplicate to remain inactive, unchanged, outside
+            // Split View, and in the exact group that was just checked.
+            [liveKeeper, liveDuplicate] = await Promise.all([
+              chrome.tabs.get(liveKeeper.id),
+              chrome.tabs.get(liveDuplicate.id)
+            ]);
+            const finalKeeperUrl = this._tryParseUrl(this._getTabUrlString(liveKeeper));
+            const finalDuplicateUrl = this._tryParseUrl(this._getTabUrlString(liveDuplicate));
+            const finalDuplicateGroupId = Number.isInteger(liveDuplicate.groupId)
+              ? liveDuplicate.groupId
+              : -1;
+            const removalStateIsSafe =
+              liveKeeper.windowId === currentTab.windowId &&
+              finalKeeperUrl?.href === parsedUrl.href &&
+              liveDuplicate.active === false &&
+              liveDuplicate.windowId === currentTab.windowId &&
+              finalDuplicateUrl?.href === parsedUrl.href &&
+              finalDuplicateGroupId === duplicateGroupId &&
+              !this._isTabInSplitView(liveDuplicate);
+            if (!removalStateIsSafe) {
+              this._refreshTabCacheFromLiveTab(liveKeeper);
+              this._refreshTabCacheFromLiveTab(liveDuplicate);
+              continue;
             }
 
             await chrome.tabs.remove(liveDuplicate.id);

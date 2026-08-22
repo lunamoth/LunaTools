@@ -2063,20 +2063,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-        async function waitForTabUrlAssignment(tabId, expectedUrl) {
+        const getNormalizedTabNavigationUrls = (tab) => [tab?.pendingUrl, tab?.url]
+            .map(url => normalizeUrlForOpening(url || ''))
+            .filter(Boolean);
+
+        async function waitForTabUrlAssignment(tabId, expectedUrl, initialTab = null) {
             const deadline = Date.now() + CONFIG.DELAY_LOADING_NAVIGATION_WAIT_MS;
-            let latestTab = null;
+            let latestTab = initialTab;
+
+            if (getNormalizedTabNavigationUrls(latestTab).includes(expectedUrl)) {
+                return latestTab;
+            }
 
             while (Date.now() < deadline) {
                 latestTab = await chrome.tabs.get(tabId);
-                const candidateUrl = latestTab.pendingUrl || latestTab.url || '';
-                if (normalizeUrlForOpening(candidateUrl) === expectedUrl) {
+                if (getNormalizedTabNavigationUrls(latestTab).includes(expectedUrl)) {
                     return latestTab;
                 }
                 await wait(100);
             }
 
-            return latestTab || await chrome.tabs.get(tabId);
+            latestTab = await chrome.tabs.get(tabId);
+            if (getNormalizedTabNavigationUrls(latestTab).length === 0) {
+                throw new Error('새 탭에 대상 URL이 할당되지 않았습니다.');
+            }
+
+            // The target can redirect before the polling loop observes it. A
+            // supported web URL is safe to keep, but a blank/New Tab state is
+            // not a successful delayed-load result.
+            return latestTab;
         }
 
         async function createAndDiscardTab(url) {
@@ -2094,7 +2109,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 tabId = newTab.id;
 
-                const tabWithTargetUrl = await waitForTabUrlAssignment(tabId, normalizedUrl);
+                const tabWithTargetUrl = await waitForTabUrlAssignment(tabId, normalizedUrl, newTab);
 
                 try {
                     const discardResult = await chrome.tabs.discard(tabId);
@@ -2752,7 +2767,7 @@ document.addEventListener('DOMContentLoaded', function() {
             SESSION_TABS_CHANGED_DURING_CONFIRM: '⚠️ 확인하는 동안 탭 구성이 변경되어 저장·닫기를 중단했습니다. 현재 상태를 확인한 뒤 다시 시도해주세요.',
             SESSION_SAVED_AND_TABS_CLOSED: (name, count) => `✅ '${escapeHtml(name)}'으로 저장하고 ${count}개의 탭을 닫았습니다.`,
             SESSION_SAVED_TABS_CLOSE_FAILED: (name) => `⚠️ 탭 닫기 실패. '${escapeHtml(name)}' 세션은 저장되었습니다.`,
-            SESSION_SAVED_TABS_PARTIALLY_CLOSED: (name, closed, failed) => `⚠️ '${escapeHtml(name)}' 세션은 저장했습니다. ${closed}개 탭을 닫았고 ${failed}개는 상태 변경으로 남겨두었습니다.`,
+            SESSION_SAVED_TABS_PARTIALLY_CLOSED: (name, closed, remaining) => `⚠️ '${escapeHtml(name)}' 세션은 저장했습니다. ${closed}개 탭을 닫았고 ${remaining}개는 Split View·공유 탭 그룹 보호, 상태 변경 또는 닫기 오류로 남아 있습니다.`,
             createDuplicateNameWarning: (name) => `⚠️ 중복된 이름입니다. '${name}'(으)로 저장합니다.`,
             createSessionUpdatedMessage: (name) => `🔄 '${escapeHtml(name)}' 세션을 업데이트했습니다.`,
             createSessionSavedMessage: (name) => `💾 '${escapeHtml(name)}' 세션을 저장했습니다.`,
@@ -2763,7 +2778,7 @@ document.addEventListener('DOMContentLoaded', function() {
             createNameAlreadyExistsMessage: (name) => `⚠️ '${escapeHtml(name)}' 이름이 이미 존재합니다.`,
             createNameChangedMessage: (name) => `✅ 이름이 '${escapeHtml(name)}'(으)로 변경되었습니다.`,
             createImportSuccessMessage: (count) => `📥 ${count}개의 세션을 가져왔습니다.`,
-            createConfirmSaveAndCloseMessage: (count) => `현재 탭을 제외한 모든 탭을 닫고, 전체 ${count}개의 탭을 새 세션으로 저장하시겠습니까?`
+            createConfirmSaveAndCloseMessage: (count) => `현재 탭, Split View 탭 및 공유 탭 그룹의 탭을 제외한 다른 탭을 닫고, 전체 ${count}개의 탭을 새 세션으로 저장하시겠습니까?`
         }
       };
 
@@ -3002,6 +3017,10 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const getSessionTabGroupId = (tab) => Number.isInteger(tab?.groupId) ? tab.groupId : -1;
+      const getSessionTabGroupShared = (tab) =>
+        getSessionTabGroupId(tab) >= 0 && tab?.groupShared === true;
+      const getSessionTabSplitViewId = (tab) =>
+        Number.isInteger(tab?.splitViewId) && tab.splitViewId >= 0 ? tab.splitViewId : -1;
 
       const getSessionGroupInfoSignature = (groupInfo) => {
         const normalizedGroupInfo = normalizeSessionGroupInfo(groupInfo);
@@ -3028,6 +3047,7 @@ document.addEventListener('DOMContentLoaded', function() {
           Boolean(liveTab?.active) === Boolean(candidate?.active) &&
           Boolean(liveTab?.pinned) === Boolean(candidate?.pinned) &&
           getSessionTabGroupId(liveTab) === getSessionTabGroupId(candidate) &&
+          getSessionTabSplitViewId(liveTab) === getSessionTabSplitViewId(candidate) &&
           !wasAccessedAfterSnapshot &&
           !navigationState.hasPendingUrl &&
           navigationState.committedUrl === candidate?.url;
@@ -3055,6 +3075,9 @@ document.addEventListener('DOMContentLoaded', function() {
           if (getSessionGroupInfoSignature(liveGroup) !== expectedGroupSignature) {
             return false;
           }
+          if (Boolean(liveGroup.shared) !== getSessionTabGroupShared(candidate)) {
+            return false;
+          }
         } catch (_) {
           return false;
         }
@@ -3076,6 +3099,8 @@ document.addEventListener('DOMContentLoaded', function() {
             Boolean(candidate.active),
             Boolean(candidate.pinned),
             getSessionTabGroupId(candidate),
+            getSessionTabGroupShared(candidate),
+            getSessionTabSplitViewId(candidate),
             getSessionTabGroupId(candidate) >= 0
               ? getSessionGroupInfoSignature(candidate.groupInfo)
               : null,
@@ -3458,6 +3483,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 active: Boolean(tab.active),
                 pinned: Boolean(tab.pinned),
                 groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
+                groupShared: Number.isInteger(tab.groupId) && tab.groupId > -1 &&
+                  capturedGroupsByKey.get(`${tab.windowId}:${tab.groupId}`)?.shared === true,
+                splitViewId: getSessionTabSplitViewId(tab),
                 groupInfo: Number.isInteger(tab.groupId) && tab.groupId > -1
                   ? normalizeSessionGroupInfo(
                       capturedGroupsByKey.get(`${tab.windowId}:${tab.groupId}`) || null
@@ -3832,9 +3860,19 @@ document.addEventListener('DOMContentLoaded', function() {
           const protectedTabIds = new Set(Number.isInteger(activeTab?.id) ? [activeTab.id] : []);
           const verifiedCandidates = [];
           let changedCount = 0;
+          let protectedSplitViewCount = 0;
+          let protectedSharedGroupCount = 0;
 
           for (const candidate of snapshot.closingCandidates) {
             if (protectedTabIds.has(candidate.id)) continue;
+            if (getSessionTabSplitViewId(candidate) >= 0) {
+              protectedSplitViewCount++;
+              continue;
+            }
+            if (getSessionTabGroupShared(candidate)) {
+              protectedSharedGroupCount++;
+              continue;
+            }
             try {
               const liveTab = await chrome.tabs.get(candidate.id);
               // A raw pendingUrl means navigation is still in flight even when
@@ -3913,7 +3951,8 @@ document.addEventListener('DOMContentLoaded', function() {
               }
             }
           }
-          const notClosedCount = changedCount + failedCount;
+          const notClosedCount = protectedSplitViewCount + protectedSharedGroupCount +
+            changedCount + failedCount;
 
           if (notClosedCount > 0) {
             showToast(
