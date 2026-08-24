@@ -478,13 +478,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (hasOwn(desiredData, key)) dataToSet[key] = desiredData[key];
         }
 
-        if (Object.keys(dataToSet).length > 0) {
-            await storageArea.set(dataToSet);
-        }
-
         const keysToRemove = knownKeys.filter(key => !hasOwn(desiredData, key));
         if (keysToRemove.length > 0) {
             await storageArea.remove(keysToRemove);
+        }
+
+        // A full snapshot replaces the known-key set. Remove keys that are not
+        // in the snapshot before writing its data so the old and new large
+        // values do not temporarily coexist and exceed the storage quota.
+        // The caller keeps pre-restore snapshots and rolls them back on failure.
+        if (Object.keys(dataToSet).length > 0) {
+            await storageArea.set(dataToSet);
         }
     };
 

@@ -272,6 +272,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
+        const getTabNavigationUrlForImport = (tab) => {
+            const pendingUrl = typeof tab?.pendingUrl === 'string' ? tab.pendingUrl.trim() : '';
+            const committedUrl = typeof tab?.url === 'string' ? tab.url.trim() : '';
+
+            // pendingUrl is the tab's current navigation target; url is only
+            // the last committed page. Never fall back while a navigation is
+            // in flight, even when that pending target is unsupported.
+            return pendingUrl || committedUrl;
+        };
+
         const prepareUrlsForRun = (rawUrls) => {
             const prepared = [];
             const stats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
@@ -1766,10 +1776,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 const tabs = await chrome.tabs.query(queryOptions);
                 let skippedTabs = 0;
                 let newUrls = tabs.reduce((urls, tab) => {
-                    const normalizedUrl = normalizeUrlForOpening(tab?.url || '');
+                    const effectiveUrl = getTabNavigationUrlForImport(tab);
+                    const normalizedUrl = normalizeUrlForOpening(effectiveUrl);
                     if (normalizedUrl) {
                         urls.push(normalizedUrl);
-                    } else if (tab?.url) {
+                    } else if (effectiveUrl) {
                         skippedTabs += 1;
                     }
                     return urls;
