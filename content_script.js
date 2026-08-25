@@ -2532,6 +2532,29 @@
             const usdPrefixMatch = beforeCurrency.match(/(?:\bU\.?S\.?|\bUS)\s*$/iu);
             return usdPrefixMatch ? currencyStart - usdPrefixMatch[0].length : currencyStart;
         },
+        _getCurrencyPrefixSignContext: function(originalText, expressionStart) {
+            const beforeExpression = originalText.slice(0, expressionStart);
+            const signMatch = /([+\-\u2212\uFE63\uFF0D])\s*$/u.exec(beforeExpression);
+            if (!signMatch) {
+                return { expressionStart, hasSign: false, multiplier: 1, isCompound: false };
+            }
+
+            const signedExpressionStart = expressionStart - signMatch[0].length;
+            const beforeSign = originalText.slice(0, signedExpressionStart);
+            const immediatelyPrecedingCharacter = signedExpressionStart > 0
+                ? originalText[signedExpressionStart - 1]
+                : '';
+            const signIsAttachedToWord = /[\p{L}\p{M}\p{N}\p{Pc}]/u.test(immediatelyPrecedingCharacter);
+            const isCompound = signIsAttachedToWord || NUMERIC_VALUE_BEFORE_SIGN_REGEX.test(beforeSign);
+            const multiplier = /[\-\u2212\uFE63\uFF0D]/u.test(signMatch[1]) ? -1 : 1;
+
+            return {
+                expressionStart: signedExpressionStart,
+                hasSign: true,
+                multiplier,
+                isCompound
+            };
+        },
         _getCurrencyTokenStrength: function(originalText, currencyStart, matchedCurrencyText) {
             const token = String(matchedCurrencyText || '').trim();
             if (!token) return 0;
@@ -2585,10 +2608,25 @@
             if (leadingAmountCandidate) {
                 const parsedLeading = TextExtractor._parseAmountCandidateText(leadingAmountCandidate.amountText);
                 if (parsedLeading) {
-                    const expressionStart = TextExtractor._getCurrencyExpressionStart(originalText, currencyStart, matchedCurrencyText);
+                    const unsignedExpressionStart = TextExtractor._getCurrencyExpressionStart(originalText, currencyStart, matchedCurrencyText);
+                    const prefixSignContext = TextExtractor._getCurrencyPrefixSignContext(
+                        originalText,
+                        unsignedExpressionStart
+                    );
+                    // A sign before the currency token belongs to the amount
+                    // (for example -$5), not to unrelated surrounding text.
+                    // Reject binary expressions and double-signed values rather
+                    // than silently converting only their trailing operand.
+                    if (
+                        prefixSignContext.isCompound ||
+                        (prefixSignContext.hasSign && LEADING_NUMERIC_SIGN_REGEX.test(leadingAmountCandidate.amountText))
+                    ) {
+                        return null;
+                    }
+                    const expressionStart = prefixSignContext.expressionStart;
                     const expressionEnd = currencyEnd + leadingAmountCandidate.endOffset;
                     return {
-                        amount: parsedLeading.amount,
+                        amount: parsedLeading.amount * prefixSignContext.multiplier,
                         currencyCode,
                         originalText: originalText.slice(expressionStart, expressionEnd).trim(),
                         matchedCurrencyText,

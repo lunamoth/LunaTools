@@ -1345,7 +1345,19 @@ class TabManager {
     try {
       const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       if (typeof activeTab?.windowId === 'number') {
-        return activeTab.windowId;
+        // lastFocusedWindow can point to a popup. Sorting or merging into that
+        // window can fail midway or move normal browsing tabs to the wrong
+        // window, so apply the same normal-window validation used above.
+        try {
+          const activeWindow = await chrome.windows.get(activeTab.windowId, { populate: false });
+          if (activeWindow?.id != null && activeWindow.type === 'normal') {
+            return activeWindow.id;
+          }
+        } catch (error) {
+          if (!isWindowAccessError(error)) {
+            console.warn("LunaTools: 마지막 포커스 창 확인 중 오류 발생", error);
+          }
+        }
       }
     } catch (error) {
     }
