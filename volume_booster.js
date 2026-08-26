@@ -473,6 +473,8 @@
         #isFlushingPendingNodes = false;
         #needsFullDocumentScan = false;
         #toggleInProgress = false;
+        #domObserver = null;
+        #observedMutationRoots = new WeakSet();
 
         #queueAddedNodes(nodes) {
             for (const node of nodes) {
@@ -499,6 +501,51 @@
 
         #shouldQueueAttributeTarget(target) {
             return target instanceof Element && target.matches('video, audio, source');
+        }
+
+        #observeMutationRoot(rootNode) {
+            if (!this.#domObserver || !rootNode || this.#observedMutationRoots.has(rootNode)) return;
+
+            this.#domObserver.observe(rootNode, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['src', 'crossorigin']
+            });
+            this.#observedMutationRoots.add(rootNode);
+        }
+
+        #observeOpenShadowRoots(rootNodes) {
+            const nodesToScan = Array.from(rootNodes || []);
+            const queuedRoots = new WeakSet();
+
+            const collectShadowRoot = (element) => {
+                const shadowRoot = element?.shadowRoot;
+                if (!shadowRoot || queuedRoots.has(shadowRoot)) return;
+
+                queuedRoots.add(shadowRoot);
+                this.#observeMutationRoot(shadowRoot);
+                nodesToScan.push(shadowRoot);
+            };
+
+            while (nodesToScan.length > 0) {
+                const currentNode = nodesToScan.pop();
+                if (!currentNode) continue;
+
+                const isScannableRoot = currentNode.nodeType === Node.DOCUMENT_NODE ||
+                    currentNode.nodeType === Node.DOCUMENT_FRAGMENT_NODE ||
+                    currentNode.nodeType === Node.ELEMENT_NODE;
+                if (!isScannableRoot) continue;
+
+                if (currentNode.nodeType === Node.ELEMENT_NODE) collectShadowRoot(currentNode);
+
+                const treeWalker = document.createTreeWalker(currentNode, NodeFilter.SHOW_ELEMENT);
+                let element = treeWalker.nextNode();
+                while (element) {
+                    collectShadowRoot(element);
+                    element = treeWalker.nextNode();
+                }
+            }
         }
 
         #schedulePendingNodeScan() {
@@ -549,7 +596,6 @@
         init() {
             this.#uiController.create();
             window.addEventListener('keydown', this.#handleKeyDown.bind(this));
-            this.#setupDOMObserver();
         }
 
         async #toggleActivation() {
@@ -566,6 +612,11 @@
                 }
 
                 this.#isActivated = !this.#isActivated;
+                // 사용하지 않는 탭에는 DOM 감시 비용이 생기지 않도록 최초
+                // 활성화 시점에만 문서와 열린 ShadowRoot 관찰을 시작합니다.
+                if (this.#isActivated && !this.#domObserver) {
+                    this.#setupDOMObserver();
+                }
                 const multiplier = CONFIG.VOLUME_MULTIPLIER;
                 await this.#audioProcessor.updateAllVolumes(this.#isActivated, multiplier);
                 if (!this.#isActivated) this.#clearPendingNodeScan();
@@ -600,7 +651,9 @@
         }
 
         #setupDOMObserver() {
-            const observer = new MutationObserver((mutationsList) => {
+            if (this.#domObserver) return;
+
+            this.#domObserver = new MutationObserver((mutationsList) => {
                 const addedNodes = [];
                 const removedNodes = [];
                 for (const mutation of mutationsList) {
@@ -614,6 +667,7 @@
                     }
                 }
 
+                if (addedNodes.length > 0) this.#observeOpenShadowRoots(addedNodes);
                 if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
                 if (addedNodes.length > 0) {
                     this.#audioProcessor.handleAddedNodes(addedNodes);
@@ -627,12 +681,8 @@
                 }
             });
 
-            observer.observe(document.documentElement, {
-                childList: true,
-                subtree: true,
-                attributes: true,
-                attributeFilter: ['src', 'crossorigin']
-            });
+            this.#observeMutationRoot(document.documentElement);
+            this.#observeOpenShadowRoots([document.documentElement]);
         }
     }
 

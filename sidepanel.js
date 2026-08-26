@@ -2518,8 +2518,14 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         async function initialize() {
-            const handleGetAllTabs = createTabFetchHandler({}, '모든 창의 탭 가져오기');
-            const handleGetCurrentTabs = createTabFetchHandler({ currentWindow: true }, '현재 창의 탭 가져오기');
+            const handleGetAllTabs = createTabFetchHandler(
+                { windowType: 'normal' },
+                '모든 창의 탭 가져오기'
+            );
+            const handleGetCurrentTabs = createTabFetchHandler(
+                { currentWindow: true, windowType: 'normal' },
+                '현재 창의 탭 가져오기'
+            );
 
             if (UI.startRunButton) UI.startRunButton.addEventListener('click', handleStartRunButtonClick);
             if (UI.pauseResumeButton) {
@@ -3459,9 +3465,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const getTabsSnapshot = async (scope) => {
         try {
+          // 세션과 URL 목록은 일반 브라우저 창만 대상으로 합니다. 필터가
+          // 없으면 popup/app/devtools 창의 탭까지 저장·닫기 대상에 섞입니다.
           const queryInfo = scope === CONSTANTS.SAVE_SCOPES.CURRENT_WINDOW
-            ? { currentWindow: true }
-            : {};
+            ? { currentWindow: true, windowType: 'normal' }
+            : { windowType: 'normal' };
           const tabs = await chrome.tabs.query(queryInfo);
           if (tabs.length === 0) return { tabs: [], closingCandidates: [], captureFailed: false };
 
