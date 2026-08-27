@@ -1318,8 +1318,34 @@ class TabManager {
             this._forgetTabCreationOrder(liveDuplicate.id);
           } catch (error) {
             if (this._isTabNotFoundError(error)) {
-              this._removeUrlFromCache(liveDuplicate.id, parsedUrl);
-              this._forgetTabCreationOrder(liveDuplicate.id);
+              // Promise.all does not reveal which tab disappeared. Reconcile
+              // both IDs independently so a vanished keeper cannot evict the
+              // still-live duplicate from the cache.
+              let keeperStillExists = false;
+              try {
+                const latestKeeper = await chrome.tabs.get(liveKeeper.id);
+                keeperStillExists = true;
+                this._refreshTabCacheFromLiveTab(latestKeeper);
+              } catch (keeperError) {
+                if (this._isTabNotFoundError(keeperError)) {
+                  this._removeUrlFromCache(liveKeeper.id, parsedUrl);
+                  this._forgetTabCreationOrder(liveKeeper.id);
+                }
+              }
+
+              try {
+                const latestDuplicate = await chrome.tabs.get(liveDuplicate.id);
+                this._refreshTabCacheFromLiveTab(latestDuplicate);
+              } catch (duplicateError) {
+                if (this._isTabNotFoundError(duplicateError)) {
+                  this._removeUrlFromCache(liveDuplicate.id, parsedUrl);
+                  this._forgetTabCreationOrder(liveDuplicate.id);
+                }
+              }
+
+              // The selected keeper is no longer valid, so a new duplicate
+              // decision must be made by a later tab event using live state.
+              if (!keeperStillExists) return;
             }
           }
         }

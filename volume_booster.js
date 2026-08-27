@@ -475,6 +475,20 @@
         #toggleInProgress = false;
         #domObserver = null;
         #observedMutationRoots = new WeakSet();
+        #boundHandleMediaReady = this.#handleMediaReady.bind(this);
+
+        #handleMediaReady(event) {
+            const mediaElement = event?.target;
+            if (!this.#isActivated || !(mediaElement instanceof Element) || !mediaElement.matches('video, audio')) {
+                return;
+            }
+
+            // Assigning srcObject does not create a DOM/attribute mutation.
+            // Reuse the existing debounced path when metadata confirms that a
+            // dynamically attached MediaStream is ready, without adding polling.
+            this.#audioProcessor.handleAddedNodes([mediaElement]);
+            this.#queueAddedNodes([mediaElement]);
+        }
 
         #queueAddedNodes(nodes) {
             for (const node of nodes) {
@@ -512,6 +526,7 @@
                 attributes: true,
                 attributeFilter: ['src', 'crossorigin']
             });
+            rootNode.addEventListener('loadedmetadata', this.#boundHandleMediaReady, true);
             this.#observedMutationRoots.add(rootNode);
         }
 
