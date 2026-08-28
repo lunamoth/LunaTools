@@ -80,8 +80,6 @@
         #animationFrameId = null;
         #lastMouseEvent = null;
         #indicatorLabel = null;
-        #allLinksOnPageCached = null;
-        #domMutationObserver = null;
         #isTrustedSequence = false;
         #activeDelayedOpenController = null;
         #lastObservedScrollY = null;
@@ -99,18 +97,10 @@
         constructor() {
             this.#injectStyles();
             this.#addEventListeners();
-            this.#domMutationObserver = new MutationObserver(() => {
-                this.#allLinksOnPageCached = null;
-            });
-            const observerTarget = document.body || document.documentElement;
-            if (observerTarget) {
-                this.#domMutationObserver.observe(observerTarget, { childList: true, subtree: true });
-            }
         }
 
         destroy() {
             this.#removeEventListeners();
-            if (this.#domMutationObserver) this.#domMutationObserver.disconnect();
             this.#abortDelayedOpen();
             const styleElement = document.getElementById('drag-selector-styles');
             if (styleElement) styleElement.remove();
@@ -212,13 +202,6 @@
                 for (const el of node.querySelectorAll('*')) { if (el.shadowRoot) queue.push(el.shadowRoot); }
             }
             return links.filter(link => this.#isElementVisible(link) && link.href && !link.href.startsWith(window.location.href + '#') && ['http:', 'https:'].includes(link.protocol));
-        }
-
-        #getLinksFromCacheOrFind() {
-            if (!this.#allLinksOnPageCached) {
-                this.#allLinksOnPageCached = this.#findAllLinks(document.body);
-            }
-            return this.#allLinksOnPageCached;
         }
 
         #createVisualElements() {
@@ -548,8 +531,6 @@
             if (isEditable) return;
             
             this.#abortDelayedOpen();
-            // SPA에서 class/style만 바뀐 링크도 현재 제스처에 반영한다.
-            this.#allLinksOnPageCached = null;
             this.#modifier = modifier;
             this.#isTrustedSequence = true;
             this.#startPos = { x: e.clientX, y: e.clientY };
@@ -579,7 +560,8 @@
 
                 document.body.classList.add(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE);
                 this.#isDragging = true;
-                this.#allLinksOnPage = this.#getLinksFromCacheOrFind();
+                // 제스처마다 현재 DOM을 한 번만 읽어 SPA에서 교체된 링크까지 반영합니다.
+                this.#allLinksOnPage = this.#findAllLinks(document.body);
                 this.#createVisualElements();
 
                 if (!this.#animationFrameId) { this.#updateOnFrame(); }
