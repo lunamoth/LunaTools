@@ -1080,19 +1080,25 @@ class TabManager {
     return Number.isInteger(tab?.splitViewId) && tab.splitViewId >= 0;
   }
 
-  async _canAutomaticallyRemoveTabFromGroup(tab) {
+  async _canAutomaticallyRemoveTabFromGroup(tab, keeperTab = null) {
     const groupId = Number.isInteger(tab?.groupId) ? tab.groupId : -1;
     if (groupId < 0) return true;
 
-    // Shared tab-group changes are propagated to collaborators, while LunaTools
-    // cannot recreate the group's shared identity. If the group state cannot be
-    // proven safe, preserve the tab instead of performing an automatic removal.
+    // Removing the only member of a regular group destroys its title, color,
+    // and collapsed state. More generally, removing a duplicate whose keeper is
+    // outside the group silently changes the user's group layout. A grouped tab
+    // is therefore removable only when the verified keeper remains in the exact
+    // same non-shared group. Shared-group changes are never performed
+    // automatically because they propagate to collaborators.
     if (typeof chrome.tabGroups?.get !== 'function') return false;
     try {
       const group = await chrome.tabGroups.get(groupId);
+      const keeperGroupId = Number.isInteger(keeperTab?.groupId) ? keeperTab.groupId : -1;
       return Number.isInteger(group?.windowId) &&
         group.windowId === tab.windowId &&
-        group.shared !== true;
+        group.shared !== true &&
+        keeperTab?.windowId === tab.windowId &&
+        keeperGroupId === groupId;
     } catch (_) {
       return false;
     }
@@ -1215,6 +1221,15 @@ class TabManager {
             continue;
           }
 
+          // Do not focus away from an active grouped tab unless it is already
+          // safe to remove. Otherwise a protected duplicate would remain open
+          // after the user was unexpectedly switched to another tab.
+          if (!(await this._canAutomaticallyRemoveTabFromGroup(liveDuplicate, liveKeeper))) {
+            this._refreshTabCacheFromLiveTab(liveKeeper);
+            this._refreshTabCacheFromLiveTab(liveDuplicate);
+            continue;
+          }
+
           try {
             if (liveDuplicate.active) {
               try {
@@ -1281,7 +1296,7 @@ class TabManager {
             const duplicateGroupId = Number.isInteger(liveDuplicate.groupId)
               ? liveDuplicate.groupId
               : -1;
-            if (!(await this._canAutomaticallyRemoveTabFromGroup(liveDuplicate))) {
+            if (!(await this._canAutomaticallyRemoveTabFromGroup(liveDuplicate, liveKeeper))) {
               this._refreshTabCacheFromLiveTab(liveKeeper);
               this._refreshTabCacheFromLiveTab(liveDuplicate);
               continue;
@@ -1299,6 +1314,9 @@ class TabManager {
             const finalDuplicateGroupId = Number.isInteger(liveDuplicate.groupId)
               ? liveDuplicate.groupId
               : -1;
+            const finalKeeperGroupId = Number.isInteger(liveKeeper.groupId)
+              ? liveKeeper.groupId
+              : -1;
             const removalStateIsSafe =
               liveKeeper.windowId === currentTab.windowId &&
               finalKeeperUrl?.href === parsedUrl.href &&
@@ -1306,6 +1324,7 @@ class TabManager {
               liveDuplicate.windowId === currentTab.windowId &&
               finalDuplicateUrl?.href === parsedUrl.href &&
               finalDuplicateGroupId === duplicateGroupId &&
+              (finalDuplicateGroupId < 0 || finalKeeperGroupId === finalDuplicateGroupId) &&
               !this._isTabInSplitView(liveDuplicate);
             if (!removalStateIsSafe) {
               this._refreshTabCacheFromLiveTab(liveKeeper);
