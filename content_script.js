@@ -1853,12 +1853,28 @@
         parseKoreanNumericText: function(originalInputText) {
             if (Utils.isInvalidString(originalInputText)) return null;
             const trimmedInputText = originalInputText.trim();
-            if (Utils.hasInvalidCommaGrouping(trimmedInputText)) return null;
-            const text = trimmedInputText.replace(/,/g, '').trim();
+            const leadingSignMatch = LEADING_NUMERIC_SIGN_REGEX.exec(trimmedInputText);
+            const signMultiplier = leadingSignMatch && /[\-\u2212\uFE63\uFF0D]/u.test(leadingSignMatch[0])
+                ? -1
+                : 1;
+            const unsignedInputText = leadingSignMatch
+                ? trimmedInputText.slice(leadingSignMatch[0].length).trim()
+                : trimmedInputText;
+
+            if (
+                Utils.isInvalidString(unsignedInputText) ||
+                LEADING_NUMERIC_SIGN_REGEX.test(unsignedInputText) ||
+                Utils.hasInvalidCommaGrouping(unsignedInputText)
+            ) {
+                return null;
+            }
+
+            const applyLeadingSign = (value) => value === null ? null : value * signMultiplier;
+            const text = unsignedInputText.replace(/,/g, '').trim();
             if (text === "영") return 0;
 
             if (REGEXES.PURE_NUMBER_REGEX.test(text)) {
-                return Utils.parseFloatLenient(text);
+                return applyLeadingSign(Utils.parseFloatLenient(text));
             }
 
             const numeralReplacedText = NumberParser.replaceKoreanNumerals(text);
@@ -1871,15 +1887,15 @@
             if (remainingTextToParse.length > 0) {
                 const remainingValue = NumberParser.parseSegmentWithSubUnitsAndTens(remainingTextToParse);
                 if (remainingValue === null) {
-                    return parsedSomethingSignificant ? totalAmount : null;
+                    return parsedSomethingSignificant ? applyLeadingSign(totalAmount) : null;
                 }
                 totalAmount += remainingValue;
                 parsedSomethingSignificant = true;
             }
 
-            if (parsedSomethingSignificant) return totalAmount;
+            if (parsedSomethingSignificant) return applyLeadingSign(totalAmount);
 
-            return NumberParser.parseSegmentWithSubUnitsAndTens(numeralReplacedText);
+            return applyLeadingSign(NumberParser.parseSegmentWithSubUnitsAndTens(numeralReplacedText));
         },
         parseAmountWithMagnitudeSuffixes: function(text) {
             if (Utils.isInvalidString(text)) return null;
@@ -2202,7 +2218,7 @@
             const numeric = NUMERIC_TOKEN_PATTERN_SOURCE;
             const magnitudeSuffix = String.raw`(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT])`;
             const numericWithMagnitude = `${numeric}\\s*${magnitudeSuffix}`;
-            const koreanOrPlainNumber = String.raw`[\d,\.\s천백십경조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
+            const koreanOrPlainNumber = String.raw`[+\-\u2212\uFE63\uFF0D]?[\d,\.\s천백십경조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
             return `${NUMERIC_TOKEN_START_BOUNDARY_SOURCE}(?:${numericWithMagnitude}|${numeric}|${koreanOrPlainNumber})`;
         },
         _isStrictCurrencyAmountText: function(amountText) {
@@ -2608,6 +2624,23 @@
             if (leadingAmountCandidate) {
                 const parsedLeading = TextExtractor._parseAmountCandidateText(leadingAmountCandidate.amountText);
                 if (parsedLeading) {
+                    // If a complete amount already appears immediately before
+                    // the currency token, a signed number after that token is
+                    // the right-hand operand of an expression (5만원-10), not
+                    // a currency-prefixed amount. Do not silently convert it.
+                    if (LEADING_NUMERIC_SIGN_REGEX.test(leadingAmountCandidate.amountText)) {
+                        const precedingAmountCandidate = TextExtractor._extractTrailingAmountCandidate(
+                            originalText.slice(0, currencyStart),
+                            { allowLeadingCurrencySymbol }
+                        );
+                        if (
+                            precedingAmountCandidate &&
+                            TextExtractor._parseAmountCandidateText(precedingAmountCandidate.amountText)
+                        ) {
+                            return null;
+                        }
+                    }
+
                     const unsignedExpressionStart = TextExtractor._getCurrencyExpressionStart(originalText, currencyStart, matchedCurrencyText);
                     const prefixSignContext = TextExtractor._getCurrencyPrefixSignContext(
                         originalText,
