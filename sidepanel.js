@@ -46,7 +46,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 interactedTabIds.add(tabId);
             }
         };
-        const handleTabActivated = ({ tabId } = {}) => markIfWatched(tabId);
+        const handleTabActivated = async ({ tabId, windowId } = {}) => {
+            if (stopped || !Number.isInteger(tabId) || !Number.isInteger(windowId)) return;
+            try {
+                // Programmatic work in an unfocused restore window can activate
+                // one of its tabs (for example while collapsing a group). Only
+                // a tab activation in the focused window represents an explicit
+                // user interaction that must protect the tab from later changes.
+                const windowInfo = await chrome.windows.get(windowId, { populate: false });
+                if (windowInfo?.focused) markIfWatched(tabId);
+            } catch (_) {
+            }
+        };
         const handleWindowFocusChanged = async (windowId) => {
             if (stopped || !Number.isInteger(windowId) ||
                 windowId === chrome.windows.WINDOW_ID_NONE) return;
@@ -2783,6 +2794,7 @@ document.addEventListener('DOMContentLoaded', function() {
         UI: { TOAST_DURATION: 4000, SESSION_NAME_MAX_LENGTH: 200, SEARCH_DEBOUNCE_TIME: 200 },
         DEFAULTS: { SESSION_PREFIX: '' },
         PROTOCOLS: { SAFE: ['http:', 'https:'] },
+        RESTORE: { PLACEHOLDER_URL: 'about:blank' },
         LIMITS: {
             TAB_URL_MAX_LENGTH: 2048,
             MAX_IMPORT_SESSIONS: 250000,
@@ -3668,7 +3680,14 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
           for (const windowTabs of tabsByWindow.values()) {
             const [firstTab, ...remainingTabs] = windowTabs;
-            const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: false });
+            // Build the window with neutral tabs first. If saved URLs are assigned
+            // before their groups exist, LunaTools' duplicate-tab protection can
+            // legitimately see same-URL tabs as ordinary ungrouped duplicates and
+            // remove one before the saved group layout is restored.
+            const createdWindow = await chrome.windows.create({
+              url: CONSTANTS.RESTORE.PLACEHOLDER_URL,
+              focused: false
+            });
             if (!Number.isInteger(createdWindow?.id)) {
               throw new Error('복원된 창의 식별자를 확인할 수 없습니다.');
             }
@@ -3676,6 +3695,7 @@ document.addEventListener('DOMContentLoaded', function() {
             createdWindowIds.push(createdWindowId);
 
             const createdTabs = [];
+            const windowRestoreTabs = [];
             let createdFirstTab = Array.isArray(createdWindow.tabs)
               ? createdWindow.tabs.find(tab => Number.isInteger(tab?.id))
               : null;
@@ -3699,6 +3719,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 : null
             };
             createdRestoreTabs.push(firstRestoreTab);
+            windowRestoreTabs.push(firstRestoreTab);
             tabInteractionTracker.watch(createdFirstTab.id);
             if (firstTab.pinned) {
               const pinnedFirstTab = await chrome.tabs.update(createdFirstTab.id, { pinned: true });
@@ -3711,7 +3732,7 @@ document.addEventListener('DOMContentLoaded', function() {
             for (const savedTab of remainingTabs) {
               const createdTab = await chrome.tabs.create({
                 windowId: createdWindowId,
-                url: savedTab.url,
+                url: CONSTANTS.RESTORE.PLACEHOLDER_URL,
                 active: false,
                 pinned: Boolean(savedTab.pinned)
               });
@@ -3730,6 +3751,7 @@ document.addEventListener('DOMContentLoaded', function() {
                   : null
               };
               createdRestoreTabs.push(createdRestoreTab);
+              windowRestoreTabs.push(createdRestoreTab);
               tabInteractionTracker.watch(createdTab.id);
             }
 
@@ -3737,6 +3759,38 @@ document.addEventListener('DOMContentLoaded', function() {
               const restoreTab = createdRestoreTabs.find(item => item.tabId === tabId);
               if (restoreTab) restoreTab.expectedGroupId = groupId;
             });
+
+            // With the structural layout in place, assign the real URLs. Verify
+            // every placeholder immediately beforehand so a tab that the user
+            // selected, moved, pinned, regrouped, or navigated during restoration
+            // is never overwritten by the delayed URL assignment.
+            for (const restoreTab of windowRestoreTabs) {
+              const livePlaceholderTab = await chrome.tabs.get(restoreTab.tabId);
+              const rawPendingUrl = typeof livePlaceholderTab.pendingUrl === 'string'
+                ? livePlaceholderTab.pendingUrl.trim()
+                : '';
+              const rawCommittedUrl = typeof livePlaceholderTab.url === 'string'
+                ? livePlaceholderTab.url.trim()
+                : '';
+              const effectiveRawUrl = rawPendingUrl || rawCommittedUrl;
+              const placeholderStateIsSafe =
+                livePlaceholderTab.windowId === restoreTab.windowId &&
+                Boolean(livePlaceholderTab.pinned) === restoreTab.expectedPinned &&
+                getSessionTabGroupId(livePlaceholderTab) === restoreTab.expectedGroupId &&
+                effectiveRawUrl === CONSTANTS.RESTORE.PLACEHOLDER_URL &&
+                !tabInteractionTracker.hasInteracted(restoreTab.tabId);
+
+              if (!placeholderStateIsSafe) {
+                throw new Error('복원 중 탭 상태가 변경되어 URL 적용을 중단했습니다.');
+              }
+
+              const navigatedTab = await chrome.tabs.update(restoreTab.tabId, {
+                url: restoreTab.expectedUrl
+              });
+              if (!Number.isInteger(navigatedTab?.id) || navigatedTab.id !== restoreTab.tabId) {
+                throw new Error('복원된 탭에 URL을 적용하지 못했습니다.');
+              }
+            }
           }
 
           if (createdWindowIds.length > 0) {
@@ -3760,11 +3814,21 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
               const liveTab = await chrome.tabs.get(restoreTab.tabId);
               const navigationState = getSessionTabNavigationState(liveTab);
+              const rawPendingUrl = typeof liveTab.pendingUrl === 'string'
+                ? liveTab.pendingUrl.trim()
+                : '';
+              const rawCommittedUrl = typeof liveTab.url === 'string'
+                ? liveTab.url.trim()
+                : '';
+              const effectiveRawUrl = rawPendingUrl || rawCommittedUrl;
               const isStillInRestoreWindow = liveTab.windowId === restoreTab.windowId;
-              const isStillOnRestoreUrl = navigationState.hasPendingUrl
-                ? navigationState.pendingUrl === restoreTab.expectedUrl &&
-                  (!navigationState.committedUrl || navigationState.committedUrl === restoreTab.expectedUrl)
-                : navigationState.committedUrl === restoreTab.expectedUrl;
+              const isStillPlaceholder = effectiveRawUrl === CONSTANTS.RESTORE.PLACEHOLDER_URL;
+              const isStillOnRestoreUrl = isStillPlaceholder || (
+                navigationState.hasPendingUrl
+                  ? navigationState.pendingUrl === restoreTab.expectedUrl &&
+                    (!navigationState.committedUrl || navigationState.committedUrl === restoreTab.expectedUrl)
+                  : navigationState.committedUrl === restoreTab.expectedUrl
+              );
               const isSelectedInFocusedWindow = liveTab.windowId === focusedWindowId &&
                 (liveTab.active === true || liveTab.highlighted === true);
               const wasAccessedAfterCreation = Number.isFinite(restoreTab.initialLastAccessed) &&
