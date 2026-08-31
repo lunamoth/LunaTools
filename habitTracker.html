@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌟 습관 트래커 🚀</title>
+    <!-- [수정] CSP 준수를 위해 로컬 스크립트 파일을 사용합니다. -->
+    <script src="chart.umd.min.js"></script>
+    <style>
+		.heatmap-days,.heatmap-grid{grid-template-rows:repeat(7,16px)}.calendar-day.other-month,.dragging{opacity:.5}:root{--bg-gradient:radial-gradient(circle at 10% 20%, rgba(121, 151, 255, 0.15), transparent 50%),radial-gradient(circle at 90% 80%, rgba(255, 121, 238, 0.15), transparent 50%);--bg-color:#f5f5f7;--content-bg:rgba(255, 255, 255, 0.7);--secondary-bg:rgba(255, 255, 255, 0.5);--text-color:#1d1d1f;--text-secondary-color:rgba(60, 60, 67, 0.8);--primary-color:#007aff;--primary-rgb:0,122,255;--primary-hover-color:#006ee6;--border-color:rgba(0, 0, 0, 0.12);--shadow-color:rgba(0, 0, 0, 0.05);--shadow-color-deep:rgba(0, 0, 0, 0.1);--success-color:#34c759;--success-rgb:52,199,89;--missed-color:#ff3b30;--missed-rgb:255,59,48;--warning-color:#ff9500;--today-bg-color:rgba(0, 122, 255, 0.1);--modal-backdrop:rgba(0, 0, 0, 0.3);--saturday-color:#007aff;--sunday-color:#ff3b30;--heatmap-0:rgba(120, 120, 128, 0.08);--heatmap-1:#6be094;--heatmap-2:#40c463;--heatmap-3:#30a14e;--heatmap-4:#216e39}body.dark-mode{--bg-gradient:radial-gradient(circle at 10% 20%, rgba(10, 132, 255, 0.2), transparent 50%),radial-gradient(circle at 90% 80%, rgba(175, 82, 222, 0.2), transparent 50%);--bg-color:#000000;--content-bg:rgba(29, 29, 31, 0.75);--secondary-bg:rgba(44, 44, 46, 0.65);--text-color:#f5f5f7;--text-secondary-color:rgba(235, 235, 245, 0.75);--primary-color:#0a84ff;--primary-rgb:10,132,255;--primary-hover-color:#3b9aff;--border-color:rgba(255, 255, 255, 0.18);--shadow-color:rgba(0, 0, 0, 0.15);--shadow-color-deep:rgba(0, 0, 0, 0.3);--success-color:#30d158;--success-rgb:48,209,88;--missed-color:#ff453a;--missed-rgb:255,69,58;--warning-color:#ff9f0a;--today-bg-color:rgba(10, 132, 255, 0.15);--modal-backdrop:rgba(0, 0, 0, 0.5);--saturday-color:#0a84ff;--sunday-color:#ff453a;--heatmap-0:rgba(120, 120, 128, 0.12)}*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}body{background-color:var(--bg-color);background-image:var(--bg-gradient);background-attachment:fixed;color:var(--text-color);transition:background-color .4s,color .4s;line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-size:15px;}.container{max-width:1500px;margin:0 auto;padding:32px;min-height:100vh}#settings-modal .modal-content div,.controls,.empty-state p,.filters{margin-bottom:24px}.filters,.view-switcher{background-color:var(--secondary-bg);display:flex}header{text-align:center;margin-bottom:32px}header h1{font-size:3em;font-weight:700;margin-bottom:8px;letter-spacing:-.8px}#motivational-quote{font-size:1.2em;color:var(--text-secondary-color);font-weight:500}.controls{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px}.view-switcher{gap:4px;padding:4px;border-radius:12px;border:1px solid var(--border-color)}.view-switcher button{background-color:transparent;color:var(--text-secondary-color);padding:8px 16px;font-size:.95em;font-weight:600;border:none;border-radius:9px;transition:.3s cubic-bezier(.25,.8,.25,1)}.view-switcher button.active{background-color:var(--content-bg);color:var(--text-color);box-shadow:0 1px 2px rgba(0,0,0,.05),0 3px 8px rgba(0,0,0,.1)}.habit-on-calendar:hover,.view-switcher button:not(.active):hover{background-color:rgba(120,120,128,.1)}.main-actions{display:flex;gap:12px;flex-wrap:wrap}.filters{gap:12px;flex-wrap:wrap;padding:12px;border-radius:16px;align-items:center}.filters input,.filters select{padding:10px 14px;border-radius:10px;border:1px solid var(--border-color);background-color:var(--content-bg);color:var(--text-color);font-size:1em}.filters label{display:flex;align-items:center;gap:6px;font-weight:500}button{padding:10px 20px;border-radius:999px;border:none;background-color:var(--primary-color);color:#fff;font-size:1em;font-weight:600;cursor:pointer;transition:.2s ease-out}button:hover{background-color:var(--primary-hover-color);transform:translateY(-2px);box-shadow:0 4px 12px rgba(var(--primary-rgb),.25)}button:active{transform:translateY(0) scale(.98);box-shadow:none}button.secondary{background-color:var(--secondary-bg);color:var(--text-color);border:1px solid var(--border-color)}button.secondary:hover{background-color:rgba(120,120,128,.2);box-shadow:none;transform:translateY(-1px)}button.warning{background-color:var(--warning-color)}button:disabled{background-color:#ccc;cursor:not-allowed;opacity:.6;box-shadow:none;transform:none}#app-content{margin-top:24px}.view-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}.calendar-header .calendar-nav,.view-header .today-nav{align-items:center;display:flex;gap:8px}.modal-header h2,.view-header h2{font-size:2.2em;font-weight:600;letter-spacing:-.4px}.calendar-header button,.view-header button{padding:8px;width:44px;height:44px;border-radius:50%;font-size:1.2em;background-color:var(--secondary-bg);color:var(--text-color);line-height:1}.achievement-desc,.calendar-day-name,.close-button,.dashboard-card-title,.empty-state p{color:var(--text-secondary-color)}#calendar-go-to-today,#go-to-today-btn,.achievement-desc{font-size:.8em}.empty-state{text-align:center;padding:60px 30px;background-color:var(--secondary-bg);border-radius:24px}.empty-state h3{font-size:1.8em;margin-bottom:12px;font-weight:600}.day-number,.empty-state button{font-size:1.1em}.dragging{background:var(--today-bg-color)}.drop-placeholder{height:80px;background:rgba(var(--primary-rgb),.1);border:2px dashed var(--primary-color);border-radius:24px;margin-bottom:16px}.calendar-header{position:relative;display:flex;justify-content:center;align-items:center;margin-bottom:20px}.calendar-header .calendar-nav{position:absolute;left:0}.calendar-header h2{font-size:2.2em;font-weight:600;cursor:pointer;letter-spacing:-.4px}.calendar-header .calendar-title-wrapper{position:absolute;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:8px}.calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px}.calendar-day-name{font-weight:600;text-align:center;padding:12px 5px}.calendar-day{background-color:var(--secondary-bg);border-radius:18px;padding:12px;min-height:140px;display:flex;flex-direction:column;gap:6px;transition:background-color .2s}.calendar-habit-list{display:flex;flex-direction:column;gap:4px;max-height:400px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--primary-color) transparent}.calendar-habit-list::-webkit-scrollbar{width:4px}.calendar-habit-list::-webkit-scrollbar-thumb{background-color:var(--primary-color);border-radius:4px}.calendar-day.today{border:2px solid var(--primary-color);background-color:var(--today-bg-color)}.day-number{font-weight:600;margin-bottom:5px}.day-number.saturday{color:var(--saturday-color)}.day-number.sunday{color:var(--sunday-color)}.habit-on-calendar{display:flex;align-items:center;font-size:.9em;padding:4px 8px;border-radius:999px;cursor:pointer;background-color:var(--content-bg);transition:background-color .2s,color .2s,transform .15s ease-out}.habit-on-calendar.completed{background-color:var(--success-color);color:#fff}.habit-on-calendar .habit-icon{margin-right:6px}.archive-item,.habit-list-item,.stat-card{background-color:var(--secondary-bg);border-radius:24px;padding:28px;margin-bottom:16px;display:flex;flex-direction:column;gap:16px;transition:transform .2s,box-shadow .2s}.habit-list-item[draggable=true]{cursor:grab}.archive-item:hover,.habit-list-item:hover{transform:translateY(-4px);box-shadow:0 8px 16px var(--shadow-color),0 16px 32px var(--shadow-color-deep)}.archive-item-header,.habit-header{display:flex;justify-content:space-between;align-items:center}.archive-item-title,.habit-title{font-size:1.6em;font-weight:600}.archive-item-actions,.habit-actions,.heatmap-body{display:flex;gap:8px}.archive-item-actions button,.habit-actions button{background:0 0;border:none;font-size:1.4em;cursor:pointer;color:var(--text-secondary-color);padding:8px;border-radius:50%;transition:background-color .2s,color .2s}.archive-item-actions button:hover,.habit-actions button:hover{background-color:rgba(120,120,128,.2);color:var(--text-color)}.habit-progress{display:flex;align-items:center;gap:15px}.habit-progress input[type=checkbox]{width:28px;height:28px;cursor:pointer;accent-color:var(--primary-color)}.progress-bar-container{width:100%;height:8px;background-color:rgba(120,120,128,.2);border-radius:4px;overflow:hidden}.progress-bar{height:100%;background-color:var(--primary-color);border-radius:4px;transition:width .4s}.stats-dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:24px;margin-bottom:30px}.dashboard-card{background-color:var(--secondary-bg);padding:24px;border-radius:24px;text-align:center}.dashboard-card-title{font-size:1.1em;font-weight:500;margin-bottom:10px}.dashboard-card-value{font-size:2.8em;font-weight:700;color:var(--primary-color)}.stat-item span:last-child,.timeline-date{font-weight:600}.stats-grid{display:grid;grid-template-columns:1fr;gap:24px}.heatmap-grid,.heatmap-months{grid-template-columns:repeat(53,16px)}.stat-card-title{font-size:1.8em;margin-bottom:16px;border-bottom:1px solid var(--border-color);padding-bottom:12px;font-weight:600}.stat-item{display:flex;justify-content:space-between;font-size:1.1em;padding:10px 0}.heatmap-days,.heatmap-months{font-size:.8em;color:var(--text-secondary-color);gap:4px}.chart-container{position:relative;height:200px;width:100%;margin-top:16px}.heatmap-container-wrapper{margin-top:20px;overflow-x:auto;padding-bottom:10px}.heatmap-wrapper{display:inline-block}.heatmap-months{display:grid;padding-left:30px;margin-bottom:4px}.heatmap-days{display:grid}.heatmap-grid{display:grid;gap:4px;grid-auto-flow:column}.heatmap-cell{width:16px;height:16px;background-color:var(--heatmap-0);border-radius:4px}.heatmap-cell[data-level='1']{background-color:var(--heatmap-1)}.heatmap-cell[data-level='2']{background-color:var(--heatmap-2)}.heatmap-cell[data-level='3']{background-color:var(--heatmap-3)}.heatmap-cell[data-level='4']{background-color:var(--heatmap-4)}.timeline-container{padding:20px 0}.timeline-item{padding:20px;background-color:var(--secondary-bg);border-radius:18px;margin-bottom:16px;border-left:4px solid var(--primary-color)}.timeline-date{color:var(--primary-color);margin-bottom:8px}.modal{display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;overflow:auto;background-color:var(--modal-backdrop);align-items:center;justify-content:center;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}.modal.visible{display:flex;animation:.3s fade-in}@keyframes fade-in{from{opacity:0}to{opacity:1}}.modal-content{background-color:var(--content-bg);backdrop-filter:blur(50px);-webkit-backdrop-filter:blur(50px);padding:40px;border:1px solid var(--border-color);width:90%;max-width:600px;border-radius:28px;box-shadow:0 20px 60px rgba(0,0,0,.3);animation:.4s cubic-bezier(.16,1,.3,1) slide-up}@keyframes slide-up{from{transform:translateY(30px) scale(.98);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}.close-button{font-size:1.5em;font-weight:700;cursor:pointer;width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:var(--secondary-bg);border-radius:50%;transition:background-color .2s}.close-button:hover{background:rgba(120,120,128,.2)}.form-group{margin-bottom:20px}.form-group label{display:block;margin-bottom:8px;font-weight:600}.form-group input,.form-group select,.form-group textarea{width:100%;padding:12px 16px;border:1px solid var(--border-color);border-radius:12px;background-color:var(--secondary-bg);color:var(--text-color);font-size:1.05em}.modal-buttons{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:24px}.modal-buttons .right-actions{display:flex;gap:12px;align-items:center}.modal-buttons button.danger,.toast.danger{background-color:var(--missed-color)}.modal-buttons button.danger:hover{background-color:#e33e34;box-shadow:0 4px 12px rgba(255,59,48,.2)}.frequency-days{display:flex;justify-content:space-between;gap:6px}.frequency-days label{flex:1;text-align:center}.frequency-days input,input[type=file]{display:none}.frequency-days span{display:block;padding:12px;border:1px solid var(--border-color);border-radius:10px;cursor:pointer;user-select:none;font-weight:500;transition:.2s}.frequency-days input:checked+span{background-color:var(--primary-color);color:#fff;border-color:var(--primary-color)}.achievements-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:16px}.achievement-card{padding:20px;border-radius:18px;text-align:center;background-color:var(--secondary-bg);opacity:.7}.achievement-card.unlocked{opacity:1;border:2px solid var(--success-color);background-color:var(--today-bg-color)}.achievement-icon{font-size:2.8em}.achievement-title{font-weight:600;margin-top:8px}.file-label,.toast{color:#fff;font-weight:600}#settings-modal .modal-content h3{border-bottom:1px solid var(--border-color);padding-bottom:8px;margin-bottom:12px;font-weight:600}.file-label{display:inline-block;padding:10px 20px;background-color:var(--primary-color);border-radius:999px;cursor:pointer}.file-label:hover{background-color:var(--primary-hover-color)}#date-picker-input{position:absolute;opacity:0;width:1px;height:1px;border:none;padding:0;pointer-events:none;left:-9999px;top:-9999px}#toast-container{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px}.toast{padding:12px 20px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.15);opacity:0;transform:translateX(100%);animation:.5s forwards toast-in,.5s 2.5s forwards toast-out}.toast.success{background-color:var(--success-color)}.toast.info{background-color:var(--primary-color)}@keyframes toast-in{to{opacity:1;transform:translateX(0)}}@keyframes toast-out{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(100%)}}@keyframes habit-complete-pop{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}.completed-animation{animation:.3s ease-out habit-complete-pop}@media (max-width:768px){body{padding:0}.container{margin:0;padding:16px;border-radius:0;max-width:100vw;min-height:100vh;box-shadow:none;border:none}header h1{font-size:2.2em;letter-spacing:-.6px}.controls,.filters{flex-direction:column;align-items:stretch}.main-actions,.view-switcher{justify-content:center}.calendar-day{min-height:120px;padding:8px;border-radius:12px}.modal-content{padding:24px;width:calc(100% - 20px);margin:10px auto}}
+    </style>
+</head>
+<body>
+    <input type="date" id="date-picker-input">
+
+    <div class="container">
+        <header>
+            <h1>습관 트래커</h1>
+            <p id="motivational-quote">작은 습관이 모여 위대한 성공을 이룹니다. ✨</p>
+        </header>
+
+        <div class="controls">
+            <div class="view-switcher">
+                <button id="view-calendar" class="active">🗓️ 달력</button>
+                <button id="view-today">🎯 오늘</button>
+                <button id="view-timeline">📜 타임라인</button>
+                <button id="view-stats">📊 통계</button>
+                <button id="view-review">🧐 리뷰</button>
+                <button id="view-archive">📦 보관함</button>
+            </div>
+            <div class="main-actions">
+                <button id="achievements-btn" class="secondary">🏆 업적</button>
+                <button id="add-habit-btn">💪 새 습관 추가</button>
+                <!-- [수정] 설정 버튼 제거 (MothNote의 설정으로 통합) -->
+            </div>
+        </div>
+
+        <div id="app-filters-container">
+            <!-- Dynamic filters will be rendered here -->
+        </div>
+
+        <div id="app-content">
+            <!-- Dynamic content will be rendered here -->
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="habit-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">새 습관 만들기</h2>
+                <span class="close-button">&times;</span>
+            </div>
+            <form id="habit-form">
+                <input type="hidden" id="habit-id">
+                <div class="form-group">
+                    <label for="habit-name">습관 내용 ✍️</label>
+                    <input type="text" id="habit-name" required placeholder="예: 매일 아침 운동하기">
+                </div>
+                <div class="form-group">
+                    <label for="habit-frequency">실천 주기 🗓️</label>
+                    <select id="habit-frequency">
+                        <option value="daily">매일</option>
+                        <option value="weekdays">주중 (월-금)</option>
+                        <option value="weekends">주말 (토-일)</option>
+                        <option value="specific_days">특정 요일</option>
+                    </select>
+                </div>
+                <div id="specific-days-group" class="form-group" style="display: none;">
+                    <div class="frequency-days">
+                        <label><input type="checkbox" name="specific-day" value="0"><span>일</span></label>
+                        <label><input type="checkbox" name="specific-day" value="1"><span>월</span></label>
+                        <label><input type="checkbox" name="specific-day" value="2"><span>화</span></label>
+                        <label><input type="checkbox" name="specific-day" value="3"><span>수</span></label>
+                        <label><input type="checkbox" name="specific-day" value="4"><span>목</span></label>
+                        <label><input type="checkbox" name="specific-day" value="5"><span>금</span></label>
+                        <label><input type="checkbox" name="specific-day" value="6"><span>토</span></label>
+                    </div>
+                </div>
+                <div class="modal-buttons">
+                    <div class="left-actions">
+                         <button type="button" id="archive-habit-btn" class="warning" style="display: none;">📦 보관</button>
+                    </div>
+                    <div class="right-actions">
+                        <button type="button" id="delete-habit-btn" class="danger" style="display: none;">🗑️ 삭제</button>
+                        <button type="button" id="cancel-habit-btn" class="secondary">취소</button>
+                        <button type="submit" class="primary">💾 저장</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="achievements-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🏆 나의 업적 🏆</h2>
+                <span class="close-button">&times;</span>
+            </div>
+            <div id="achievements-grid" class="achievements-grid">
+                <!-- Achievements will be rendered here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- [수정] 설정 모달 제거 (MothNote의 설정으로 통합) -->
+
+    <div id="confirm-modal" class="modal">
+        <div class="modal-content" style="max-width: 420px; text-align: center;">
+            <h2 id="confirm-title" style="margin-bottom: 12px;">정말 삭제하시겠습니까?</h2>
+            <p id="confirm-message" style="color: var(--text-secondary-color); margin-bottom: 24px;">이 작업은 되돌릴 수 없습니다.</p>
+            <div class="modal-buttons" style="justify-content: center;">
+                 <div class="right-actions">
+                    <button id="confirm-cancel-btn" class="secondary">취소</button>
+                    <button id="confirm-ok-btn" class="danger">확인</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <!-- [수정] 인라인 스크립트를 제거하고 외부 JS 파일을 참조합니다. -->
+    <script src="sanitizer-runtime.js"></script>
+    <script src="habitTracker.js"></script>
+</body>
+</html>
