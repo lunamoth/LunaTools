@@ -463,6 +463,7 @@
 
     class SoundBooster {
         #isActivated = false;
+        #requestedActivation = false;
         #audioProcessor = new AudioProcessor();
         #uiController = new UIController(
             this.#toggleActivation.bind(this),
@@ -614,28 +615,34 @@
         }
 
         async #toggleActivation() {
+            // 비동기 전환 중의 추가 입력도 버리지 않고 마지막 요청 상태를 보존합니다.
+            this.#requestedActivation = !this.#requestedActivation;
             if (this.#toggleInProgress) return;
             this.#toggleInProgress = true;
 
             try {
                 this.#audioProcessor.setUserInteracted();
-                
-                const context = await this.#audioProcessor.ensureContextIsRunning();
-                if (!context) {
-                    const newContext = await this.#audioProcessor.ensureContextIsRunning();
-                    if(!newContext) return;
-                }
 
-                this.#isActivated = !this.#isActivated;
-                // 사용하지 않는 탭에는 DOM 감시 비용이 생기지 않도록 최초
-                // 활성화 시점에만 문서와 열린 ShadowRoot 관찰을 시작합니다.
-                if (this.#isActivated && !this.#domObserver) {
-                    this.#setupDOMObserver();
+                while (this.#isActivated !== this.#requestedActivation) {
+                    const context = await this.#audioProcessor.ensureContextIsRunning();
+                    if (!context) {
+                        this.#requestedActivation = this.#isActivated;
+                        return;
+                    }
+
+                    const targetActivation = this.#requestedActivation;
+                    // 사용하지 않는 탭에는 DOM 감시 비용이 생기지 않도록 최초
+                    // 활성화 시점에만 문서와 열린 ShadowRoot 관찰을 시작합니다.
+                    if (targetActivation && !this.#domObserver) {
+                        this.#setupDOMObserver();
+                    }
+
+                    const multiplier = CONFIG.VOLUME_MULTIPLIER;
+                    await this.#audioProcessor.updateAllVolumes(targetActivation, multiplier);
+                    this.#isActivated = targetActivation;
+                    if (!this.#isActivated) this.#clearPendingNodeScan();
+                    this.#uiController.update(this.#isActivated, multiplier);
                 }
-                const multiplier = CONFIG.VOLUME_MULTIPLIER;
-                await this.#audioProcessor.updateAllVolumes(this.#isActivated, multiplier);
-                if (!this.#isActivated) this.#clearPendingNodeScan();
-                this.#uiController.update(this.#isActivated, multiplier);
             } finally {
                 this.#toggleInProgress = false;
             }
