@@ -36,7 +36,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const STATUS_VISIBLE_DURATION = 3000;
     const MAX_RESTORE_FILE_SIZE = 32 * 1024 * 1024;
-    const BACKUP_URL_REVOKE_DELAY_MS = 60 * 1000;
     const BACKUP_FORMAT_VERSION = 2;
     const BACKUP_SNAPSHOT_MODE = 'known-keys-full';
     const MAX_SESSION_URL_LENGTH = 2048;
@@ -59,6 +58,104 @@ document.addEventListener('DOMContentLoaded', () => {
     let syncOptionsReady = false;
 
     // --- Helper Functions ---
+
+    const createDownloadInterruptedError = (reason) => new Error(
+        reason
+            ? `다운로드가 중단되었습니다. (${reason})`
+            : '다운로드가 완료되기 전에 중단되었습니다.'
+    );
+
+    const downloadAndWaitForCompletion = (options) => new Promise((resolve, reject) => {
+        let downloadId = null;
+        let settled = false;
+        const terminalStates = new Map();
+        const interruptionReasons = new Map();
+
+        const cleanup = () => {
+            try {
+                chrome.downloads.onChanged.removeListener(handleDownloadChanged);
+            } catch (_) {
+            }
+            terminalStates.clear();
+            interruptionReasons.clear();
+        };
+
+        const settle = (handler, value) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            handler(value);
+        };
+
+        const handleTerminalState = ({ state, reason = '' }) => {
+            if (state === 'complete') {
+                settle(resolve);
+            } else if (state === 'interrupted') {
+                settle(reject, createDownloadInterruptedError(reason));
+            }
+        };
+
+        function handleDownloadChanged(delta) {
+            if (!Number.isInteger(delta?.id)) return;
+
+            if (delta.error?.current) {
+                interruptionReasons.set(delta.id, String(delta.error.current));
+            }
+
+            const state = delta.state?.current;
+            if (state !== 'complete' && state !== 'interrupted') return;
+
+            const terminalState = {
+                state,
+                reason: interruptionReasons.get(delta.id) || String(delta.error?.current || '')
+            };
+            if (downloadId === null) {
+                terminalStates.set(delta.id, terminalState);
+            } else if (delta.id === downloadId) {
+                handleTerminalState(terminalState);
+            }
+        }
+
+        try {
+            chrome.downloads.onChanged.addListener(handleDownloadChanged);
+            chrome.downloads.download(options, (createdDownloadId) => {
+                const downloadError = chrome.runtime.lastError;
+                if (!Number.isInteger(createdDownloadId) || downloadError) {
+                    settle(reject, new Error(downloadError?.message || '다운로드를 시작할 수 없습니다.'));
+                    return;
+                }
+
+                downloadId = createdDownloadId;
+                const earlyTerminalState = terminalStates.get(downloadId);
+                if (earlyTerminalState) {
+                    handleTerminalState(earlyTerminalState);
+                    return;
+                }
+
+                // Very small Blob downloads can finish before the start callback
+                // is delivered. Keep the listener above, and also inspect the
+                // current item once so an already-terminal state is not missed.
+                try {
+                    chrome.downloads.search({ id: downloadId }, (items) => {
+                        const searchError = chrome.runtime.lastError;
+                        if (settled || searchError) return;
+                        const item = Array.isArray(items) ? items[0] : null;
+                        if (item?.state === 'complete' || item?.state === 'interrupted') {
+                            handleTerminalState({
+                                state: item.state,
+                                reason: String(item.error || interruptionReasons.get(downloadId) || '')
+                            });
+                        }
+                    });
+                } catch (_) {
+                    // onChanged remains authoritative if the one-time state
+                    // inspection is unavailable.
+                }
+            });
+        } catch (error) {
+            settle(reject, error instanceof Error ? error : new Error(String(error)));
+        }
+    });
 
     const setDataControlsDisabled = (disabled) => {
         if (saveButton) saveButton.disabled = disabled || !syncOptionsReady;
@@ -618,21 +715,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const filename = `${dateString}_LunaTools_Backup.json`;
 
             try {
-                await new Promise((resolve, reject) => {
-                    chrome.downloads.download({ url, filename }, (downloadId) => {
-                        const downloadError = chrome.runtime.lastError;
-                        if (downloadId === undefined || downloadError) {
-                            reject(new Error(downloadError?.message || '다운로드를 시작할 수 없습니다.'));
-                            return;
-                        }
-                        resolve(downloadId);
-                    });
-                });
-                setTimeout(() => URL.revokeObjectURL(url), BACKUP_URL_REVOKE_DELAY_MS);
+                await downloadAndWaitForCompletion({ url, filename });
                 showStatus('데이터를 성공적으로 백업했습니다.');
             } catch (downloadError) {
-                URL.revokeObjectURL(url);
                 throw downloadError;
+            } finally {
+                URL.revokeObjectURL(url);
             }
         } catch (error) {
             console.error('Backup failed:', error);

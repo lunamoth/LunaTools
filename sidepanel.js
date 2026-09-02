@@ -2,6 +2,104 @@
 document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
+    const createDownloadInterruptedError = (reason) => new Error(
+        reason
+            ? `다운로드가 중단되었습니다. (${reason})`
+            : '다운로드가 완료되기 전에 중단되었습니다.'
+    );
+
+    const downloadAndWaitForCompletion = (options) => new Promise((resolve, reject) => {
+        let downloadId = null;
+        let settled = false;
+        const terminalStates = new Map();
+        const interruptionReasons = new Map();
+
+        const cleanup = () => {
+            try {
+                chrome.downloads.onChanged.removeListener(handleDownloadChanged);
+            } catch (_) {
+            }
+            terminalStates.clear();
+            interruptionReasons.clear();
+        };
+
+        const settle = (handler, value) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            handler(value);
+        };
+
+        const handleTerminalState = ({ state, reason = '' }) => {
+            if (state === 'complete') {
+                settle(resolve);
+            } else if (state === 'interrupted') {
+                settle(reject, createDownloadInterruptedError(reason));
+            }
+        };
+
+        function handleDownloadChanged(delta) {
+            if (!Number.isInteger(delta?.id)) return;
+
+            if (delta.error?.current) {
+                interruptionReasons.set(delta.id, String(delta.error.current));
+            }
+
+            const state = delta.state?.current;
+            if (state !== 'complete' && state !== 'interrupted') return;
+
+            const terminalState = {
+                state,
+                reason: interruptionReasons.get(delta.id) || String(delta.error?.current || '')
+            };
+            if (downloadId === null) {
+                terminalStates.set(delta.id, terminalState);
+            } else if (delta.id === downloadId) {
+                handleTerminalState(terminalState);
+            }
+        }
+
+        try {
+            chrome.downloads.onChanged.addListener(handleDownloadChanged);
+            chrome.downloads.download(options, (createdDownloadId) => {
+                const downloadError = chrome.runtime.lastError;
+                if (!Number.isInteger(createdDownloadId) || downloadError) {
+                    settle(reject, new Error(downloadError?.message || '다운로드를 시작할 수 없습니다.'));
+                    return;
+                }
+
+                downloadId = createdDownloadId;
+                const earlyTerminalState = terminalStates.get(downloadId);
+                if (earlyTerminalState) {
+                    handleTerminalState(earlyTerminalState);
+                    return;
+                }
+
+                // Very small Blob downloads can finish before the start callback
+                // is delivered. Keep the listener above, and also inspect the
+                // current item once so an already-terminal state is not missed.
+                try {
+                    chrome.downloads.search({ id: downloadId }, (items) => {
+                        const searchError = chrome.runtime.lastError;
+                        if (settled || searchError) return;
+                        const item = Array.isArray(items) ? items[0] : null;
+                        if (item?.state === 'complete' || item?.state === 'interrupted') {
+                            handleTerminalState({
+                                state: item.state,
+                                reason: String(item.error || interruptionReasons.get(downloadId) || '')
+                            });
+                        }
+                    });
+                } catch (_) {
+                    // onChanged remains authoritative if the one-time state
+                    // inspection is unavailable.
+                }
+            });
+        } catch (error) {
+            settle(reject, error instanceof Error ? error : new Error(String(error)));
+        }
+    });
+
     // --- Tab UI Control ---
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabPanes = document.querySelectorAll('.tab-pane');
@@ -151,7 +249,6 @@ document.addEventListener('DOMContentLoaded', function() {
             MAX_URLS_PER_RUN: 300,
             MAX_URL_LENGTH: 2048,
             MAX_LIST_NAME_LENGTH: 200,
-            EXPORT_URL_REVOKE_DELAY_MS: 60 * 1000,
             DELAY_LOADING_NAVIGATION_WAIT_MS: 2500,
             MIN_INTERVAL_SECONDS: 0.1,
             // setTimeout() uses a signed 32-bit millisecond delay in Chromium.
@@ -1874,22 +1971,13 @@ document.addEventListener('DOMContentLoaded', function() {
             const filename = `${year}${month}${day}_LunaTools_Multi_URL_Opener_Lists.json`;
 
             try {
-                await new Promise((resolve, reject) => {
-                    chrome.downloads.download({ url, filename }, (downloadId) => {
-                        const downloadError = chrome.runtime.lastError;
-                        if (downloadId === undefined || downloadError) {
-                            reject(new Error(downloadError?.message || '다운로드를 시작할 수 없습니다.'));
-                            return;
-                        }
-                        resolve(downloadId);
-                    });
-                });
-                setTimeout(() => URL.revokeObjectURL(url), CONFIG.EXPORT_URL_REVOKE_DELAY_MS);
+                await downloadAndWaitForCompletion({ url, filename });
                 Toast.show('모든 목록을 내보냈습니다.', 'success');
             } catch (downloadError) {
-                URL.revokeObjectURL(url);
                 const detail = downloadError?.message ? ` (${downloadError.message})` : '';
                 Toast.show(`목록 내보내기에 실패했습니다.${detail}`, 'error', 5000);
+            } finally {
+                URL.revokeObjectURL(url);
             }
         };
 
@@ -2807,7 +2895,6 @@ document.addEventListener('DOMContentLoaded', function() {
             RESTORE_CONFIRM_TAB_THRESHOLD: 50,
             SESSION_ID_MAX_LENGTH: 256
         },
-        TIMING: { EXPORT_URL_REVOKE_DELAY: 60000 },
         STORAGE_KEYS: { SESSIONS: 'sessions' },
         ACTIONS: { RESTORE: 'restore', COPY: 'copy', UPDATE: 'update', RENAME: 'rename', PIN: 'pin', DELETE: 'delete' },
         SAVE_SCOPES: { CURRENT_WINDOW: 'current', ALL_WINDOWS: 'all' },
@@ -4334,22 +4421,13 @@ document.addEventListener('DOMContentLoaded', function() {
         const filename = `${year}${month}${day}_LunaTools_Session_Manager_Backup.json`;
         
         try {
-          chrome.downloads.download({ url, filename }, (downloadId) => {
-            const downloadError = chrome.runtime.lastError;
-            if (downloadId === undefined || downloadError) {
-              URL.revokeObjectURL(url);
-              const detail = downloadError?.message ? ` (${downloadError.message})` : '';
-              showToast(`${CONSTANTS.MESSAGES.EXPORT_FAILED}${detail}`);
-              return;
-            }
-
-            setTimeout(() => URL.revokeObjectURL(url), CONSTANTS.TIMING.EXPORT_URL_REVOKE_DELAY);
-            showToast(CONSTANTS.MESSAGES.EXPORT_SUCCESS);
-          });
+          await downloadAndWaitForCompletion({ url, filename });
+          showToast(CONSTANTS.MESSAGES.EXPORT_SUCCESS);
         } catch (error) {
-          URL.revokeObjectURL(url);
           const detail = error?.message ? ` (${error.message})` : '';
           showToast(`${CONSTANTS.MESSAGES.EXPORT_FAILED}${detail}`);
+        } finally {
+          URL.revokeObjectURL(url);
         }
       };
 
