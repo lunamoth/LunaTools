@@ -3896,26 +3896,13 @@ document.addEventListener('DOMContentLoaded', function() {
           }
 
           // 창 전체를 닫으면 복원 도중 사용자가 그 창에 추가하거나 이동한 탭까지
-          // 함께 사라질 수 있습니다. 이번 복원에서 만든 탭만, 사용 흔적과 상태가 그대로일 때만 정리합니다.
+          // 함께 사라질 수 있습니다. 이번 복원에서 만든 탭만, 사용 흔적과 구조가 그대로일 때만 정리합니다.
+          // URL 일치는 소유권 판단에 사용하지 않습니다. 복원된 페이지가 자동 리디렉션된 뒤
+          // 후속 단계가 실패해도, 사용자 조작이 없는 복원 탭은 롤백되어야 합니다.
           for (const restoreTab of [...createdRestoreTabs].reverse()) {
             try {
               const liveTab = await chrome.tabs.get(restoreTab.tabId);
-              const navigationState = getSessionTabNavigationState(liveTab);
-              const rawPendingUrl = typeof liveTab.pendingUrl === 'string'
-                ? liveTab.pendingUrl.trim()
-                : '';
-              const rawCommittedUrl = typeof liveTab.url === 'string'
-                ? liveTab.url.trim()
-                : '';
-              const effectiveRawUrl = rawPendingUrl || rawCommittedUrl;
               const isStillInRestoreWindow = liveTab.windowId === restoreTab.windowId;
-              const isStillPlaceholder = effectiveRawUrl === CONSTANTS.RESTORE.PLACEHOLDER_URL;
-              const isStillOnRestoreUrl = isStillPlaceholder || (
-                navigationState.hasPendingUrl
-                  ? navigationState.pendingUrl === restoreTab.expectedUrl &&
-                    (!navigationState.committedUrl || navigationState.committedUrl === restoreTab.expectedUrl)
-                  : navigationState.committedUrl === restoreTab.expectedUrl
-              );
               const isSelectedInFocusedWindow = liveTab.windowId === focusedWindowId &&
                 (liveTab.active === true || liveTab.highlighted === true);
               const wasAccessedAfterCreation = Number.isFinite(restoreTab.initialLastAccessed) &&
@@ -3926,7 +3913,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 (Number.isInteger(restoreTab.expectedGroupId) ? restoreTab.expectedGroupId : -1);
 
               if (!isStillInRestoreWindow ||
-                  !isStillOnRestoreUrl ||
                   isSelectedInFocusedWindow ||
                   tabInteractionTracker.hasInteracted(restoreTab.tabId) ||
                   wasAccessedAfterCreation ||
