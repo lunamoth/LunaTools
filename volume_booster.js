@@ -126,6 +126,7 @@
         #warnedUnsafeMedia = new WeakSet();
         #disconnectedMediaRefs = new Set();
         #disconnectedMediaRefByElement = new WeakMap();
+        #disconnectedMediaPlayHandlerByElement = new WeakMap();
         #pendingDetachedCleanupByElement = new WeakMap();
         #pendingDetachedMediaRefs = new Set();
         #hasSetupMedia = false;
@@ -243,22 +244,52 @@
         #trackDisconnectedMedia(mediaElement) {
             if (this.#disconnectedMediaRefByElement.has(mediaElement)) return;
             const mediaRef = new WeakRef(mediaElement);
+            const handlePlay = () => {
+                // HTMLMediaElement can keep playing while detached from the DOM.
+                // Reconnect the existing graph when a site reuses that same
+                // element so cleanup never turns later playback permanently silent.
+                this.#reconnectDisconnectedMediaElement(mediaElement);
+            };
             this.#disconnectedMediaRefByElement.set(mediaElement, mediaRef);
+            this.#disconnectedMediaPlayHandlerByElement.set(mediaElement, handlePlay);
             this.#disconnectedMediaRefs.add(mediaRef);
+            mediaElement.addEventListener('play', handlePlay);
         }
 
         #forgetDisconnectedMedia(mediaElement) {
             const mediaRef = this.#disconnectedMediaRefByElement.get(mediaElement);
             if (!mediaRef) return;
+            const handlePlay = this.#disconnectedMediaPlayHandlerByElement.get(mediaElement);
+            if (handlePlay) {
+                mediaElement.removeEventListener('play', handlePlay);
+                this.#disconnectedMediaPlayHandlerByElement.delete(mediaElement);
+            }
             this.#disconnectedMediaRefs.delete(mediaRef);
             this.#disconnectedMediaRefByElement.delete(mediaElement);
+        }
+
+        #reconnectDisconnectedMediaElement(mediaElement) {
+            const context = this.#audioContext;
+            if (!context) return false;
+
+            const audioComponents = this.#setup(mediaElement, false);
+            if (!audioComponents?.connected) return false;
+
+            audioComponents.gainNode.gain.setTargetAtTime(
+                this.#targetVolume,
+                context.currentTime,
+                0.05
+            );
+            if (context.state === 'suspended') {
+                void this.ensureContextIsRunning();
+            }
+            return true;
         }
 
         async reconnectDisconnectedMedia() {
             if (!this.#hasSetupMedia || this.#disconnectedMediaRefs.size === 0) return;
 
-            const context = await this.#getOrCreateAudioContext();
-            if (!context) return;
+            if (!(await this.#getOrCreateAudioContext())) return;
 
             // 추가된 DOM 전체를 다시 스캔하지 않고, 실제로 끊겼던 소수의 미디어만 확인합니다.
             for (const mediaRef of Array.from(this.#disconnectedMediaRefs)) {
@@ -267,17 +298,11 @@
                     this.#disconnectedMediaRefs.delete(mediaRef);
                     continue;
                 }
-                if (!mediaElement.isConnected) continue;
-
-                const audioComponents = this.#setup(mediaElement, false);
-                if (audioComponents?.connected) {
-                    audioComponents.gainNode.gain.setTargetAtTime(
-                        this.#targetVolume,
-                        context.currentTime,
-                        0.05
-                    );
-                    this.#forgetDisconnectedMedia(mediaElement);
-                }
+                // A detached media element is still playable. The play listener
+                // normally reconnects it immediately; this branch also recovers
+                // it if another DOM mutation is observed after playback starts.
+                if (!mediaElement.isConnected && mediaElement.paused) continue;
+                this.#reconnectDisconnectedMediaElement(mediaElement);
             }
         }
 
