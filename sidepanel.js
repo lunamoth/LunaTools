@@ -2249,22 +2249,53 @@ document.addEventListener('DOMContentLoaded', function() {
             return latestTab;
         }
 
-        async function createAndDiscardTab(url) {
+        const isUntouchedRunTab = (currentTab, createdTab, expectedUrl, interactionTracker = null) => {
+            if (!Number.isInteger(createdTab?.id) || currentTab?.id !== createdTab.id) return false;
+
+            const currentUrl = normalizeUrlForOpening(currentTab.pendingUrl || currentTab.url || '');
+            const createdGroupId = Number.isInteger(createdTab.groupId) ? createdTab.groupId : -1;
+            const currentGroupId = Number.isInteger(currentTab.groupId) ? currentTab.groupId : -1;
+            const isInSplitView = Number.isInteger(currentTab.splitViewId) && currentTab.splitViewId >= 0;
+            const wasAccessedAfterCreation = Number.isFinite(createdTab.lastAccessed) &&
+                Number.isFinite(currentTab.lastAccessed) &&
+                currentTab.lastAccessed > createdTab.lastAccessed;
+
+            // A tab that has been used or repurposed must keep both its contents
+            // and its place in the user's layout, even after it becomes inactive.
+            return !createdTab.active && !createdTab.highlighted &&
+                !currentTab.active && !currentTab.highlighted && !currentTab.pinned &&
+                !isInSplitView && !wasAccessedAfterCreation &&
+                !interactionTracker?.hasInteracted(createdTab.id) &&
+                currentTab.windowId === createdTab.windowId &&
+                currentTab.index === createdTab.index &&
+                Boolean(currentTab.pinned) === Boolean(createdTab.pinned) &&
+                currentGroupId === createdGroupId && currentGroupId < 0 &&
+                currentUrl === expectedUrl;
+        };
+
+        async function createAndDiscardTab(url, interactionTracker = null) {
             const normalizedUrl = normalizeUrlForOpening(url);
             if (!normalizedUrl) {
                 throw new Error('지원하지 않는 URL 형식입니다.');
             }
 
-            let tabId = null;
+            let createdTab = null;
 
             try {
                 const newTab = await chrome.tabs.create({ url: normalizedUrl, active: false });
                 if (!Number.isInteger(newTab?.id)) {
                     throw new Error('새 탭의 식별자를 확인할 수 없습니다.');
                 }
-                tabId = newTab.id;
+                createdTab = newTab;
+                const tabId = newTab.id;
+                interactionTracker?.watch(tabId);
 
-                const tabWithTargetUrl = await waitForTabUrlAssignment(tabId, normalizedUrl, newTab);
+                await waitForTabUrlAssignment(tabId, normalizedUrl, newTab);
+
+                const currentTab = await chrome.tabs.get(tabId);
+                if (!isUntouchedRunTab(currentTab, createdTab, normalizedUrl, interactionTracker)) {
+                    return createdTab;
+                }
 
                 try {
                     const discardResult = await chrome.tabs.discard(tabId);
@@ -2276,48 +2307,30 @@ document.addEventListener('DOMContentLoaded', function() {
                         console.warn(`Tab ${tabId} was opened but could not be discarded immediately. Keeping it as an inactive tab.`);
                     }
 
-                    return verifiedTab || tabWithTargetUrl || newTab;
+                    // Cancellation must compare against the original creation
+                    // snapshot, not a later result that already includes user changes.
+                    return createdTab;
                 } catch (discardError) {
                     console.warn(`Discard failed for tab ${tabId}. Keeping the inactive tab instead:`, discardError);
-                    try {
-                        return await chrome.tabs.get(tabId);
-                    } catch (_) {
-                        return tabWithTargetUrl || newTab;
-                    }
+                    return createdTab;
                 }
             } catch (error) {
                 console.error(`Error creating delay-loaded tab for ${normalizedUrl}:`, error);
-                if (Number.isInteger(tabId)) {
-                    try {
-                        await chrome.tabs.remove(tabId);
-                    } catch (removeError) {
-                        console.warn(`Failed to remove tab ${tabId} after error:`, removeError);
-                    }
-                }
+                // A lookup/assignment error does not prove that the tab is still
+                // ours to close. Use the same live-state guard as cancellation.
+                await removeCancelledRunTabIfUnchanged(createdTab, normalizedUrl, interactionTracker);
                 throw error;
             }
         }
 
-        async function removeCancelledRunTabIfUnchanged(createdTab, expectedUrl) {
+        async function removeCancelledRunTabIfUnchanged(createdTab, expectedUrl, interactionTracker = null) {
             if (!Number.isInteger(createdTab?.id)) return;
 
             try {
                 const currentTab = await chrome.tabs.get(createdTab.id);
-                const currentUrl = normalizeUrlForOpening(currentTab.pendingUrl || currentTab.url || '');
-                const createdGroupId = Number.isInteger(createdTab.groupId) ? createdTab.groupId : -1;
-                const currentGroupId = Number.isInteger(currentTab.groupId) ? currentTab.groupId : -1;
-                const wasAccessedAfterCreation = Number.isFinite(createdTab.lastAccessed) &&
-                    Number.isFinite(currentTab.lastAccessed) &&
-                    currentTab.lastAccessed > createdTab.lastAccessed;
-                const structureChanged = currentTab.windowId !== createdTab.windowId ||
-                    currentTab.index !== createdTab.index ||
-                    Boolean(currentTab.pinned) !== Boolean(createdTab.pinned) ||
-                    currentGroupId !== createdGroupId;
-
                 // Once the user has interacted with the tab, it no longer belongs
                 // exclusively to the cancelled run and must not be removed.
-                if (currentTab.active || currentTab.highlighted || currentTab.pinned ||
-                    wasAccessedAfterCreation || structureChanged || currentUrl !== expectedUrl) return;
+                if (!isUntouchedRunTab(currentTab, createdTab, expectedUrl, interactionTracker)) return;
 
                 await chrome.tabs.remove(createdTab.id);
             } catch (error) {
@@ -2372,19 +2385,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
 
+            const tabInteractionTracker = createTabInteractionTracker();
             try {
                 const urlToOpen = normalizeUrlForOpening(url);
                 if (!urlToOpen) throw new Error('지원하지 않는 URL 형식입니다.');
                 let createdTab;
 
                 if (UI.delayLoadingCheckbox && UI.delayLoadingCheckbox.checked) {
-                    createdTab = await createAndDiscardTab(urlToOpen);
+                    createdTab = await createAndDiscardTab(urlToOpen, tabInteractionTracker);
                 } else {
                     createdTab = await chrome.tabs.create({ url: urlToOpen, active: (UI.focusLockCheckbox ? !UI.focusLockCheckbox.checked : true) });
+                    tabInteractionTracker.watch(createdTab);
                 }
 
                 if (runId !== state.currentRunId) {
-                    await removeCancelledRunTabIfUnchanged(createdTab, urlToOpen);
+                    await removeCancelledRunTabIfUnchanged(createdTab, urlToOpen, tabInteractionTracker);
                     return;
                 }
             } catch (e) {
@@ -2398,6 +2413,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     currentSpan.title = `오류: ${e.message}`;
                 }
             } finally {
+                tabInteractionTracker.stop();
                 if (state.processingRunId === runId) state.processingRunId = null;
             }
 
