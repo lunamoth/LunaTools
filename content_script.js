@@ -656,6 +656,13 @@
         return null;
       }
       generateNewUrl(currentUrl, patternInfo, direction) {
+        let parsedUrl;
+        try {
+          parsedUrl = new URL(currentUrl);
+        } catch (_) {
+          return currentUrl;
+        }
+
         if (patternInfo.kind === 'date') {
           const { year, month, day, monthWidth, dayWidth, trailingSlash, originalMatch } = patternInfo;
           const nextDate = new Date(Date.UTC(year, month - 1, day));
@@ -667,7 +674,8 @@
           const nextMonth = String(nextDate.getUTCMonth() + 1).padStart(monthWidth, '0');
           const nextDay = String(nextDate.getUTCDate()).padStart(dayWidth, '0');
           const nextDatePath = `/${String(nextYear).padStart(4, '0')}/${nextMonth}/${nextDay}${trailingSlash}`;
-          return currentUrl.replace(originalMatch, nextDatePath);
+          parsedUrl.pathname = parsedUrl.pathname.replace(originalMatch, nextDatePath);
+          return parsedUrl.href;
         }
 
         if (patternInfo.kind === 'query') {
@@ -678,13 +686,8 @@
           );
           if (newPage === currentPage) return currentUrl;
 
-          try {
-            const parsedUrl = new URL(currentUrl);
-            parsedUrl.searchParams.set(queryKey, String(newPage).padStart(pageWidth, '0'));
-            return parsedUrl.href;
-          } catch (_) {
-            return currentUrl;
-          }
+          parsedUrl.searchParams.set(queryKey, String(newPage).padStart(pageWidth, '0'));
+          return parsedUrl.href;
         }
 
         const { currentPage, originalMatch, originalPageText } = patternInfo;
@@ -694,7 +697,11 @@
         if (newPage === currentPage) return currentUrl;
         const newPageText = String(newPage).padStart(originalPageText.length, '0');
         const newPageStringInMatch = originalMatch.replace(originalPageText, newPageText);
-        return currentUrl.replace(originalMatch, newPageStringInMatch);
+        // A terminal path such as /192 can also occur at the start of an IP
+        // address. Restrict replacement to pathname so pagination cannot alter
+        // the host, port, query, or fragment.
+        parsedUrl.pathname = parsedUrl.pathname.replace(originalMatch, newPageStringInMatch);
+        return parsedUrl.href;
       }
       shouldIgnoreUrl(url) {
         return KB_NAV_CONFIG.patterns.ignore.some(pattern => pattern.test(url));
@@ -1029,12 +1036,16 @@
       const videos = Array.from(document.querySelectorAll('video'));
       if (videos.length === 0) return null;
 
+      // Camera, screen-share, and WebRTC videos can play through srcObject
+      // while src/currentSrc and <source> are all absent.
+      const hasPlayableSource = (v) => Boolean(
+        v.srcObject || v.hasAttribute('src') || v.querySelector('source') || v.currentSrc
+      );
+
       const isPlayableAndVisible = (v) => {
-        const hasSrc = v.hasAttribute('src') || v.querySelector('source');
-        const hasCurrentSrc = !!v.currentSrc;
         const isReady = v.readyState > 0;
         const isVisible = v.offsetHeight > 0 && v.offsetWidth > 0 && getComputedStyle(v).visibility !== 'hidden' && getComputedStyle(v).display !== 'none';
-        return isReady && (hasSrc || hasCurrentSrc) && isVisible;
+        return isReady && hasPlayableSource(v) && isVisible;
       }
 
       const scoreVideo = (v) => {
@@ -1060,7 +1071,7 @@
       const candidateVideos = videos.filter(v => isPlayableAndVisible(v));
 
       if (candidateVideos.length === 0) {
-          const lessStrictVideos = videos.filter(v => (v.hasAttribute('src') || v.querySelector('source')) && (v.offsetWidth > 0 || v.offsetHeight > 0 || v.videoWidth > 0 || v.videoHeight > 0));
+          const lessStrictVideos = videos.filter(v => hasPlayableSource(v) && (v.offsetWidth > 0 || v.offsetHeight > 0 || v.videoWidth > 0 || v.videoHeight > 0));
           if(lessStrictVideos.length > 0) {
             lessStrictVideos.sort((a,b) => scoreVideo(b) - scoreVideo(a));
             return lessStrictVideos[0];
