@@ -280,6 +280,12 @@
                 context.currentTime,
                 0.05
             );
+            // A replay can begin before the site puts this element back in the
+            // document. Keep it in the detached-media lifecycle so later ON/OFF
+            // changes reach its gain and pause/ended can disconnect it again.
+            if (!mediaElement.isConnected) {
+                this.#scheduleDetachedCleanup(mediaElement, audioComponents);
+            }
             if (context.state === 'suspended') {
                 void this.ensureContextIsRunning();
             }
