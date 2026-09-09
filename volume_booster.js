@@ -176,6 +176,7 @@
             // 비동기 AudioContext 재개가 역순으로 끝나더라도 마지막 사용자 상태를 적용합니다.
             this.#targetVolume = isActivated ? multiplier : 1.0;
             this.#allowNewSetup = isActivated;
+            this.#pruneDeadMediaRefs();
 
             const context = await this.ensureContextIsRunning();
             if (!context) return; 
@@ -224,7 +225,9 @@
         }
 
         handleAddedNodes(nodeList) {
-            if (!this.#hasSetupMedia || !this.#audioContext || !nodeList?.length) return;
+            if (!nodeList?.length) return;
+            this.#pruneDeadMediaRefs();
+            if (!this.#hasSetupMedia || !this.#audioContext) return;
 
             for (const media of this.#findMediaInNodes(nodeList)) {
                 if (!media.isConnected) continue;
@@ -238,6 +241,15 @@
                         0.05
                     );
                 }
+            }
+        }
+
+        #pruneDeadMediaRefs() {
+            for (const mediaRef of Array.from(this.#disconnectedMediaRefs)) {
+                if (!mediaRef.deref()) this.#disconnectedMediaRefs.delete(mediaRef);
+            }
+            for (const mediaRef of Array.from(this.#pendingDetachedMediaRefs)) {
+                if (!mediaRef.deref()) this.#pendingDetachedMediaRefs.delete(mediaRef);
             }
         }
 
@@ -293,6 +305,7 @@
         }
 
         async reconnectDisconnectedMedia() {
+            this.#pruneDeadMediaRefs();
             if (!this.#hasSetupMedia || this.#disconnectedMediaRefs.size === 0) return;
 
             if (!(await this.#getOrCreateAudioContext())) return;
@@ -359,7 +372,9 @@
         }
 
         cleanupRemovedNodes(nodeList) {
-            if (!this.#hasSetupMedia || !nodeList?.length) return;
+            if (!nodeList?.length) return;
+            this.#pruneDeadMediaRefs();
+            if (!this.#hasSetupMedia) return;
 
             for (const media of this.#findMediaInNodes(nodeList)) {
                 const audioComponents = this.#sourceNodeMap.get(media);
