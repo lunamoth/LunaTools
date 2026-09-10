@@ -282,6 +282,35 @@ document.addEventListener('DOMContentLoaded', function() {
         };
         let savedListMutationQueue = Promise.resolve();
         let savedListLoadGeneration = 0;
+        let listEditorGeneration = 0;
+        let listLoadGeneration = 0;
+
+        const captureListEditorState = () => ({
+            generation: listEditorGeneration,
+            loadedListName: state.loadedListName,
+            urls: UI.urlInput ? UI.urlInput.value : ''
+        });
+
+        const isSameListEditor = (snapshot) =>
+            snapshot.generation === listEditorGeneration &&
+            snapshot.loadedListName === state.loadedListName;
+
+        const isListEditorUnchanged = (snapshot) =>
+            isSameListEditor(snapshot) &&
+            snapshot.urls === (UI.urlInput ? UI.urlInput.value : '');
+
+        const applySavedListToEditor = (snapshot, listName, savedUrls) => {
+            if (!isSameListEditor(snapshot)) return false;
+
+            // Storage completes asynchronously. Only the captured input was
+            // saved; later edits must retain their unsaved-change protection.
+            const hasLaterEdits = !isListEditorUnchanged(snapshot);
+            if (state.loadedListName !== listName) listEditorGeneration++;
+            state.loadedListName = listName;
+            state.originalLoadedListUrls = savedUrls;
+            state.isDirty = hasLaterEdits;
+            return true;
+        };
 
         const canAutoFocusUrlInput = () => (
             UI.urlInput &&
@@ -1312,6 +1341,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!confirmed) return;
             }
 
+            listEditorGeneration++;
+            listLoadGeneration++;
             Object.assign(state, {
                 urlsToProcess: [], currentUrlIndex: 0, isPaused: false, errorCount: 0,
                 isDirty: false, loadedListName: null, originalLoadedListUrls: null,
@@ -1527,6 +1558,8 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const _switchToNewListState = () => {
+            listEditorGeneration++;
+            listLoadGeneration++;
             if(UI.urlInput) UI.urlInput.value = '';
             state.loadedListName = null;
             state.originalLoadedListUrls = null;
@@ -1559,10 +1592,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 if (choice === 'save_and_new') {
+                    const editorSnapshot = captureListEditorState();
+                    const urlsToSave = editorSnapshot.urls.trim();
+                    let savedListName = editorSnapshot.loadedListName;
                     let savedSuccessfully = false;
-                    if (state.loadedListName) {
-                        const loadedListName = state.loadedListName;
-                        const urlsToSave = UI.urlInput.value.trim();
+                    if (savedListName) {
+                        const loadedListName = savedListName;
                         const mutationResult = await mutateSavedLists((lists) => {
                             if (!hasOwnListKey(lists, loadedListName)) {
                                 return { skipSave: true, missing: true };
@@ -1571,7 +1606,6 @@ document.addEventListener('DOMContentLoaded', function() {
                             return {};
                         });
                         if (mutationResult.saved) {
-                            state.originalLoadedListUrls = urlsToSave;
                             Toast.show(`'${loadedListName}' 목록이 업데이트되었습니다.`, 'success');
                             savedSuccessfully = true;
                         } else if (mutationResult.missing) {
@@ -1595,7 +1629,6 @@ document.addEventListener('DOMContentLoaded', function() {
                             } else if (!assertSafeListName(listName)) {
                                 return;
                             } else {
-                                const urlsToSave = UI.urlInput.value.trim();
                                 const mutationResult = await mutateSavedLists((lists) => {
                                     if (hasOwnListKey(lists, listName)) {
                                         return { skipSave: true, alreadyExists: true };
@@ -1606,11 +1639,8 @@ document.addEventListener('DOMContentLoaded', function() {
                                 if (mutationResult.alreadyExists) {
                                     Toast.show(`'${listName}' 목록이 이미 존재합니다. 현재 편집 내용은 유지됩니다.`, 'error');
                                 } else if (mutationResult.saved) {
-                                    state.originalLoadedListUrls = urlsToSave;
                                     Toast.show(`'${listName}' 목록이 저장되었습니다.`, 'success');
-                                    await loadSavedLists();
-                                    if (UI.savedListsDropdown) UI.savedListsDropdown.value = listName;
-                                    state.loadedListName = listName;
+                                    savedListName = listName;
                                     savedSuccessfully = true;
                                 }
                             }
@@ -1619,8 +1649,14 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                     }
                     if (!savedSuccessfully) return;
-                    state.isDirty = false;
-                    _switchToNewListState();
+                    const editorUnchanged = isListEditorUnchanged(editorSnapshot);
+                    applySavedListToEditor(editorSnapshot, savedListName, urlsToSave);
+                    if (editorUnchanged) {
+                        _switchToNewListState();
+                    } else {
+                        Toast.show('저장 중 편집 내용이 변경되어 현재 입력을 유지했습니다.', 'info', 5000);
+                    }
+                    await loadSavedLists();
                 }
             } else {
                 _switchToNewListState();
@@ -1630,8 +1666,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const handleUpdateList = async () => {
             if (!state.loadedListName || !state.isDirty) return;
 
-            const loadedListName = state.loadedListName;
-            const urlsToSave = UI.urlInput.value.trim();
+            const editorSnapshot = captureListEditorState();
+            const loadedListName = editorSnapshot.loadedListName;
+            const urlsToSave = editorSnapshot.urls.trim();
             const mutationResult = await mutateSavedLists((lists) => {
                 if (!hasOwnListKey(lists, loadedListName)) {
                     return { skipSave: true, missing: true };
@@ -1641,14 +1678,17 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             if (mutationResult.missing) {
                 Toast.show(`'${loadedListName}' 목록을 찾을 수 없어 업데이트할 수 없습니다. 새 목록으로 저장해보세요.`, 'error');
-                state.loadedListName = null;
-                state.isDirty = true;
+                if (isSameListEditor(editorSnapshot)) {
+                    listEditorGeneration++;
+                    state.loadedListName = null;
+                    state.originalLoadedListUrls = null;
+                    state.isDirty = true;
+                }
                 await loadSavedLists();
                 return;
             }
             if (mutationResult.saved) {
-                state.isDirty = false;
-                state.originalLoadedListUrls = urlsToSave;
+                applySavedListToEditor(editorSnapshot, loadedListName, urlsToSave);
                 Toast.show(`'${loadedListName}' 목록이 업데이트되었습니다.`, 'success');
                 await loadSavedLists();
                 if (UI.savedListsDropdown) UI.savedListsDropdown.blur();
@@ -1680,8 +1720,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
 
-            const urlsToSave = UI.urlInput.value.trim();
-            const loadedListName = state.loadedListName;
+            const editorSnapshot = captureListEditorState();
+            const urlsToSave = editorSnapshot.urls.trim();
+            const loadedListName = editorSnapshot.loadedListName;
             const mutationResult = await mutateSavedLists(async (lists) => {
                 if (hasOwnListKey(lists, listName) && listName !== loadedListName) {
                     const safeListName = escapeHtml(listName);
@@ -1699,12 +1740,9 @@ document.addEventListener('DOMContentLoaded', function() {
             });
 
             if (mutationResult.saved) {
-                state.isDirty = false;
-                state.loadedListName = listName;
-                state.originalLoadedListUrls = urlsToSave;
+                applySavedListToEditor(editorSnapshot, listName, urlsToSave);
                 Toast.show(`'${listName}' 목록이 저장되었습니다.`, 'success');
                 await loadSavedLists();
-                if (UI.savedListsDropdown) UI.savedListsDropdown.value = listName;
                 if (UI.savedListsDropdown) UI.savedListsDropdown.blur();
                 return true;
             }
@@ -1713,17 +1751,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const handleLoadList = async () => {
             const listNameToLoad = UI.savedListsDropdown ? UI.savedListsDropdown.value : null;
+            const loadGeneration = ++listLoadGeneration;
+            const editorSnapshot = captureListEditorState();
 
-            if (state.isDirty && ( (state.loadedListName && state.loadedListName !== listNameToLoad) || (!state.loadedListName && listNameToLoad !== '') || (listNameToLoad === '' && state.loadedListName) ) ) {
+            // Enter on the currently selected list also reloads its saved data.
+            // It needs the same discard confirmation as loading another list.
+            if (state.isDirty) {
                 const safeCurrentName = escapeHtml(state.loadedListName || '현재 편집 중인');
                 const safeTargetName = escapeHtml(listNameToLoad || '');
                 let modalMessage = `<strong>${safeCurrentName}</strong> 목록에 저장되지 않은 변경사항이 있습니다. `;
-                if (listNameToLoad && listNameToLoad !== state.loadedListName) {
+                if (listNameToLoad) {
                     modalMessage += `정말 <strong>'${safeTargetName}'</strong> 목록을 불러오시겠습니까? (변경사항은 사라집니다)`;
-                } else if (listNameToLoad === '' && state.loadedListName) {
+                } else {
                     modalMessage += `선택을 해제하고 새 목록 상태로 전환하시겠습니까? (변경사항은 사라집니다)`;
-                } else if (!state.loadedListName && listNameToLoad !== '') {
-                     modalMessage += `정말 <strong>'${safeTargetName}'</strong> 목록을 불러오시겠습니까? (현재 입력한 내용은 사라집니다)`;
                 }
 
 
@@ -1735,10 +1775,21 @@ document.addEventListener('DOMContentLoaded', function() {
                     cancelText: '취소'
                 });
                 if (!confirmed) {
-                    if (UI.savedListsDropdown) UI.savedListsDropdown.value = state.loadedListName || '';
+                    if (loadGeneration === listLoadGeneration && UI.savedListsDropdown) {
+                        UI.savedListsDropdown.value = state.loadedListName || '';
+                    }
                     return;
                 }
             }
+
+            const canApplyLoadedList = () => {
+                if (loadGeneration !== listLoadGeneration) return false;
+                if (isListEditorUnchanged(editorSnapshot)) return true;
+                if (UI.savedListsDropdown) UI.savedListsDropdown.value = state.loadedListName || '';
+                Toast.show('목록을 불러오는 동안 편집 내용이 변경되어 현재 입력을 유지했습니다. 다시 시도해주세요.', 'info', 5000);
+                return false;
+            };
+            if (!canApplyLoadedList()) return;
 
             if (!listNameToLoad) {
                 _switchToNewListState();
@@ -1746,6 +1797,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             const lists = await readSavedListsAfterPendingOperations();
+            if (!canApplyLoadedList()) return;
             if (!lists) {
                 if (UI.savedListsDropdown) UI.savedListsDropdown.value = state.loadedListName || '';
                 return;
@@ -1753,6 +1805,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const loadedData = lists[listNameToLoad];
             if (!loadedData) {
                 Toast.show(`'${listNameToLoad}' 목록을 찾을 수 없습니다. 목록이 삭제되었을 수 있습니다.`, 'error');
+                listEditorGeneration++;
                 state.loadedListName = null;
                 state.originalLoadedListUrls = null;
                 state.isDirty = (UI.urlInput && UI.urlInput.value.trim() !== '');
@@ -1760,6 +1813,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             const loadedUrls = loadedData.urls || '';
+            listEditorGeneration++;
             if (UI.urlInput) UI.urlInput.value = loadedUrls;
 
             state.originalLoadedListUrls = loadedUrls;
@@ -3967,29 +4021,35 @@ document.addEventListener('DOMContentLoaded', function() {
       const generateUniqueSessionName = (
         baseName,
         sessions = allSessions,
-        { showWarning = false } = {}
+        { showWarning = false, usedNames = null, nextSuffixByBase = null } = {}
       ) => {
         const maxLength = CONSTANTS.UI.SESSION_NAME_MAX_LENGTH;
-        const fallbackName = `세션 ${formatDate(Date.now())}`;
-        const normalizedBase = String(baseName ?? '').trim().slice(0, maxLength) || fallbackName.slice(0, maxLength);
+        const normalizedBase = String(baseName ?? '').trim().slice(0, maxLength) ||
+          `세션 ${formatDate(Date.now())}`.slice(0, maxLength);
 
-        if (!isDuplicateSessionName(normalizedBase, null, sessions)) return normalizedBase;
+        const existingNames = usedNames instanceof Set
+          ? usedNames
+          : new Set(sessions.map(session => session.name));
+        if (!existingNames.has(normalizedBase)) return normalizedBase;
 
-        let counter = 2;
+        let counter = nextSuffixByBase?.get(normalizedBase) || 2;
         let newName;
         do {
           const suffix = ` (${counter++})`;
           const availableLength = Math.max(1, maxLength - suffix.length);
           const truncatedBase = normalizedBase.slice(0, availableLength).trimEnd();
           newName = `${truncatedBase}${suffix}`;
-        } while (isDuplicateSessionName(newName, null, sessions));
+        } while (existingNames.has(newName));
+        nextSuffixByBase?.set(normalizedBase, counter);
 
         if (showWarning) showToast(CONSTANTS.MESSAGES.createDuplicateNameWarning(newName));
         return newName;
       };
 
-      const generateUniqueSessionId = (sessions) => {
-        const existingIds = new Set(sessions.map(session => String(session.id)));
+      const generateUniqueSessionId = (sessions, usedIds = null) => {
+        const existingIds = usedIds instanceof Set
+          ? usedIds
+          : new Set(sessions.map(session => String(session.id)));
         let id;
         do {
           id = generateUniqueId();
@@ -4502,12 +4562,23 @@ document.addEventListener('DOMContentLoaded', function() {
             if (valid.length === 0) throw new Error(CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS);
 
             const result = await mutateAndPersistSessions((sessions) => {
+              // Build indexes once for this additive batch. Repeatedly scanning
+              // all sessions for every numeric suffix grows cubically when a
+              // file contains many sessions with the same name.
+              const usedIds = new Set(sessions.map(session => String(session.id)));
+              const usedNames = new Set(sessions.map(session => session.name));
+              const nextSuffixByBase = new Map();
               for (const importedSession of valid) {
                 const sessionToImport = JSON.parse(JSON.stringify(importedSession));
-                if (sessions.some(session => String(session.id) === String(sessionToImport.id))) {
-                  sessionToImport.id = generateUniqueSessionId(sessions);
+                if (usedIds.has(String(sessionToImport.id))) {
+                  sessionToImport.id = generateUniqueSessionId(sessions, usedIds);
                 }
-                sessionToImport.name = generateUniqueSessionName(sessionToImport.name, sessions);
+                sessionToImport.name = generateUniqueSessionName(sessionToImport.name, sessions, {
+                  usedNames,
+                  nextSuffixByBase
+                });
+                usedIds.add(String(sessionToImport.id));
+                usedNames.add(sessionToImport.name);
                 sessions.push(sessionToImport);
               }
               return { importedCount: valid.length };
