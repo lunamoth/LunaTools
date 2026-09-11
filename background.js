@@ -1838,7 +1838,10 @@ chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
   try {
     const tab = await chrome.tabs.get(tabId);
     if (tab) {
-        await tabManager.handleTabUpdate(tab); 
+        // onAttached 자체가 이 탭이 방금 대상 창에 들어왔다는 확정 신호입니다.
+        // MV3 서비스 워커가 이 이벤트로 깨어난 경우 initializeCache()는 이미
+        // 이동이 끝난 상태를 읽으므로 캐시만으로는 기존 탭과 이동 탭을 구분할 수 없습니다.
+        await tabManager.handleTabUpdate(tab, { currentBecameDuplicate: true });
     }
   } catch (error) {
     if (tabManager._isTabNotFoundError(error)) {
