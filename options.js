@@ -33,6 +33,31 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const SYNC_KEYS = [STORAGE_KEYS.LOCKED, STORAGE_KEYS.BLOCKED, STORAGE_KEYS.DISABLED_DRAG];
     const LOCAL_KEYS = [STORAGE_KEYS.MULTI_URL_OPTIONS, STORAGE_KEYS.SAVED_URL_LISTS, STORAGE_KEYS.SESSIONS];
+    const LOCAL_DATA_STORAGE_LOCK = 'lunatools-local-data-storage';
+
+    const runWithLocalDataStorageLock = async (operation) => {
+        const lockManager = globalThis.navigator?.locks;
+        if (!lockManager || typeof lockManager.request !== 'function') {
+            return operation();
+        }
+
+        let operationStarted = false;
+        try {
+            return await lockManager.request(
+                LOCAL_DATA_STORAGE_LOCK,
+                { mode: 'exclusive' },
+                () => {
+                    operationStarted = true;
+                    return operation();
+                }
+            );
+        } catch (error) {
+            // 일부 제한된 문맥에서 잠금 획득 자체가 거부되더라도 기존 저장 기능은 유지한다.
+            // 콜백이 시작된 뒤의 오류는 작업 오류이므로 절대 재실행하지 않는다.
+            if (operationStarted) throw error;
+            return operation();
+        }
+    };
     
     const STATUS_VISIBLE_DURATION = 3000;
     const MAX_RESTORE_FILE_SIZE = 32 * 1024 * 1024;
@@ -692,8 +717,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const syncData = await chrome.storage.sync.get(SYNC_KEYS);
-            const localData = await chrome.storage.local.get(LOCAL_KEYS);
+            const { syncData, localData } = await runWithLocalDataStorageLock(async () => ({
+                syncData: await chrome.storage.sync.get(SYNC_KEYS),
+                localData: await chrome.storage.local.get(LOCAL_KEYS)
+            }));
 
             const backupData = {
                 formatVersion: BACKUP_FORMAT_VERSION,
@@ -757,9 +784,9 @@ document.addEventListener('DOMContentLoaded', () => {
             finishRestoreAttempt();
         };
         reader.onload = async (e) => {
-            let syncSnapshot = null;
-            let localSnapshot = null;
             let reloadScheduled = false;
+            let rollbackAttempted = false;
+            let rollbackSucceeded = false;
             try {
                 const backupData = normalizeBackupData(JSON.parse(e.target.result));
                 
@@ -769,11 +796,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
-                syncSnapshot = await chrome.storage.sync.get(SYNC_KEYS);
-                localSnapshot = await chrome.storage.local.get(LOCAL_KEYS);
+                await runWithLocalDataStorageLock(async () => {
+                    const syncSnapshot = await chrome.storage.sync.get(SYNC_KEYS);
+                    const localSnapshot = await chrome.storage.local.get(LOCAL_KEYS);
 
-                await replaceKnownStorageKeys(chrome.storage.sync, backupData.syncKeysToReplace, backupData.sync);
-                await replaceKnownStorageKeys(chrome.storage.local, backupData.localKeysToReplace, backupData.local);
+                    try {
+                        await replaceKnownStorageKeys(chrome.storage.sync, backupData.syncKeysToReplace, backupData.sync);
+                        await replaceKnownStorageKeys(chrome.storage.local, backupData.localKeysToReplace, backupData.local);
+                    } catch (restoreWriteError) {
+                        rollbackAttempted = true;
+                        rollbackSucceeded = await restoreStorageSnapshots(syncSnapshot, localSnapshot);
+                        throw restoreWriteError;
+                    }
+                });
                 
                 showStatus('데이터를 성공적으로 복원했습니다. 페이지가 새로고침됩니다.');
                 
@@ -785,8 +820,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             } catch (error) {
                 console.error('Restore failed:', error);
-                if (syncSnapshot && localSnapshot) {
-                    const rollbackSucceeded = await restoreStorageSnapshots(syncSnapshot, localSnapshot);
+                if (rollbackAttempted) {
                     if (rollbackSucceeded) {
                         showStatus(`복원 실패: ${error.message} 기존 데이터는 복구되었습니다.`, true);
                     } else {

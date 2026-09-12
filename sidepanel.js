@@ -2,6 +2,31 @@
 document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
+    const LOCAL_DATA_STORAGE_LOCK = 'lunatools-local-data-storage';
+    const runWithLocalDataStorageLock = async (operation) => {
+        const lockManager = globalThis.navigator?.locks;
+        if (!lockManager || typeof lockManager.request !== 'function') {
+            return operation();
+        }
+
+        let operationStarted = false;
+        try {
+            return await lockManager.request(
+                LOCAL_DATA_STORAGE_LOCK,
+                { mode: 'exclusive' },
+                () => {
+                    operationStarted = true;
+                    return operation();
+                }
+            );
+        } catch (error) {
+            // 일부 제한된 문맥에서 잠금 획득 자체가 거부되더라도 기존 저장 기능은 유지한다.
+            // 콜백이 시작된 뒤의 오류는 작업 오류이므로 절대 재실행하지 않는다.
+            if (operationStarted) throw error;
+            return operation();
+        }
+    };
+
     const createDownloadInterruptedError = (reason) => new Error(
         reason
             ? `다운로드가 중단되었습니다. (${reason})`
@@ -1511,21 +1536,23 @@ document.addEventListener('DOMContentLoaded', function() {
             return queuedOperation;
         };
 
-        const mutateSavedLists = (mutator) => enqueueSavedListMutation(async () => {
-            const lists = await getSavedLists();
-            if (!lists) return { saved: false, unavailable: true, lists: null };
+        const mutateSavedLists = (mutator) => enqueueSavedListMutation(() =>
+            runWithLocalDataStorageLock(async () => {
+                const lists = await getSavedLists();
+                if (!lists) return { saved: false, unavailable: true, lists: null };
 
-            const result = await mutator(lists) || {};
-            if (result.skipSave) {
-                return { ...result, saved: false, lists };
-            }
+                const result = await mutator(lists) || {};
+                if (result.skipSave) {
+                    return { ...result, saved: false, lists };
+                }
 
-            const saved = await saveLists(lists);
-            return { ...result, saved, lists };
-        });
+                const saved = await saveLists(lists);
+                return { ...result, saved, lists };
+            })
+        );
 
         const readSavedListsAfterPendingOperations = () =>
-            enqueueSavedListMutation(getSavedLists);
+            enqueueSavedListMutation(() => runWithLocalDataStorageLock(getSavedLists));
 
         const loadSavedLists = async () => {
             const loadGeneration = ++savedListLoadGeneration;
@@ -2673,7 +2700,9 @@ document.addEventListener('DOMContentLoaded', function() {
             UI.intervalInput.value = options.interval;
 
             try {
-                await chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: options });
+                await runWithLocalDataStorageLock(() =>
+                    chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: options })
+                );
             } catch (e) {
                 console.error('Failed to save options:', e);
                 Toast.show('실행 옵션 저장에 실패했습니다. 저장 공간 또는 권한 상태를 확인해주세요.', 'error', 5000);
@@ -3607,30 +3636,32 @@ document.addEventListener('DOMContentLoaded', function() {
         return queuedOperation;
       };
 
-      const mutateAndPersistSessions = (mutator) => enqueueSessionMutation(async () => {
-        const persistedSessions = parseSessionsForMutation(
-          await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, [])
-        );
-        const workingSessions = JSON.parse(JSON.stringify(persistedSessions));
+      const mutateAndPersistSessions = (mutator) => enqueueSessionMutation(() =>
+        runWithLocalDataStorageLock(async () => {
+          const persistedSessions = parseSessionsForMutation(
+            await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, [])
+          );
+          const workingSessions = JSON.parse(JSON.stringify(persistedSessions));
 
-        try {
-          const result = await mutator(workingSessions);
-          if (result?.skipSave) {
-            allSessions = persistedSessions;
+          try {
+            const result = await mutator(workingSessions);
+            if (result?.skipSave) {
+              allSessions = persistedSessions;
+              renderSessions();
+              return result;
+            }
+
+            await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, workingSessions);
+            allSessions = workingSessions;
             renderSessions();
             return result;
+          } catch (error) {
+            allSessions = persistedSessions;
+            renderSessions();
+            throw error;
           }
-
-          await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, workingSessions);
-          allSessions = workingSessions;
-          renderSessions();
-          return result;
-        } catch (error) {
-          allSessions = persistedSessions;
-          renderSessions();
-          throw error;
-        }
-      });
+        })
+      );
 
       const updateAndSaveSessions = async (updateFunction, { errorMessagePrefix }) => {
         try {

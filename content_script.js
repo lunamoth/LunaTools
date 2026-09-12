@@ -268,6 +268,7 @@
     static MIN_FINAL_DISTANCE_SQ = 625;
     static MESSAGE_ACTION = 'perform-gesture';
     static RIGHT_MOUSE_BUTTON = 2;
+    static RIGHT_MOUSE_BUTTON_MASK = 2;
 
     constructor() {
       this.isMouseDown = false;
@@ -326,7 +327,16 @@
 
     handleMouseMove(event) {
       if (!event.isTrusted || !this.isTrustedSequence) return;
-      if (!this.isMouseDown || this.didMove) return;
+      if (!this.isMouseDown) return;
+
+      // 페이지 밖에서 오른쪽 mouseup이 유실되어도 다음 실제 이동에서
+      // 오래된 제스처 상태가 남지 않도록 현재 버튼 상태로 복구한다.
+      if ((event.buttons & MouseGestureHandler.RIGHT_MOUSE_BUTTON_MASK) === 0) {
+        this._resetState();
+        return;
+      }
+
+      if (this.didMove) return;
 
       const deltaX = event.clientX - this.startX;
       const deltaY = event.clientY - this.startY;

@@ -517,6 +517,12 @@
         #handleMouseDown(e) {
             if (!e.isTrusted) return;
             if (e.button !== 0) return;
+
+            // 새 기본 버튼 입력은 이전 드래그 시퀀스와 동시에 성립할 수 없다.
+            // 페이지 밖에서 mouseup/keyup이 유실된 경우 남아 있던 상태를 먼저 정리한다.
+            if (this.#isTrustedSequence || this.#isDragging || this.#modifier) {
+                this.#resetState();
+            }
             
             const modifier = this.#getModifier(e);
             if (!modifier) return;
