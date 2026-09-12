@@ -487,7 +487,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const hasOwnListKey = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
         const isReservedObjectKey = (key) => RESERVED_OBJECT_KEYS.has(String(key));
         const normalizeListName = (name) => String(name ?? '').trim().replace(/\s+/g, ' ');
-        const generateUniqueListName = (baseName, usedNames) => {
+        const generateUniqueListName = (baseName, usedNames, nextSuffixByBase = null) => {
             const used = usedNames instanceof Set ? usedNames : new Set(usedNames || []);
             const maxLength = CONFIG.MAX_LIST_NAME_LENGTH;
             const fallbackName = 'URL 목록';
@@ -495,7 +495,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (!used.has(normalizedBase)) return normalizedBase;
 
-            let counter = 2;
+            // Reuse the next suffix within an additive import batch. Starting
+            // at 2 for every collision repeatedly scans all earlier names.
+            let counter = nextSuffixByBase?.get(normalizedBase) || 2;
             let candidate;
             do {
                 const suffix = ` (${counter++})`;
@@ -504,6 +506,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 candidate = `${truncatedBase}${suffix}`;
             } while (used.has(candidate));
 
+            nextSuffixByBase?.set(normalizedBase, counter);
             return candidate;
         };
         const isValidListName = (name) => {
@@ -1830,6 +1833,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const listName = UI.savedListsDropdown ? UI.savedListsDropdown.value : null;
             if (!listName) return;
             const safeListName = escapeHtml(listName);
+            const editorSnapshot = captureListEditorState();
 
             const confirmed = await Modal.show({
                 title: '목록 삭제 확인',
@@ -1849,9 +1853,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (mutationResult.saved) {
                 const wasCurrentlyLoaded = state.loadedListName === listName;
-                if (wasCurrentlyLoaded) {
+                if (wasCurrentlyLoaded && isListEditorUnchanged(editorSnapshot)) {
                     _switchToNewListState();
                     Toast.show(`'${listName}' 목록이 삭제되었고, 새 목록 상태로 전환합니다.`, 'success');
+                } else if (wasCurrentlyLoaded) {
+                    // The confirmed deletion applies to stored data. Input
+                    // entered or loaded while the write was pending remains
+                    // an unsaved draft, detached from the deleted list.
+                    listEditorGeneration++;
+                    listLoadGeneration++;
+                    state.loadedListName = null;
+                    state.originalLoadedListUrls = null;
+                    state.isDirty = true;
+                    if (UI.savedListsDropdown) UI.savedListsDropdown.value = '';
+                    updateButtonState();
+                    Toast.show(`'${listName}' 목록은 삭제했으며, 삭제 처리 중 변경된 입력은 저장되지 않은 새 목록으로 유지했습니다.`, 'info', 5000);
                 } else {
                     Toast.show(`'${listName}' 목록이 삭제되었습니다.`, 'success');
                 }
@@ -2088,6 +2104,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const validImportedLists = Object.create(null);
             const importedListNames = new Set();
+            const nextSuffixByBase = new Map();
             let skippedInvalidListNames = 0;
             let renamedDuplicateListNames = 0;
             let skippedInvalidListStructures = 0;
@@ -2106,7 +2123,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     typeof importedList.urls === 'string') {
                     let finalName = normalizedName;
                     if (importedListNames.has(finalName)) {
-                        finalName = generateUniqueListName(finalName, importedListNames);
+                        finalName = generateUniqueListName(finalName, importedListNames, nextSuffixByBase);
                         renamedDuplicateListNames += 1;
                     }
                     importedListNames.add(finalName);
