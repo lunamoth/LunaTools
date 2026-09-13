@@ -83,6 +83,8 @@
         #isTrustedSequence = false;
         #activeDelayedOpenController = null;
         #lastObservedScrollY = null;
+        #dragBody = null;
+        #mouseDownEvent = null;
 
         #listenerOptions = { capture: true, passive: false };
 
@@ -93,6 +95,8 @@
         #boundHandleKeyUp = this.#handleKeyUp.bind(this);
         #boundHandleInteractionAbort = this.#handleInteractionAbort.bind(this);
         #boundHandleVisibilityChange = this.#handleVisibilityChange.bind(this);
+        #boundHandleFocusChange = this.#handleFocusChange.bind(this);
+        #boundHandleWheel = this.#handleWheel.bind(this);
 
         constructor() {
             this.#injectStyles();
@@ -113,9 +117,18 @@
             window.addEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
             document.addEventListener('keydown', this.#boundHandleKeyDown, this.#listenerOptions);
             document.addEventListener('keyup', this.#boundHandleKeyUp, this.#listenerOptions);
-            window.addEventListener('blur', this.#boundHandleInteractionAbort, true);
+            window.addEventListener('blur', this.#boundHandleFocusChange, true);
+            // 브라우저 창을 다시 활성화할 때 이전 창에서 끝나지 않은
+            // 포인터 시퀀스가 남아 있으면 첫 mousemove가 페이지 입력을
+            // 계속 가로챌 수 있습니다. 포커스 복귀도 새 시퀀스의 경계로
+            // 취급해 드래그 잠금과 보조키 상태를 정리합니다.
+            window.addEventListener('focus', this.#boundHandleFocusChange, true);
             window.addEventListener('pagehide', this.#boundHandleInteractionAbort, true);
+            window.addEventListener('pageshow', this.#boundHandleInteractionAbort, true);
             window.addEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
+            window.addEventListener('dragstart', this.#boundHandleInteractionAbort, true);
+            window.addEventListener('dragend', this.#boundHandleInteractionAbort, true);
+            window.addEventListener('wheel', this.#boundHandleWheel, { capture: true, passive: true });
             document.addEventListener('visibilitychange', this.#boundHandleVisibilityChange, true);
         }
 
@@ -125,9 +138,14 @@
             window.removeEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
             document.removeEventListener('keydown', this.#boundHandleKeyDown, this.#listenerOptions);
             document.removeEventListener('keyup', this.#boundHandleKeyUp, this.#listenerOptions);
-            window.removeEventListener('blur', this.#boundHandleInteractionAbort, true);
+            window.removeEventListener('blur', this.#boundHandleFocusChange, true);
+            window.removeEventListener('focus', this.#boundHandleFocusChange, true);
             window.removeEventListener('pagehide', this.#boundHandleInteractionAbort, true);
+            window.removeEventListener('pageshow', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
+            window.removeEventListener('dragstart', this.#boundHandleInteractionAbort, true);
+            window.removeEventListener('dragend', this.#boundHandleInteractionAbort, true);
+            window.removeEventListener('wheel', this.#boundHandleWheel, true);
             document.removeEventListener('visibilitychange', this.#boundHandleVisibilityChange, true);
         }
 
@@ -171,6 +189,36 @@
 
         #getModifier(e) { return e.altKey ? 'alt' : e.ctrlKey ? 'ctrl' : e.shiftKey ? 'shift' : null; }
 
+        #isEditableEvent(e) {
+            if (document.designMode === 'on') return true;
+            const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+            const candidates = [...path, e.target, e.target?.parentElement];
+            const selector = 'input, textarea, select, [contenteditable], [role="textbox"], [role="searchbox"], [role="combobox"], .CodeMirror, .monaco-editor, .ace_editor';
+            // closest()는 ShadowRoot를 넘지 않으므로 슬롯·호스트를 포함한
+            // 이벤트 경로 전체를 확인합니다. 직전 activeElement만 검사하면
+            // 입력란 밖에서 새로 시작하는 정상적인 링크 드래그도 막게 됩니다.
+            return candidates.some(candidate => {
+                if (!(candidate instanceof Element)) return false;
+                if (candidate.isContentEditable) return true;
+                const editable = candidate.closest(selector);
+                if (!editable) return false;
+                if (editable.matches('input, textarea, select, [role="textbox"], [role="searchbox"], [role="combobox"], .CodeMirror, .monaco-editor, .ace_editor')) return true;
+                const value = editable.getAttribute('contenteditable');
+                return editable.isContentEditable || (value !== null && value.toLowerCase() !== 'false');
+            });
+        }
+
+        #isDocumentActive() {
+            return document.visibilityState !== 'hidden' && document.hasFocus();
+        }
+
+        #hasLiveDragContext() {
+            return this.#isDocumentActive() &&
+                !this.#mouseDownEvent?.defaultPrevented &&
+                this.#dragBody === document.body && Boolean(this.#dragBody?.isConnected) &&
+                (!this.#isDragging || Boolean(this.#selectionBox?.isConnected && this.#actionIndicator?.isConnected));
+        }
+
         #isRectIntersecting(r1, r2) { return !(r2.right < r1.left || r2.left > r1.right || r2.bottom < r1.top || r2.top > r1.bottom); }
 
         #isElementIntersecting(element, selectionRect) {
@@ -192,16 +240,38 @@
             return false;
         }
 
+        #getLinkUrl(link) {
+            // HTML 앵커의 href는 문자열이지만 SVG 앵커는 SVGAnimatedString입니다.
+            // 두 경우 모두 같은 기준 주소로 해석해 링크 하나의 형식 차이가
+            // 페이지 전체의 드래그 선택을 중단시키지 않도록 합니다.
+            const href = typeof link?.href === 'string'
+                ? link.href
+                : link?.getAttribute?.('href');
+            if (typeof href !== 'string' || !href.trim()) return null;
+
+            try {
+                return new URL(href, link.baseURI || document.baseURI);
+            } catch {
+                return null;
+            }
+        }
+
         #findAllLinks(rootNode) {
             const links = [];
             const queue = [rootNode];
-            while (queue.length > 0) {
-                const node = queue.shift();
+            for (let index = 0; index < queue.length; index += 1) {
+                const node = queue[index];
                 if (!node) continue;
-                links.push(...node.querySelectorAll('a[href]'));
+                // 대량의 링크를 함수 인자로 펼치면 인자 개수 제한으로 실패합니다.
+                for (const link of node.querySelectorAll('a[href]')) links.push(link);
                 for (const el of node.querySelectorAll('*')) { if (el.shadowRoot) queue.push(el.shadowRoot); }
             }
-            return links.filter(link => this.#isElementVisible(link) && link.href && !link.href.startsWith(window.location.href + '#') && ['http:', 'https:'].includes(link.protocol));
+            return links.filter(link => {
+                if (!this.#isElementVisible(link)) return false;
+                const url = this.#getLinkUrl(link);
+                return url && !url.href.startsWith(window.location.href + '#') &&
+                    ['http:', 'https:'].includes(url.protocol);
+            });
         }
 
         #createVisualElements() {
@@ -219,16 +289,34 @@
             labelSpan.textContent = config.label;
             this.#indicatorLabel = labelSpan;
 
+            // 페이지의 div/span CSS 때문에 투명한 입력 차단막이 되지 않게 합니다.
+            // 자식 요소도 pointer-events를 재정의할 수 있으므로 각각 보호합니다.
+            for (const element of [this.#selectionBox, this.#actionIndicator, emojiSpan, labelSpan]) {
+                element.style.setProperty('pointer-events', 'none', 'important');
+            }
             this.#actionIndicator.append(emojiSpan, this.#indicatorLabel);
             document.body.append(this.#selectionBox, this.#actionIndicator);
         }
 
         #updateOnFrame() {
-            if (!this.#isDragging) { this.#animationFrameId = null; return; }
-            this.#handleAutoScroll();
-            this.#updateVisuals();
-            this.#updateLinkHighlights();
-            this.#animationFrameId = requestAnimationFrame(() => this.#updateOnFrame());
+            this.#animationFrameId = null;
+            if (!this.#isDragging) return;
+            try {
+                // blur를 놓쳐도 실행 중인 기존 프레임에서 포커스 상실과
+                // DOM/UI 교체를 확인해 자동 스크롤이 계속되지 않게 합니다.
+                if (!this.#hasLiveDragContext()) { this.#resetState(); return; }
+                this.#handleAutoScroll();
+                this.#updateVisuals();
+                this.#updateLinkHighlights();
+                if (this.#isDragging) {
+                    this.#animationFrameId = requestAnimationFrame(() => this.#updateOnFrame());
+                }
+            } catch (_) {
+                // SPA DOM 교체나 페이지별 DOM 객체가 프레임 처리 중
+                // 예외를 내더라도 전역 입력 잠금이 남지 않도록 복구합니다.
+                this.#resetState();
+                return;
+            }
         }
 
         #handleAutoScroll() {
@@ -272,8 +360,23 @@
         }
 
         #getFinalSelectedLinks() {
-            const selectionRect = this.#selectionBox.getBoundingClientRect();
-            return this.#getLinksInRect(selectionRect);
+            return this.#getLinksInRect(this.#getSelectionRect());
+        }
+
+        #getSelectionRect() {
+            const { clientX, clientY } = this.#lastMouseEvent;
+            // 선택 상자의 테두리·확대 애니메이션·렌더링 시점은 실행 범위에
+            // 영향을 주지 않습니다. 마지막 프레임 이후의 스크롤도 반영합니다.
+            const scrollDeltaY = Number.isFinite(this.#lastObservedScrollY)
+                ? window.scrollY - this.#lastObservedScrollY
+                : 0;
+            const startY = this.#startPos.y - scrollDeltaY;
+            return {
+                left: Math.min(this.#startPos.x, clientX),
+                right: Math.max(this.#startPos.x, clientX),
+                top: Math.min(startY, clientY),
+                bottom: Math.max(startY, clientY)
+            };
         }
         
         #getLinksInRect(selectionRect) {
@@ -288,12 +391,22 @@
 
         #applyHighlightChanges(toAdd, toRemove) {
             const highlightClass = DragSelector.CONFIG.CSS_CLASSES.HIGHLIGHT;
-            toRemove.forEach(link => link.classList.remove(highlightClass));
-            toAdd.forEach(link => link.classList.add(highlightClass));
+            for (const link of toRemove) {
+                if (!this.#isDragging) return;
+                if (link.classList.contains(highlightClass)) link.classList.remove(highlightClass);
+                this.#highlightedLinks.delete(link);
+            }
+            for (const link of toAdd) {
+                if (!this.#isDragging) return;
+                // DOM 변경이 동기 포커스 이벤트를 일으켜도
+                // 해당 요소가 즉시 정리 대상에 포함되도록 먼저 기록합니다.
+                this.#highlightedLinks.add(link);
+                link.classList.add(highlightClass);
+            }
         }
         
         #updateLinkHighlights() {
-            const selectionRect = this.#selectionBox.getBoundingClientRect();
+            const selectionRect = this.#getSelectionRect();
             const currentLinksInRect = this.#getLinksInRect(selectionRect);
             
             const toRemove = new Set([...this.#highlightedLinks].filter(x => !currentLinksInRect.has(x)));
@@ -301,8 +414,7 @@
 
             if (toRemove.size > 0 || toAdd.size > 0) {
                 this.#applyHighlightChanges(toAdd, toRemove);
-                this.#highlightedLinks = currentLinksInRect;
-                this.#updateIndicatorText();
+                if (this.#isDragging) this.#updateIndicatorText();
             }
         }
 
@@ -324,14 +436,13 @@
             const { MAX_URLS_PER_ACTION, MAX_URL_LENGTH } = DragSelector.CONFIG.LIMITS;
 
             for (const link of links) {
-                const href = typeof link?.href === 'string' ? link.href.trim() : '';
-                if (!href || href.length > MAX_URL_LENGTH) {
+                const parsed = this.#getLinkUrl(link);
+                if (!parsed) {
                     stats.invalid += 1;
                     continue;
                 }
 
                 try {
-                    const parsed = new URL(href);
                     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || !parsed.hostname) {
                         stats.invalid += 1;
                         continue;
@@ -483,66 +594,72 @@
         }
 
         #resetState() {
-            if (this.#animationFrameId) cancelAnimationFrame(this.#animationFrameId);
-
-            const C = DragSelector.CONFIG;
-            document.body?.classList.remove(C.CSS_CLASSES.BODY_DRAG_STATE);
-            this.#highlightedLinks.forEach(link => link.classList.remove(C.CSS_CLASSES.HIGHLIGHT));
-
-            if (this.#selectionBox) {
-                const boxToRemove = this.#selectionBox;
-                const indicatorToRemove = this.#actionIndicator;
-                const fadeOutClass = C.CSS_CLASSES.FADE_OUT;
-                boxToRemove.classList.add(fadeOutClass);
-                indicatorToRemove?.classList.add(fadeOutClass);
-                setTimeout(() => {
-                    boxToRemove.remove();
-                    indicatorToRemove?.remove();
-                }, C.TIMING.FADE_OUT_DURATION_MS);
-            }
-
+            const frameId = this.#animationFrameId;
+            const dragBody = this.#dragBody;
+            const highlightedLinks = this.#highlightedLinks;
+            const overlays = [this.#selectionBox, this.#actionIndicator];
+            // DOM 조작보다 먼저 입력 상태를 해제합니다. 정리 중 예외나
+            // 동기 이벤트 재진입 때문에 이전 캡처 상태가 남지 않게 합니다.
             this.#isDragging = false;
             this.#selectionBox = null;
             this.#actionIndicator = null;
             this.#modifier = null;
-            this.#highlightedLinks.clear();
+            this.#highlightedLinks = new Set();
             this.#allLinksOnPage = [];
             this.#animationFrameId = null;
             this.#lastMouseEvent = null;
             this.#indicatorLabel = null;
             this.#isTrustedSequence = false;
             this.#lastObservedScrollY = null;
+            this.#dragBody = null;
+            this.#mouseDownEvent = null;
+
+            const safely = action => { try { action(); } catch (_) {} };
+            const C = DragSelector.CONFIG;
+            if (frameId !== null) safely(() => cancelAnimationFrame(frameId));
+            // 이전 body와 잠금 클래스까지 복제했을 수 있는 현재 body를 모두 정리합니다.
+            for (const body of new Set([dragBody, document.body])) {
+                safely(() => {
+                    if (body?.classList.contains(C.CSS_CLASSES.BODY_DRAG_STATE)) {
+                        body.classList.remove(C.CSS_CLASSES.BODY_DRAG_STATE);
+                    }
+                });
+            }
+            highlightedLinks.forEach(link => safely(() => {
+                if (link.classList.contains(C.CSS_CLASSES.HIGHLIGHT)) link.classList.remove(C.CSS_CLASSES.HIGHLIGHT);
+            }));
+            for (const overlay of overlays) {
+                if (!overlay) continue;
+                safely(() => overlay.classList.add(C.CSS_CLASSES.FADE_OUT));
+                setTimeout(() => safely(() => overlay.remove()), C.TIMING.FADE_OUT_DURATION_MS);
+            }
         }
         
         #handleMouseDown(e) {
             if (!e.isTrusted) return;
-            if (e.button !== 0) return;
 
-            // 새 기본 버튼 입력은 이전 드래그 시퀀스와 동시에 성립할 수 없다.
+            // 새 마우스 버튼 입력은 이전 드래그 시퀀스와 동시에 성립할 수 없다.
             // 페이지 밖에서 mouseup/keyup이 유실된 경우 남아 있던 상태를 먼저 정리한다.
-            if (this.#isTrustedSequence || this.#isDragging || this.#modifier) {
+            if (this.#isTrustedSequence || this.#isDragging || this.#modifier ||
+                document.body?.classList.contains(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE)) {
                 this.#resetState();
             }
+            if (e.button !== 0 || e.buttons !== 1) return;
             
             const modifier = this.#getModifier(e);
-            if (!modifier) return;
+            if (!modifier || e.defaultPrevented || !document.body || !this.#isDocumentActive()) return;
             
             // Shadow DOM 밖에서는 event.target이 입력란 대신 호스트로 바뀝니다.
             // 공개된 이벤트 경로의 실제 시작 요소를 사용해 입력 영역을 보호합니다.
-            const eventPath = typeof e.composedPath === 'function' ? e.composedPath() : [];
-            const targetElement = eventPath.find(node => node instanceof Element) ||
-                (e.target instanceof Element ? e.target : e.target?.parentElement);
-            const editableElement = targetElement?.closest?.('input, textarea, select, [contenteditable], [role="textbox"]');
-            const isEditable = Boolean(editableElement && (
-                editableElement.matches('input, textarea, select, [role="textbox"]') ||
-                editableElement.isContentEditable ||
-                editableElement.getAttribute('contenteditable') === ''
-            ));
-            if (isEditable) return;
+            if (this.#isEditableEvent(e)) return;
             
             this.#abortDelayedOpen();
             this.#modifier = modifier;
             this.#isTrustedSequence = true;
+            this.#dragBody = document.body;
+            // 문서 캡처 이후 사이트의 mousedown 핸들러가 preventDefault()한
+            // 경우도 다음 이동에서 확인할 수 있도록 시작 이벤트를 보관합니다.
+            this.#mouseDownEvent = e;
             this.#startPos = { x: e.clientX, y: e.clientY };
             this.#lastMouseEvent = e;
             this.#lastObservedScrollY = window.scrollY;
@@ -551,7 +668,7 @@
         #handleMouseMove(e) {
             if (!e.isTrusted || !this.#isTrustedSequence) return;
             if (!this.#modifier) return;
-            if ((e.buttons & 1) === 0) {
+            if (e.buttons !== 1 || !this.#getModifier(e) || !this.#hasLiveDragContext()) {
                 this.#resetState();
                 return;
             }
@@ -559,28 +676,38 @@
             this.#lastMouseEvent = e;
             if (this.#isDragging) {
                 e.preventDefault();
-                e.stopPropagation();
                 return;
             }
             
             const dragDistance = Math.hypot(e.clientX - this.#startPos.x, e.clientY - this.#startPos.y);
             if (dragDistance > DragSelector.CONFIG.BEHAVIOR.MIN_DRAG_DISTANCE) {
-                e.preventDefault();
-                e.stopPropagation();
+                try {
+                    // 제스처마다 현재 DOM을 한 번만 읽어 SPA에서 교체된 링크까지 반영합니다.
+                    this.#allLinksOnPage = this.#findAllLinks(document.body);
+                    if (!this.#hasLiveDragContext()) { this.#resetState(); return; }
+                    this.#createVisualElements();
+                    this.#isDragging = true;
+                    this.#dragBody.classList.add(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE);
+                    if (!this.#isDragging) return;
+                    // 사이트에도 같은 입력 이벤트를 전달해 자체 UI 상태 정리를 돕습니다.
+                    e.preventDefault();
 
-                document.body.classList.add(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE);
-                this.#isDragging = true;
-                // 제스처마다 현재 DOM을 한 번만 읽어 SPA에서 교체된 링크까지 반영합니다.
-                this.#allLinksOnPage = this.#findAllLinks(document.body);
-                this.#createVisualElements();
-
-                if (!this.#animationFrameId) { this.#updateOnFrame(); }
+                    if (!this.#animationFrameId) { this.#updateOnFrame(); }
+                } catch (_) {
+                    // 링크 탐색·시각 요소 생성 중 예외가 발생해도
+                    // ds-no-select-final 클래스와 캡처 상태를 즉시 해제합니다.
+                    this.#resetState();
+                }
             }
         }
 
         #handleMouseUp(e) {
             if (!e.isTrusted || !this.#isTrustedSequence) return;
             if (e.button !== 0) return;
+            if (!this.#getModifier(e) || !this.#hasLiveDragContext()) {
+                this.#resetState();
+                return;
+            }
 
             // mousedown을 받은 사이트가 자체 드래그/스크롤 잠금을 해제할 수
             // 있도록 짝이 되는 mouseup의 기본 동작과 전파를 막지 않습니다.
@@ -588,6 +715,8 @@
             let finalLinks = null;
             try {
                 if (this.#isDragging) {
+                    // mousemove 이후 다음 프레임 전에 놓아도 실제 해제 좌표를 사용합니다.
+                    this.#lastMouseEvent = e;
                     finalLinks = this.#getFinalSelectedLinks();
                 }
             } finally {
@@ -603,10 +732,9 @@
 
             if (this.#isDragging || this.#activeDelayedOpenController) {
                 e.preventDefault();
-                e.stopPropagation();
             }
 
-            if (this.#isDragging) this.#resetState();
+            if (this.#isTrustedSequence || this.#isDragging || this.#modifier) this.#resetState();
             this.#abortDelayedOpen();
         }
 
@@ -621,15 +749,34 @@
 
         #handleInteractionAbort() {
             this.#abortDelayedOpen();
-            if (this.#isTrustedSequence || this.#isDragging || this.#modifier) {
+            if (this.#isTrustedSequence || this.#isDragging || this.#modifier ||
+                document.body?.classList.contains(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE)) {
                 this.#resetState();
             }
         }
 
-        #handleVisibilityChange() {
-            if (document.visibilityState === 'hidden') {
+        #handleFocusChange(e) {
+            if (!e.isTrusted) return;
+            // capture는 요소의 focus/blur도 받습니다. 링크로의 정상적인
+            // 포커스 이동을 창 전환으로 오인하지 않도록 구별합니다.
+            const isEmbeddedContext = e.target instanceof Element && e.target.matches('iframe, object, embed');
+            if (e.target === window || (e.type === 'focus' && (isEmbeddedContext || this.#isEditableEvent(e)))) {
                 this.#handleInteractionAbort();
             }
+        }
+
+        #handleWheel(e) {
+            if (!e.isTrusted || !this.#isTrustedSequence) return;
+            if ((e.buttons & 1) === 0 || !this.#getModifier(e) || !this.#hasLiveDragContext()) {
+                this.#resetState();
+            }
+            // passive 리스너이므로 일반 스크롤의 기본 동작을 막지 않습니다.
+        }
+
+        #handleVisibilityChange() {
+            // hidden 뿐 아니라 visible 복귀도 이전 창의 포인터 상태를
+            // 이어받지 않도록 항상 새 상호작용 경계로 처리합니다.
+            this.#handleInteractionAbort();
         }
     }
 
