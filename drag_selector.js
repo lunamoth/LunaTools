@@ -527,10 +527,14 @@
             const modifier = this.#getModifier(e);
             if (!modifier) return;
             
-            const targetElement = e.target instanceof Element ? e.target : e.target?.parentElement;
-            const editableElement = targetElement?.closest?.('input, textarea, select, [contenteditable]');
+            // Shadow DOM 밖에서는 event.target이 입력란 대신 호스트로 바뀝니다.
+            // 공개된 이벤트 경로의 실제 시작 요소를 사용해 입력 영역을 보호합니다.
+            const eventPath = typeof e.composedPath === 'function' ? e.composedPath() : [];
+            const targetElement = eventPath.find(node => node instanceof Element) ||
+                (e.target instanceof Element ? e.target : e.target?.parentElement);
+            const editableElement = targetElement?.closest?.('input, textarea, select, [contenteditable], [role="textbox"]');
             const isEditable = Boolean(editableElement && (
-                editableElement.matches('input, textarea, select') ||
+                editableElement.matches('input, textarea, select, [role="textbox"]') ||
                 editableElement.isContentEditable ||
                 editableElement.getAttribute('contenteditable') === ''
             ));
@@ -578,14 +582,19 @@
             if (!e.isTrusted || !this.#isTrustedSequence) return;
             if (e.button !== 0) return;
 
-            if (this.#isDragging) {
-                e.preventDefault();
-                e.stopPropagation();
-                const finalLinks = this.#getFinalSelectedLinks();
-                void this.#performAction(finalLinks, this.#modifier);
-            }
-            if (this.#modifier) {
+            // mousedown을 받은 사이트가 자체 드래그/스크롤 잠금을 해제할 수
+            // 있도록 짝이 되는 mouseup의 기본 동작과 전파를 막지 않습니다.
+            const modifier = this.#modifier;
+            let finalLinks = null;
+            try {
+                if (this.#isDragging) {
+                    finalLinks = this.#getFinalSelectedLinks();
+                }
+            } finally {
                 this.#resetState();
+            }
+            if (finalLinks) {
+                void this.#performAction(finalLinks, modifier);
             }
         }
 
