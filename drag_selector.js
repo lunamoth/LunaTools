@@ -47,12 +47,12 @@
                 LABEL_FONT_FAMILY: "'Lato', '나눔바른고딕', -apple-system, 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', sans-serif"
             },
             CSS_CLASSES: {
-                HIGHLIGHT: 'ds-highlight-final',
-                FADE_OUT: 'ds-fade-out-final',
-                BODY_DRAG_STATE: 'ds-no-select-final',
-                INDICATOR_LABEL: 'ds-indicator-label-final',
-                SELECTION_BOX: 'ds-selection-box-final',
-                ACTION_INDICATOR: 'ds-action-indicator-final'
+                FADE_OUT: 'ds-fade-out-final'
+            },
+            ATTRIBUTES: {
+                STYLE_OWNER: 'data-lunatools-drag-selector-style',
+                OVERLAY_OWNER: 'data-lunatools-drag-selector-overlay',
+                HIGHLIGHT_OWNER: 'data-lunatools-drag-selector-highlight'
             },
             BEHAVIOR: {
                 MIN_DRAG_DISTANCE: 10,
@@ -120,7 +120,7 @@
         destroy() {
             this.#removeEventListeners();
             this.#abortDelayedOpen();
-            const styleElement = document.getElementById('drag-selector-styles');
+            const styleElement = document.querySelector(`style[${DragSelector.CONFIG.ATTRIBUTES.STYLE_OWNER}="true"]`);
             if (styleElement) styleElement.remove();
             this.#resetState();
         }
@@ -184,23 +184,27 @@
         }
 
         #injectStyles() {
-            if (document.getElementById('drag-selector-styles')) return;
-            const style = document.createElement('style');
-            style.id = 'drag-selector-styles';
             const C = DragSelector.CONFIG;
+            if (document.querySelector(`style[${C.ATTRIBUTES.STYLE_OWNER}="true"]`)) return;
+            const style = document.createElement('style');
+            style.setAttribute(C.ATTRIBUTES.STYLE_OWNER, 'true');
             const highlightColor = `rgba(${C.MODIFIERS.ctrl.color}, 0.15)`;
             const fadeOutDurationSeconds = C.TIMING.FADE_OUT_DURATION_MS / 1000;
+            const overlaySelector = `[${C.ATTRIBUTES.OVERLAY_OWNER}]`;
+            const selectionSelector = `[${C.ATTRIBUTES.OVERLAY_OWNER}="selection"]`;
+            const indicatorSelector = `[${C.ATTRIBUTES.OVERLAY_OWNER}="indicator"]`;
+            const labelSelector = `[${C.ATTRIBUTES.OVERLAY_OWNER}="label"]`;
+            const highlightSelector = `[${C.ATTRIBUTES.HIGHLIGHT_OWNER}="true"]`;
 
             style.textContent = `
-                .${C.CSS_CLASSES.BODY_DRAG_STATE} *:not(input):not(textarea):not([contenteditable="true"]) { user-select: none !important; -webkit-user-select: none !important; cursor: crosshair !important; }
                 @keyframes DS-PopIn-Overshoot { 0% { opacity: 0; transform: scale(0.8); } 80% { opacity: 1; transform: scale(1.05); } 100% { opacity: 1; transform: scale(1); } }
                 @keyframes DS-Indicator-PopIn { 0% { opacity: 0; transform: translate(-50%, 0px) scale(0.8); } 80% { opacity: 1; transform: translate(-50%, 20px) scale(1.05); } 100% { opacity: 1; transform: translate(-50%, 15px) scale(1); } }
                 @keyframes DS-Shimmer { 0%{border-image-source:linear-gradient(135deg,#007AFF,#FF2D55,#FFCC00)}25%{border-image-source:linear-gradient(135deg,#FFCC00,#007AFF,#FF2D55)}50%{border-image-source:linear-gradient(135deg,#FF2D55,#FFCC00,#007AFF)}100%{border-image-source:linear-gradient(135deg,#007AFF,#FF2D55,#FFCC00)} }
                 @keyframes DS-FadeOut { from { opacity: 1; } to { opacity: 0; transform: scale(0.95); } }
-                .${C.CSS_CLASSES.FADE_OUT} { animation: DS-FadeOut ${fadeOutDurationSeconds}s ease-out forwards; }
-                .${C.CSS_CLASSES.HIGHLIGHT} { background-color: ${highlightColor} !important; border-radius: 7px; box-shadow: inset 0 0 0 1.5px rgba(${C.MODIFIERS.ctrl.color}, 0.25); transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
+                ${overlaySelector}.${C.CSS_CLASSES.FADE_OUT} { animation: DS-FadeOut ${fadeOutDurationSeconds}s ease-out forwards; }
+                ${highlightSelector} { background-color: ${highlightColor} !important; border-radius: 7px; box-shadow: inset 0 0 0 1.5px rgba(${C.MODIFIERS.ctrl.color}, 0.25); transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
                 
-                .${C.CSS_CLASSES.SELECTION_BOX} { 
+                ${selectionSelector} { 
                     position: fixed; 
                     z-index: ${C.BEHAVIOR.Z_INDEX}; 
                     border: 2px solid; 
@@ -212,9 +216,9 @@
                     animation: DS-PopIn-Overshoot 0.5s cubic-bezier(0.34,1.56,0.64,1), DS-Shimmer 3s linear infinite; 
                 }
 
-                .${C.CSS_CLASSES.ACTION_INDICATOR} { position: fixed; z-index: ${C.BEHAVIOR.Z_INDEX + 1}; padding: 10px 20px; background: radial-gradient(circle,rgba(255,255,255,0.7) 0%,rgba(240,240,240,0.6) 100%); color: #1d1d1f; border-radius: 999px; box-shadow: 0 16px 48px rgba(0,0,0,0.3); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); border: 1px solid rgba(255,255,255,0.5); pointer-events: none; display: flex; align-items: center; gap: 10px; transform: translate(-50%, 15px); animation: DS-Indicator-PopIn 0.5s cubic-bezier(0.34,1.56,0.64,1); }
-                .${C.CSS_CLASSES.ACTION_INDICATOR} > span:first-child { font-size: ${C.STYLE.EMOJI_FONT_SIZE_PX}px; }
-                .${C.CSS_CLASSES.INDICATOR_LABEL} { font-size: ${C.STYLE.LABEL_FONT_SIZE_PX}px; font-weight: 600; font-family: ${C.STYLE.LABEL_FONT_FAMILY}; }
+                ${indicatorSelector} { position: fixed; z-index: ${C.BEHAVIOR.Z_INDEX + 1}; padding: 10px 20px; background: radial-gradient(circle,rgba(255,255,255,0.7) 0%,rgba(240,240,240,0.6) 100%); color: #1d1d1f; border-radius: 999px; box-shadow: 0 16px 48px rgba(0,0,0,0.3); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); border: 1px solid rgba(255,255,255,0.5); pointer-events: none; display: flex; align-items: center; gap: 10px; transform: translate(-50%, 15px); animation: DS-Indicator-PopIn 0.5s cubic-bezier(0.34,1.56,0.64,1); }
+                ${indicatorSelector} > span:first-child { font-size: ${C.STYLE.EMOJI_FONT_SIZE_PX}px; }
+                ${labelSelector} { font-size: ${C.STYLE.LABEL_FONT_SIZE_PX}px; font-weight: 600; font-family: ${C.STYLE.LABEL_FONT_FAMILY}; }
             `;
             const styleHost = document.head || document.documentElement;
             if (!styleHost) return;
@@ -352,14 +356,14 @@
             const C = DragSelector.CONFIG;
             const config = C.MODIFIERS[this.#modifier];
             this.#selectionBox = document.createElement('div');
-            this.#selectionBox.className = C.CSS_CLASSES.SELECTION_BOX;
+            this.#selectionBox.setAttribute(C.ATTRIBUTES.OVERLAY_OWNER, 'selection');
             this.#actionIndicator = document.createElement('div');
-            this.#actionIndicator.className = C.CSS_CLASSES.ACTION_INDICATOR;
+            this.#actionIndicator.setAttribute(C.ATTRIBUTES.OVERLAY_OWNER, 'indicator');
 
             const emojiSpan = document.createElement('span');
             emojiSpan.textContent = config.emoji;
             const labelSpan = document.createElement('span');
-            labelSpan.className = C.CSS_CLASSES.INDICATOR_LABEL;
+            labelSpan.setAttribute(C.ATTRIBUTES.OVERLAY_OWNER, 'label');
             labelSpan.textContent = config.label;
             this.#indicatorLabel = labelSpan;
 
@@ -467,10 +471,10 @@
         }
 
         #applyHighlightChanges(toAdd, toRemove) {
-            const highlightClass = DragSelector.CONFIG.CSS_CLASSES.HIGHLIGHT;
+            const highlightAttribute = DragSelector.CONFIG.ATTRIBUTES.HIGHLIGHT_OWNER;
             for (const link of toRemove) {
                 if (!this.#isDragging) return;
-                if (link.classList.contains(highlightClass)) link.classList.remove(highlightClass);
+                if (link.getAttribute(highlightAttribute) === 'true') link.removeAttribute(highlightAttribute);
                 this.#highlightedLinks.delete(link);
             }
             for (const link of toAdd) {
@@ -478,7 +482,7 @@
                 // DOM 변경이 동기 포커스 이벤트를 일으켜도
                 // 해당 요소가 즉시 정리 대상에 포함되도록 먼저 기록합니다.
                 this.#highlightedLinks.add(link);
-                link.classList.add(highlightClass);
+                link.setAttribute(highlightAttribute, 'true');
             }
         }
         
@@ -653,7 +657,6 @@
             const frameId = this.#animationFrameId;
             const releaseTimer = this.#pointerReleaseTimer;
             const watchdogTimer = this.#gestureWatchdogTimer;
-            const dragBody = this.#dragBody;
             const highlightedLinks = this.#highlightedLinks;
             const overlays = [this.#selectionBox, this.#actionIndicator];
             // DOM 조작보다 먼저 입력 상태를 해제합니다. 정리 중 예외나
@@ -680,16 +683,10 @@
             if (frameId !== null) safely(() => cancelAnimationFrame(frameId));
             if (releaseTimer !== null) safely(() => clearTimeout(releaseTimer));
             if (watchdogTimer !== null) safely(() => clearTimeout(watchdogTimer));
-            // 이전 body와 잠금 클래스까지 복제했을 수 있는 현재 body를 모두 정리합니다.
-            for (const body of new Set([dragBody, document.body])) {
-                safely(() => {
-                    if (body?.classList.contains(C.CSS_CLASSES.BODY_DRAG_STATE)) {
-                        body.classList.remove(C.CSS_CLASSES.BODY_DRAG_STATE);
-                    }
-                });
-            }
             highlightedLinks.forEach(link => safely(() => {
-                if (link.classList.contains(C.CSS_CLASSES.HIGHLIGHT)) link.classList.remove(C.CSS_CLASSES.HIGHLIGHT);
+                if (link.getAttribute(C.ATTRIBUTES.HIGHLIGHT_OWNER) === 'true') {
+                    link.removeAttribute(C.ATTRIBUTES.HIGHLIGHT_OWNER);
+                }
             }));
             for (const overlay of overlays) {
                 if (!overlay) continue;
@@ -699,8 +696,7 @@
         }
         
         #hasStaleInteractionState() {
-            return this.#isTrustedSequence || this.#isDragging || Boolean(this.#modifier) ||
-                document.body?.classList.contains(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE);
+            return this.#isTrustedSequence || this.#isDragging || Boolean(this.#modifier);
         }
 
         #handlePointerDown(e) {
@@ -788,15 +784,15 @@
                     if (!this.#hasLiveDragContext()) { this.#resetState(); return; }
                     this.#createVisualElements();
                     this.#isDragging = true;
-                    this.#dragBody.classList.add(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE);
                     if (!this.#isDragging) return;
-                    // 사이트에도 같은 입력 이벤트를 전달해 자체 UI 상태 정리를 돕습니다.
+                    // 페이지 body 전체에 user-select/cursor 잠금을 남기지 않습니다.
+                    // 해당 mousemove의 기본 동작만 막아 확장 제스처 중 텍스트 선택을 억제합니다.
                     e.preventDefault();
 
                     if (!this.#animationFrameId) { this.#updateOnFrame(); }
                 } catch (_) {
                     // 링크 탐색·시각 요소 생성 중 예외가 발생해도
-                    // ds-no-select-final 클래스와 캡처 상태를 즉시 해제합니다.
+                    // 확장 드래그 상태와 임시 시각 요소를 즉시 해제합니다.
                     this.#resetState();
                 }
             }
@@ -866,8 +862,7 @@
 
         #handleInteractionAbort() {
             this.#abortDelayedOpen();
-            if (this.#isTrustedSequence || this.#isDragging || this.#modifier ||
-                document.body?.classList.contains(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE)) {
+            if (this.#isTrustedSequence || this.#isDragging || this.#modifier) {
                 this.#resetState();
             }
         }
