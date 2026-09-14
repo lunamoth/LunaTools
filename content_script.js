@@ -1,3 +1,44 @@
+// manifest에서 가장 먼저 동기 선언됩니다. 같은 확장의 isolated world에서만
+// 공유하며, 페이지 전체를 감시하지 않고 실제 입력 이벤트의 경로만 확인합니다.
+function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includeActiveElement = true } = {}) {
+  if (String(document.designMode).toLowerCase() === 'on') return true;
+  const candidates = typeof event.composedPath === 'function' ? event.composedPath().slice() : [];
+  candidates.push(event.target);
+  if (includeActiveElement) candidates.push(document.activeElement);
+  const visited = new Set();
+  const inputRoles = new Set(['textbox', 'searchbox', 'combobox', 'application']);
+  const controlRoles = new Set([
+    'button', 'checkbox', 'switch', 'slider', 'spinbutton', 'grid', 'gridcell',
+    'listbox', 'option', 'menu', 'menubar', 'menuitem', 'menuitemcheckbox',
+    'menuitemradio', 'radio', 'radiogroup', 'tab', 'tablist', 'tree', 'treegrid', 'treeitem'
+  ]);
+  while (candidates.length) {
+    const element = candidates.pop();
+    if (!(element instanceof Element) || visited.has(element)) continue;
+    visited.add(element);
+    if (element.isContentEditable || element.matches('input, textarea, select, .CodeMirror, .codemirror, .monaco-editor, .ace_editor')) return true;
+    const editableValue = element.getAttribute('contenteditable');
+    if (editableValue !== null && editableValue.toLowerCase() !== 'false') return true;
+    const roles = String(element.getAttribute('role') || '').toLowerCase().split(/\s+/);
+    if (roles.some(role => inputRoles.has(role) || (includeControls && controlRoles.has(role)))) return true;
+    if (includeControls && element.matches('button, label, summary, video, audio, canvas, iframe, object, embed, [draggable="true"]')) return true;
+
+    candidates.push(element.parentElement || element.getRootNode?.().host);
+    let shadowRoot = element.shadowRoot;
+    if (!shadowRoot && element instanceof HTMLElement) {
+      try { shadowRoot = chrome.dom?.openOrClosedShadowRoot(element); } catch (_) {}
+    }
+    if (!shadowRoot) continue;
+    // closed Shadow DOM은 composedPath()에 내부 입력란을 노출하지 않습니다.
+    // 키보드는 실제 포커스, 포인터는 누른 위치를 확인합니다.
+    if (includeActiveElement) candidates.push(shadowRoot.activeElement);
+    if (Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+      try { candidates.push(shadowRoot.elementFromPoint?.(event.clientX, event.clientY)); } catch (_) {}
+    }
+  }
+  return false;
+}
+
 (async () => {
   'use strict';
 
@@ -277,6 +318,7 @@
       this.didMove = false;
       this.isTrustedSequence = false;
       this.suppressNextContextMenu = false;
+      this.startEvent = null;
 
       this._bindEventHandlers();
       this._initializeEventListeners();
@@ -306,6 +348,7 @@
       this.isMouseDown = false;
       this.didMove = false;
       this.isTrustedSequence = false;
+      this.startEvent = null;
     }
 
     _resetState() {
@@ -315,10 +358,15 @@
 
     handleMouseDown(event) {
       if (!event.isTrusted) return;
-      if (event.button !== MouseGestureHandler.RIGHT_MOUSE_BUTTON) return;
+      this._resetState();
+      if (event.button !== MouseGestureHandler.RIGHT_MOUSE_BUTTON ||
+          event.buttons !== MouseGestureHandler.RIGHT_MOUSE_BUTTON_MASK ||
+          event.defaultPrevented || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey ||
+          lunaToolsIsProtectedInputEvent(event, { includeControls: true, includeActiveElement: false })) return;
 
       this.isMouseDown = true;
       this.isTrustedSequence = true;
+      this.startEvent = event;
       this.startX = event.clientX;
       this.startY = event.clientY;
       this.didMove = false;
@@ -329,6 +377,10 @@
       if (!event.isTrusted || !this.isTrustedSequence) return;
       if (!this.isMouseDown) return;
 
+      if (this.startEvent?.defaultPrevented || document.visibilityState === 'hidden' || !document.hasFocus()) {
+        this._resetState();
+        return;
+      }
       // 페이지 밖에서 오른쪽 mouseup이 유실되어도 다음 실제 이동에서
       // 오래된 제스처 상태가 남지 않도록 현재 버튼 상태로 복구한다.
       if ((event.buttons & MouseGestureHandler.RIGHT_MOUSE_BUTTON_MASK) === 0) {
@@ -348,6 +400,10 @@
     handleMouseUp(event) {
       if (!event.isTrusted || !this.isTrustedSequence) return;
       if (!this.isMouseDown) return;
+      if (this.startEvent?.defaultPrevented || document.visibilityState === 'hidden' || !document.hasFocus()) {
+        this._resetState();
+        return;
+      }
       if (event.button !== MouseGestureHandler.RIGHT_MOUSE_BUTTON) {
         this._resetState();
         return;
@@ -390,6 +446,10 @@
 
     handleContextMenu(event) {
       if (!event.isTrusted) return;
+      if (this.startEvent?.defaultPrevented) {
+        this._resetState();
+        return;
+      }
       if (this.didMove || this.suppressNextContextMenu) {
         event.preventDefault();
       }
@@ -901,12 +961,17 @@
       }
       _bindEventHandlers() {
           this._handleKeyDown = this._handleKeyDown.bind(this);
+          this._cancelPendingNavigation = () => this._debouncedProcessKey.cancel();
           this._handlePageShow = this._handlePageShow.bind(this);
           this._handlePageHide = this._handlePageHide.bind(this);
           this._handleNavigationSettled = this._handleNavigationSettled.bind(this);
       }
       _initializeEventListeners() {
         document.addEventListener('keydown', this._handleKeyDown);
+        document.addEventListener('pointerdown', this._cancelPendingNavigation, true);
+        document.addEventListener('focusin', this._cancelPendingNavigation, true);
+        document.addEventListener('visibilitychange', this._cancelPendingNavigation, true);
+        window.addEventListener('blur', this._cancelPendingNavigation, true);
         window.addEventListener('pageshow', this._handlePageShow);
         window.addEventListener('pagehide', this._handlePageHide);
         window.addEventListener('hashchange', this._handleNavigationSettled);
@@ -918,6 +983,7 @@
         }
       }
       _handleNavigationSettled() {
+        this._debouncedProcessKey.cancel();
         this._clearNavigationResetTimer();
         this.isNavigating = false;
         this.urlPageFinder.clearCache();
@@ -931,8 +997,10 @@
       }
       _handleKeyDown(event) {
         if (!event.isTrusted) return;
-        if (!KeyboardPageNavigator.NAV_KEYS_SET.has(event.key)) return;
-        if (this._shouldIgnoreKeyEvent(event)) return;
+        if (!KeyboardPageNavigator.NAV_KEYS_SET.has(event.key) || this._shouldIgnoreKeyEvent(event)) {
+          this._debouncedProcessKey.cancel();
+          return;
+        }
         const direction = event.key === KeyboardPageNavigator.KEY_ARROW_RIGHT ? 1 : -1;
 
         const currentUrl = window.location.href;
@@ -946,20 +1014,25 @@
 
         event.preventDefault();
         event.stopPropagation();
-        this._debouncedProcessKey(direction);
+        this._debouncedProcessKey(direction, currentUrl);
       }
       _shouldIgnoreKeyEvent(event) {
         // Shift+Arrow is a native text-selection command even when focus is
         // outside a form control. Only unmodified arrow keys navigate pages.
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.defaultPrevented || event.isComposing) return true;
+        if (lunaToolsIsProtectedInputEvent(event, { includeControls: true })) return true;
 
         const eventPath = typeof event.composedPath === 'function' ? event.composedPath() : [];
         const candidates = [...eventPath, event.target, document.activeElement];
         return candidates.some(candidate => this.domLinkFinder.isElementFocusableInput(candidate));
       }
-      _processNavigationKey(direction) {
-        if (this.isNavigating) return;
+      _processNavigationKey(direction, sourceUrl) {
+        // 100ms 대기 중 입력란으로 이동하거나 SPA 주소가 바뀌면 이전 키로
+        // 새 페이지를 이동시키지 않습니다. blur를 놓친 경우도 실행 직전에 확인합니다.
+        if (this.isNavigating || document.visibilityState === 'hidden' || !document.hasFocus() ||
+            lunaToolsIsProtectedInputEvent({ target: document.activeElement }, { includeControls: true })) return;
         const currentUrl = window.location.href;
+        if (currentUrl !== sourceUrl) return;
         if (this.urlPageFinder.shouldIgnoreUrl(currentUrl)) {
           return;
         }
@@ -1005,6 +1078,10 @@
       }
       destroy() {
         document.removeEventListener('keydown', this._handleKeyDown);
+        document.removeEventListener('pointerdown', this._cancelPendingNavigation, true);
+        document.removeEventListener('focusin', this._cancelPendingNavigation, true);
+        document.removeEventListener('visibilitychange', this._cancelPendingNavigation, true);
+        window.removeEventListener('blur', this._cancelPendingNavigation, true);
         window.removeEventListener('pageshow', this._handlePageShow);
         window.removeEventListener('pagehide', this._handlePageHide);
         window.removeEventListener('hashchange', this._handleNavigationSettled);
@@ -1322,11 +1399,11 @@
     }
 
     _handleKeyDown(event) {
-      if (!event.isTrusted || event.repeat) return;
+      if (!event.isTrusted || event.repeat || event.defaultPrevented || event.isComposing || event.altKey || event.metaKey) return;
       if (!(event.ctrlKey && event.shiftKey && event.key.toUpperCase() === PictureInPictureHandler.PIP_KEY)) {
         return;
       }
-      if (this._isEditableEventTarget(event.target)) {
+      if (lunaToolsIsProtectedInputEvent(event)) {
         return;
       }
       event.preventDefault();
@@ -1346,6 +1423,8 @@
     'use strict';
 
     const Config = {
+        MAX_CONVERSION_TEXT_LENGTH: 5000,
+        MAX_CONVERSION_RESULTS: 100,
         EXCHANGE_RATE_CACHE_DURATION_MS: 24 * 60 * 60 * 1000,
         EXCHANGE_RATE_STORAGE_KEY: 'lunaToolsExchangeRateTableV1',
         EXCHANGE_RATE_BASE_CURRENCY: 'EUR',
@@ -1574,6 +1653,8 @@
         PURE_NUMBER_REGEX: new RegExp(`^(?:${NUMERIC_TOKEN_PATTERN_SOURCE})$`, 'iu'),
         TIME_EXTRACTION_PATTERN: new RegExp(
             NUMERIC_TOKEN_START_BOUNDARY_SOURCE +
+            // 공백마다 선택적 날짜 뒤의 \\s*를 재시도하는 제곱 시간 탐색을 방지합니다.
+            '(?!\\s)' +
             '(?<![\\p{L}\\p{M}\\p{N}\\p{Pc}])' +
             '(?<!\\d:)' +
             '(?:' +
@@ -3575,9 +3656,11 @@
             if (document.getElementById(UI_STRINGS.POPUP_LAYER_ID)) return;
             const popup = document.createElement('div');
             popup.id = UI_STRINGS.POPUP_LAYER_ID;
-            popup.style.display = 'none';
+            popup.style.setProperty('display', 'none', 'important');
+            popup.style.setProperty('pointer-events', 'none', 'important');
+            popup.inert = true;
             popup.setAttribute('role', 'dialog');
-            popup.setAttribute('aria-modal', 'true');
+            popup.setAttribute('aria-modal', 'false');
             const titleBarElement = document.createElement('div');
             titleBarElement.className = 'smart-converter-window-title-bar';
             popup.appendChild(titleBarElement);
@@ -3642,11 +3725,14 @@
             AppState.conversionGeneration += 1;
             AppState.popupDisplayGeneration += 1;
             if (AppState.currentPopupElement) {
+                // 닫기 애니메이션 중에도 아래 페이지의 클릭/휠/포커스를 즉시 허용합니다.
+                AppState.currentPopupElement.inert = true;
+                AppState.currentPopupElement.style.setProperty('pointer-events', 'none', 'important');
                 AppState.currentPopupElement.classList.remove(UI_STRINGS.POPUP_VISIBLE_CLASS);
                 clearTimeout(AppState.closePopupTimeout);
                 AppState.closePopupTimeout = setTimeout(() => {
                     if (AppState.currentPopupElement && !AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) {
-                        AppState.currentPopupElement.style.display = 'none';
+                        AppState.currentPopupElement.style.setProperty('display', 'none', 'important');
                     }
                 }, 250);
             }
@@ -3713,7 +3799,9 @@
             if (isErrorState) AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_ERROR_CLASS);
             else if (isLoadingState) AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_LOADING_CLASS);
             else AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_DEFAULT_CLASS);
-            AppState.currentPopupElement.style.display = 'block'; AppState.currentPopupElement.style.visibility = 'hidden';
+            AppState.currentPopupElement.inert = false;
+            AppState.currentPopupElement.style.setProperty('pointer-events', 'auto', 'important');
+            AppState.currentPopupElement.style.setProperty('display', 'block', 'important'); AppState.currentPopupElement.style.visibility = 'hidden';
             requestAnimationFrame(() => {
                 if (popupDisplayGeneration !== AppState.popupDisplayGeneration ||
                     !AppState.currentPopupElement ||
@@ -3762,10 +3850,18 @@
             const selection = window.getSelection();
             const selectedText = selection ? selection.toString().trim() : "";
             if (Utils.isInvalidString(selectedText)) { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') PopupUI.close(); return; }
+            if (selectedText.length > Config.MAX_CONVERSION_TEXT_LENGTH) {
+                PopupUI.display([`선택한 텍스트가 너무 깁니다. 변환할 부분만 ${Config.MAX_CONVERSION_TEXT_LENGTH.toLocaleString()}자 이내로 선택해 주세요.`], true, false);
+                return;
+            }
             const previewText = Utils.getPreviewText(selectedText);
             PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.CONVERTING_MESSAGE_PREFIX}${Utils.escapeHTML(previewText)}${UI_STRINGS.CONVERTING_MESSAGE_SUFFIX}</div>` }], false, true);
             const { resultsArray, conversionAttempted } = await Converter.fetchAndProcessConversions(selectedText);
             if (conversionGeneration !== AppState.conversionGeneration) return;
+            if (resultsArray.length > Config.MAX_CONVERSION_RESULTS) {
+                PopupUI.display([`변환 결과가 ${Config.MAX_CONVERSION_RESULTS}개를 넘습니다. 선택 범위를 줄여 주세요.`], true, false);
+                return;
+            }
             if (resultsArray.length > 0) { const hasError = resultsArray.some(res => res.isError); PopupUI.display(resultsArray, hasError, false); }
             else if (conversionAttempted) { PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_NO_VALID_CONVERSION(previewText)}</div>` }], true, false); }
             else { PopupUI.display([{ contentHtml: `<div>${UI_STRINGS.ERROR_CANNOT_FIND_CONVERTIBLE(previewText)}</div>` }], true, false); }
@@ -3787,7 +3883,7 @@
                 if (!event.isTrusted) return;
                 const isConvertShortcut = event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey &&
                     (event.key === 'z' || event.key === 'Z' || event.code === 'KeyZ');
-                if (isConvertShortcut && !event.repeat && !event.isComposing && !EventHandlers.isEditableKeyEvent(event)) {
+                if (isConvertShortcut && !event.repeat && !event.defaultPrevented && !event.isComposing && !lunaToolsIsProtectedInputEvent(event)) {
                     event.preventDefault();
                     event.stopPropagation();
                     void EventHandlers.handleUnifiedConvertAction();
@@ -3948,15 +4044,13 @@
         }
 
         #handleKeyDown(event) {
-            if (!event.isTrusted || event.repeat || !this.#isShortcutPressed(event) || this.#isTargetEditable(event.target)) {
+            if (!event.isTrusted || event.repeat || event.defaultPrevented || event.isComposing || event.metaKey || !this.#isShortcutPressed(event) || lunaToolsIsProtectedInputEvent(event)) {
                 return;
             }
-
-            event.preventDefault();
-            event.stopPropagation();
-
             const targetVideo = this.#findPrioritizedVideo();
             if (targetVideo) {
+                event.preventDefault();
+                event.stopPropagation();
                 this.#applyRotation(targetVideo);
             }
         }

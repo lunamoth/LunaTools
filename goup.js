@@ -100,7 +100,8 @@
 
     class InputValidator {
         static check(e) {
-            if (!e.isTrusted || document.designMode === 'on') return false;
+            if (!e.isTrusted || e.defaultPrevented || e.isComposing ||
+                lunaToolsIsProtectedInputEvent(e, { includeControls: true })) return false;
 
             const target = e.target;
             

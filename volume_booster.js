@@ -19,6 +19,31 @@
     };
 
 
+    // 하나의 MutationObserver 배치에 부모와 자손이 함께 들어와도 각 하위
+    // 트리는 한 번만 방문합니다. 이미 방문한 요소는 자손까지 건너뜁니다.
+    function visitElementsOnce(rootNodes, visit) {
+        const roots = Array.from(rootNodes || []);
+        const visited = new WeakSet();
+        const collect = element => {
+            visit(element);
+            if (element.shadowRoot) roots.push(element.shadowRoot);
+        };
+        for (let index = 0; index < roots.length; index += 1) {
+            const root = roots[index];
+            if (!root || visited.has(root) || ![Node.DOCUMENT_NODE, Node.DOCUMENT_FRAGMENT_NODE, Node.ELEMENT_NODE].includes(root.nodeType)) continue;
+            visited.add(root);
+            if (root.nodeType === Node.ELEMENT_NODE) collect(root);
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+                acceptNode: element => visited.has(element) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+            });
+            let element;
+            while ((element = walker.nextNode())) {
+                visited.add(element);
+                collect(element);
+            }
+        }
+    }
+
     class UIController {
         #indicatorElement = null;
         #toggleCallback;
@@ -64,6 +89,11 @@
         update(isActivated, multiplier) {
             if (!this.#indicatorElement) return;
 
+            // 사이트의 pointer-events/display !important 규칙이 있어도 OFF의
+            // 투명한 표시기가 페이지 입력을 가로채지 않도록 합니다.
+            this.#indicatorElement.inert = !isActivated;
+            this.#indicatorElement.style.setProperty('display', isActivated ? 'flex' : 'none', 'important');
+            this.#indicatorElement.style.setProperty('pointer-events', isActivated ? 'auto' : 'none', 'important');
             this.#indicatorElement.classList.toggle(this.#visibleClass, isActivated);
             this.#indicatorElement.title = isActivated
                 ? `볼륨 부스터 ON ${Math.round(multiplier * 100)}% (Alt+V)`
@@ -182,7 +212,7 @@
             if (!context) return; 
             const volume = this.#targetVolume;
             this.#applyVolume(
-                this.#findAllMediaElements(document.documentElement),
+                this.#findMediaInNodes([document.documentElement]),
                 volume,
                 context,
                 this.#allowNewSetup
@@ -390,9 +420,12 @@
 
         #findMediaInNodes(nodeList) {
             const mediaElements = new Set();
-            for (const node of nodeList) {
-                this.#findAllMediaElements(node).forEach(media => mediaElements.add(media));
-            }
+            visitElementsOnce(nodeList, element => {
+                if (element.matches('video, audio')) mediaElements.add(element);
+                if (element.matches('source') && element.parentElement?.matches('video, audio')) {
+                    mediaElements.add(element.parentElement);
+                }
+            });
             return Array.from(mediaElements);
         }
 
@@ -466,45 +499,6 @@
             }
         }
 
-        #findAllMediaElements(rootNode) {
-            const mediaElements = new Set();
-            const nodesToScan = [rootNode];
-            const queuedShadowRoots = new WeakSet();
-
-            const collectElement = (element) => {
-                if (!element?.matches) return;
-
-                if (element.matches('video, audio')) mediaElements.add(element);
-                if (element.matches('source') && element.parentElement?.matches('video, audio')) {
-                    mediaElements.add(element.parentElement);
-                }
-                if (element.shadowRoot && !queuedShadowRoots.has(element.shadowRoot)) {
-                    queuedShadowRoots.add(element.shadowRoot);
-                    nodesToScan.push(element.shadowRoot);
-                }
-            };
-
-            while (nodesToScan.length > 0) {
-                const currentNode = nodesToScan.pop();
-                if (!currentNode) continue;
-
-                const isScannableRoot = currentNode.nodeType === Node.DOCUMENT_NODE ||
-                    currentNode.nodeType === Node.DOCUMENT_FRAGMENT_NODE ||
-                    currentNode.nodeType === Node.ELEMENT_NODE;
-                if (!isScannableRoot) continue;
-
-                if (currentNode.nodeType === Node.ELEMENT_NODE) collectElement(currentNode);
-
-                const treeWalker = document.createTreeWalker(currentNode, NodeFilter.SHOW_ELEMENT);
-                let element = treeWalker.nextNode();
-                while (element) {
-                    collectElement(element);
-                    element = treeWalker.nextNode();
-                }
-            }
-
-            return Array.from(mediaElements);
-        }
     }
 
     class SoundBooster {
@@ -578,36 +572,9 @@
         }
 
         #observeOpenShadowRoots(rootNodes) {
-            const nodesToScan = Array.from(rootNodes || []);
-            const queuedRoots = new WeakSet();
-
-            const collectShadowRoot = (element) => {
-                const shadowRoot = element?.shadowRoot;
-                if (!shadowRoot || queuedRoots.has(shadowRoot)) return;
-
-                queuedRoots.add(shadowRoot);
-                this.#observeMutationRoot(shadowRoot);
-                nodesToScan.push(shadowRoot);
-            };
-
-            while (nodesToScan.length > 0) {
-                const currentNode = nodesToScan.pop();
-                if (!currentNode) continue;
-
-                const isScannableRoot = currentNode.nodeType === Node.DOCUMENT_NODE ||
-                    currentNode.nodeType === Node.DOCUMENT_FRAGMENT_NODE ||
-                    currentNode.nodeType === Node.ELEMENT_NODE;
-                if (!isScannableRoot) continue;
-
-                if (currentNode.nodeType === Node.ELEMENT_NODE) collectShadowRoot(currentNode);
-
-                const treeWalker = document.createTreeWalker(currentNode, NodeFilter.SHOW_ELEMENT);
-                let element = treeWalker.nextNode();
-                while (element) {
-                    collectShadowRoot(element);
-                    element = treeWalker.nextNode();
-                }
-            }
+            visitElementsOnce(rootNodes, element => {
+                if (element.shadowRoot) this.#observeMutationRoot(element.shadowRoot);
+            });
         }
 
         #schedulePendingNodeScan() {
@@ -710,8 +677,8 @@
         }
 
         #handleKeyDown(e) {
-            if (!e.isTrusted || e.repeat) return;
-            if (this.#isEditableEventTarget(e.target) || !e.altKey || e.key.toLowerCase() !== CONFIG.ACTIVATION_KEY) return;
+            if (!e.isTrusted || e.repeat || e.defaultPrevented || e.isComposing || e.ctrlKey || e.shiftKey || e.metaKey) return;
+            if (!e.altKey || e.key.toLowerCase() !== CONFIG.ACTIVATION_KEY || lunaToolsIsProtectedInputEvent(e)) return;
 
             e.preventDefault();
             e.stopPropagation();
@@ -730,8 +697,9 @@
                             addedNodes.push(mutation.target);
                         }
                     } else {
-                        addedNodes.push(...mutation.addedNodes);
-                        removedNodes.push(...mutation.removedNodes);
+                        // 대량의 노드를 인자로 펼칠 때 엔진의 인자 개수 제한을 넘지 않게 합니다.
+                        for (const node of mutation.addedNodes) addedNodes.push(node);
+                        for (const node of mutation.removedNodes) removedNodes.push(node);
                     }
                 }
 

@@ -85,12 +85,14 @@
         #lastObservedScrollY = null;
         #dragBody = null;
         #mouseDownEvent = null;
+        #pointerReleaseTimer = null;
 
         #listenerOptions = { capture: true, passive: false };
 
         #boundHandleMouseDown = this.#handleMouseDown.bind(this);
         #boundHandleMouseMove = this.#handleMouseMove.bind(this);
         #boundHandleMouseUp = this.#handleMouseUp.bind(this);
+        #boundHandlePointerUp = this.#handlePointerUp.bind(this);
         #boundHandleKeyDown = this.#handleKeyDown.bind(this);
         #boundHandleKeyUp = this.#handleKeyUp.bind(this);
         #boundHandleInteractionAbort = this.#handleInteractionAbort.bind(this);
@@ -115,6 +117,7 @@
             document.addEventListener('mousedown', this.#boundHandleMouseDown, this.#listenerOptions);
             document.addEventListener('mousemove', this.#boundHandleMouseMove, this.#listenerOptions);
             window.addEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
+            window.addEventListener('pointerup', this.#boundHandlePointerUp, { capture: true, passive: true });
             document.addEventListener('keydown', this.#boundHandleKeyDown, this.#listenerOptions);
             document.addEventListener('keyup', this.#boundHandleKeyUp, this.#listenerOptions);
             window.addEventListener('blur', this.#boundHandleFocusChange, true);
@@ -136,6 +139,7 @@
             document.removeEventListener('mousedown', this.#boundHandleMouseDown, this.#listenerOptions);
             document.removeEventListener('mousemove', this.#boundHandleMouseMove, this.#listenerOptions);
             window.removeEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
+            window.removeEventListener('pointerup', this.#boundHandlePointerUp, true);
             document.removeEventListener('keydown', this.#boundHandleKeyDown, this.#listenerOptions);
             document.removeEventListener('keyup', this.#boundHandleKeyUp, this.#listenerOptions);
             window.removeEventListener('blur', this.#boundHandleFocusChange, true);
@@ -190,6 +194,7 @@
         #getModifier(e) { return e.altKey ? 'alt' : e.ctrlKey ? 'ctrl' : e.shiftKey ? 'shift' : null; }
 
         #isEditableEvent(e) {
+            if (lunaToolsIsProtectedInputEvent(e, { includeControls: true, includeActiveElement: false })) return true;
             if (document.designMode === 'on') return true;
             const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
             const candidates = [...path, e.target, e.target?.parentElement];
@@ -595,6 +600,7 @@
 
         #resetState() {
             const frameId = this.#animationFrameId;
+            const releaseTimer = this.#pointerReleaseTimer;
             const dragBody = this.#dragBody;
             const highlightedLinks = this.#highlightedLinks;
             const overlays = [this.#selectionBox, this.#actionIndicator];
@@ -613,10 +619,12 @@
             this.#lastObservedScrollY = null;
             this.#dragBody = null;
             this.#mouseDownEvent = null;
+            this.#pointerReleaseTimer = null;
 
             const safely = action => { try { action(); } catch (_) {} };
             const C = DragSelector.CONFIG;
             if (frameId !== null) safely(() => cancelAnimationFrame(frameId));
+            if (releaseTimer !== null) safely(() => clearTimeout(releaseTimer));
             // 이전 body와 잠금 클래스까지 복제했을 수 있는 현재 body를 모두 정리합니다.
             for (const body of new Set([dragBody, document.body])) {
                 safely(() => {
@@ -699,6 +707,19 @@
                     this.#resetState();
                 }
             }
+        }
+
+        #handlePointerUp(e) {
+            if (!e.isTrusted || e.button !== 0 || !this.#isTrustedSequence) return;
+            if (e.pointerType && e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
+            const startEvent = this.#mouseDownEvent;
+            if (this.#pointerReleaseTimer !== null) clearTimeout(this.#pointerReleaseTimer);
+            // 호환 mouseup이 먼저 정상 처리될 기회를 준 뒤, 사이트가 mouseup의
+            // 전파를 막아 해제만 유실된 경우 잠금/자동 스크롤을 복구합니다.
+            this.#pointerReleaseTimer = setTimeout(() => {
+                this.#pointerReleaseTimer = null;
+                if (this.#mouseDownEvent === startEvent) this.#resetState();
+            }, 0);
         }
 
         #handleMouseUp(e) {
