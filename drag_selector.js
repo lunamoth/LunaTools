@@ -149,6 +149,11 @@
             document.addEventListener('focusin', this.#boundHandleEditableFocus);
             window.addEventListener('pagehide', this.#boundHandleInteractionAbort, true);
             window.addEventListener('pageshow', this.#boundHandleInteractionAbort, true);
+            // Chromium/Edge의 Page Lifecycle freeze/resume은 일반적인
+            // focus/visibility 이벤트와 별도로 발생할 수 있습니다. 절전·동결
+            // 경계를 넘겨 이전 포인터 상태를 이어받지 않도록 즉시 정리합니다.
+            document.addEventListener('freeze', this.#boundHandleInteractionAbort, true);
+            document.addEventListener('resume', this.#boundHandleInteractionAbort, true);
             window.addEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
             window.addEventListener('gotpointercapture', this.#boundHandlePointerCapture, { capture: true, passive: true });
             // 사이트/브라우저가 포인터 캡처를 잃는 순간도 이전 제스처의
@@ -174,6 +179,8 @@
             document.removeEventListener('focusin', this.#boundHandleEditableFocus);
             window.removeEventListener('pagehide', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('pageshow', this.#boundHandleInteractionAbort, true);
+            document.removeEventListener('freeze', this.#boundHandleInteractionAbort, true);
+            document.removeEventListener('resume', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('gotpointercapture', this.#boundHandlePointerCapture, true);
             window.removeEventListener('lostpointercapture', this.#boundHandlePointerCapture, true);

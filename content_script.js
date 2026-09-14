@@ -417,6 +417,7 @@ async function lunaToolsWriteTextToClipboard(text) {
       this.handleMouseUp = this.handleMouseUp.bind(this);
       this.handleContextMenu = this.handleContextMenu.bind(this);
       this.handleBlur = this.handleBlur.bind(this);
+      this.handleLifecycleReset = this.handleLifecycleReset.bind(this);
     }
 
     _initializeEventListeners() {
@@ -429,6 +430,12 @@ async function lunaToolsWriteTextToClipboard(text) {
       window.addEventListener('mouseup', this.handleMouseUp, this.captureOptions);
       window.addEventListener('contextmenu', this.handleContextMenu, this.captureOptions);
       window.addEventListener('blur', this.handleBlur, this.blurOptions);
+      window.addEventListener('pagehide', this.handleLifecycleReset, this.blurOptions);
+      window.addEventListener('pageshow', this.handleLifecycleReset, this.blurOptions);
+      window.addEventListener('pointercancel', this.handleLifecycleReset, this.blurOptions);
+      document.addEventListener('visibilitychange', this.handleLifecycleReset, this.blurOptions);
+      document.addEventListener('freeze', this.handleLifecycleReset, this.blurOptions);
+      document.addEventListener('resume', this.handleLifecycleReset, this.blurOptions);
     }
 
     _resetPointerState() {
@@ -550,12 +557,25 @@ async function lunaToolsWriteTextToClipboard(text) {
       }
     }
 
+    handleLifecycleReset(event) {
+      if (event?.isTrusted === false) return;
+      if (this.isMouseDown || this.suppressNextContextMenu) {
+        this._resetState();
+      }
+    }
+
     destroy() {
       window.removeEventListener('mousedown', this.handleMouseDown, this.captureOptions);
       window.removeEventListener('mousemove', this.handleMouseMove, this.mouseMoveOptions);
       window.removeEventListener('mouseup', this.handleMouseUp, this.captureOptions);
       window.removeEventListener('contextmenu', this.handleContextMenu, this.captureOptions);
       window.removeEventListener('blur', this.handleBlur, this.blurOptions);
+      window.removeEventListener('pagehide', this.handleLifecycleReset, this.blurOptions);
+      window.removeEventListener('pageshow', this.handleLifecycleReset, this.blurOptions);
+      window.removeEventListener('pointercancel', this.handleLifecycleReset, this.blurOptions);
+      document.removeEventListener('visibilitychange', this.handleLifecycleReset, this.blurOptions);
+      document.removeEventListener('freeze', this.handleLifecycleReset, this.blurOptions);
+      document.removeEventListener('resume', this.handleLifecycleReset, this.blurOptions);
     }
   }
 
@@ -1058,6 +1078,8 @@ async function lunaToolsWriteTextToClipboard(text) {
         document.addEventListener('pointerdown', this._cancelPendingNavigation, true);
         document.addEventListener('focusin', this._cancelPendingNavigation, true);
         document.addEventListener('visibilitychange', this._cancelPendingNavigation, true);
+        document.addEventListener('freeze', this._cancelPendingNavigation, true);
+        document.addEventListener('resume', this._cancelPendingNavigation, true);
         window.addEventListener('blur', this._cancelPendingNavigation, true);
         window.addEventListener('pageshow', this._handlePageShow);
         window.addEventListener('pagehide', this._handlePageHide);
@@ -1168,6 +1190,8 @@ async function lunaToolsWriteTextToClipboard(text) {
         document.removeEventListener('pointerdown', this._cancelPendingNavigation, true);
         document.removeEventListener('focusin', this._cancelPendingNavigation, true);
         document.removeEventListener('visibilitychange', this._cancelPendingNavigation, true);
+        document.removeEventListener('freeze', this._cancelPendingNavigation, true);
+        document.removeEventListener('resume', this._cancelPendingNavigation, true);
         window.removeEventListener('blur', this._cancelPendingNavigation, true);
         window.removeEventListener('pageshow', this._handlePageShow);
         window.removeEventListener('pagehide', this._handlePageHide);
@@ -3769,6 +3793,10 @@ async function lunaToolsWriteTextToClipboard(text) {
                 document.removeEventListener('mouseup', onDragEnd);
                 window.removeEventListener('blur', onDragEnd);
                 window.removeEventListener('pagehide', onDragEnd);
+                window.removeEventListener('pointercancel', onDragEnd, true);
+                document.removeEventListener('visibilitychange', onDragEnd, true);
+                document.removeEventListener('freeze', onDragEnd, true);
+                document.removeEventListener('resume', onDragEnd, true);
             };
             
             dragHandleEl.addEventListener('mousedown', (e) => {
@@ -3783,6 +3811,10 @@ async function lunaToolsWriteTextToClipboard(text) {
                 document.addEventListener('mouseup', onDragEnd);
                 window.addEventListener('blur', onDragEnd);
                 window.addEventListener('pagehide', onDragEnd);
+                window.addEventListener('pointercancel', onDragEnd, true);
+                document.addEventListener('visibilitychange', onDragEnd, true);
+                document.addEventListener('freeze', onDragEnd, true);
+                document.addEventListener('resume', onDragEnd, true);
                 e.preventDefault();
             });
         },
