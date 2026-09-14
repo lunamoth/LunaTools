@@ -69,7 +69,10 @@
             TIMING: {
                 FADE_OUT_DURATION_MS: 250,
                 DELAY_OPEN_INTERVAL_MS: 2000,
-                MAX_SYNC_WORK_MS: 32
+                MAX_SYNC_WORK_MS: 32,
+                // OS/Chromium이 포인터 해제·blur 계열 이벤트를 유실하더라도
+                // 확장 프로그램의 드래그 상태가 무기한 유지되지 않게 합니다.
+                MAX_GESTURE_DURATION_MS: 30000
             }
         };
 
@@ -89,10 +92,13 @@
         #dragBody = null;
         #mouseDownEvent = null;
         #pointerReleaseTimer = null;
+        #gestureWatchdogTimer = null;
+        #gestureStartedAt = 0;
 
         #listenerOptions = { capture: true, passive: false };
 
         #boundHandlePointerDown = this.#handlePointerDown.bind(this);
+        #boundHandlePointerMove = this.#handlePointerMove.bind(this);
         #boundHandleMouseDown = this.#handleMouseDown.bind(this);
         #boundHandleMouseMove = this.#handleMouseMove.bind(this);
         #boundHandleMouseUp = this.#handleMouseUp.bind(this);
@@ -124,6 +130,10 @@
             // mouseup이 유실되어 남은 드래그 상태를 페이지의 새 포커스
             // 기본 동작보다 먼저 해제하되, 이벤트 자체는 절대 차단하지 않습니다.
             document.addEventListener('pointerdown', this.#boundHandlePointerDown, { capture: true, passive: true });
+            // compatibility mousemove가 특정 포인터 캡처/브라우저 오류 경로에서
+            // 유실되어도 PointerEvent의 buttons 상태로 확장 상태만 복구합니다.
+            // passive이므로 사이트의 포인터 동작에는 개입하지 않습니다.
+            document.addEventListener('pointermove', this.#boundHandlePointerMove, { capture: true, passive: true });
             document.addEventListener('mousedown', this.#boundHandleMouseDown, this.#listenerOptions);
             document.addEventListener('mousemove', this.#boundHandleMouseMove, this.#listenerOptions);
             window.addEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
@@ -141,6 +151,9 @@
             window.addEventListener('pageshow', this.#boundHandleInteractionAbort, true);
             window.addEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
             window.addEventListener('gotpointercapture', this.#boundHandlePointerCapture, { capture: true, passive: true });
+            // 사이트/브라우저가 포인터 캡처를 잃는 순간도 이전 제스처의
+            // 수명 종료로 취급합니다. 이벤트 자체는 변경하지 않습니다.
+            window.addEventListener('lostpointercapture', this.#boundHandlePointerCapture, { capture: true, passive: true });
             window.addEventListener('dragstart', this.#boundHandleInteractionAbort, true);
             window.addEventListener('dragend', this.#boundHandleInteractionAbort, true);
             window.addEventListener('wheel', this.#boundHandleWheel, { capture: true, passive: true });
@@ -149,6 +162,7 @@
 
         #removeEventListeners() {
             document.removeEventListener('pointerdown', this.#boundHandlePointerDown, true);
+            document.removeEventListener('pointermove', this.#boundHandlePointerMove, true);
             document.removeEventListener('mousedown', this.#boundHandleMouseDown, this.#listenerOptions);
             document.removeEventListener('mousemove', this.#boundHandleMouseMove, this.#listenerOptions);
             window.removeEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
@@ -162,6 +176,7 @@
             window.removeEventListener('pageshow', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('gotpointercapture', this.#boundHandlePointerCapture, true);
+            window.removeEventListener('lostpointercapture', this.#boundHandlePointerCapture, true);
             window.removeEventListener('dragstart', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('dragend', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('wheel', this.#boundHandleWheel, true);
@@ -233,10 +248,25 @@
         }
 
         #hasLiveDragContext() {
-            return this.#isDocumentActive() &&
+            const gestureAge = this.#gestureStartedAt > 0 ? Date.now() - this.#gestureStartedAt : Infinity;
+            return gestureAge >= 0 && gestureAge <= DragSelector.CONFIG.TIMING.MAX_GESTURE_DURATION_MS &&
+                this.#isDocumentActive() &&
                 !this.#mouseDownEvent?.defaultPrevented &&
                 this.#dragBody === document.body && Boolean(this.#dragBody?.isConnected) &&
                 (!this.#isDragging || Boolean(this.#selectionBox?.isConnected && this.#actionIndicator?.isConnected));
+        }
+
+        #armGestureWatchdog() {
+            if (this.#gestureWatchdogTimer !== null) clearTimeout(this.#gestureWatchdogTimer);
+            const startEvent = this.#mouseDownEvent;
+            this.#gestureWatchdogTimer = setTimeout(() => {
+                this.#gestureWatchdogTimer = null;
+                // 백그라운드 탭에서 타이머가 throttling 되더라도 복귀 후
+                // 첫 실행 시 같은 제스처가 남아 있으면 강제로 정리합니다.
+                if (this.#mouseDownEvent === startEvent && this.#hasStaleInteractionState()) {
+                    this.#resetState();
+                }
+            }, DragSelector.CONFIG.TIMING.MAX_GESTURE_DURATION_MS);
         }
 
         #isRectIntersecting(r1, r2) { return !(r2.right < r1.left || r2.left > r1.right || r2.bottom < r1.top || r2.top > r1.bottom); }
@@ -622,6 +652,7 @@
         #resetState() {
             const frameId = this.#animationFrameId;
             const releaseTimer = this.#pointerReleaseTimer;
+            const watchdogTimer = this.#gestureWatchdogTimer;
             const dragBody = this.#dragBody;
             const highlightedLinks = this.#highlightedLinks;
             const overlays = [this.#selectionBox, this.#actionIndicator];
@@ -641,11 +672,14 @@
             this.#dragBody = null;
             this.#mouseDownEvent = null;
             this.#pointerReleaseTimer = null;
+            this.#gestureWatchdogTimer = null;
+            this.#gestureStartedAt = 0;
 
             const safely = action => { try { action(); } catch (_) {} };
             const C = DragSelector.CONFIG;
             if (frameId !== null) safely(() => cancelAnimationFrame(frameId));
             if (releaseTimer !== null) safely(() => clearTimeout(releaseTimer));
+            if (watchdogTimer !== null) safely(() => clearTimeout(watchdogTimer));
             // 이전 body와 잠금 클래스까지 복제했을 수 있는 현재 body를 모두 정리합니다.
             for (const body of new Set([dragBody, document.body])) {
                 safely(() => {
@@ -683,9 +717,22 @@
 
         #handlePointerCapture(e) {
             if (!e.isTrusted) return;
-            // 사이트가 포인터 캡처를 시작한 슬라이더·드래그 UI에는 개입하지
-            // 않습니다. 사이트의 캡처/이벤트는 그대로 두고 확장 상태만 해제합니다.
+            // 사이트가 포인터 캡처를 시작하거나 잃은 슬라이더·드래그 UI에는
+            // 개입하지 않습니다. 사이트의 캡처/이벤트는 그대로 두고
+            // 확장 상태만 해제합니다.
             if (this.#hasStaleInteractionState()) this.#resetState();
+        }
+
+        #handlePointerMove(e) {
+            if (!e.isTrusted || !this.#hasStaleInteractionState()) return;
+            if (e.pointerType && e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
+
+            // Chromium/사이트가 compatibility mousemove를 전달하지 못하는
+            // 경로에서도 실제 왼쪽 버튼이 풀렸거나 보조키가 사라졌으면
+            // 확장 상태만 즉시 해제합니다. 이 리스너는 passive입니다.
+            if ((e.buttons & 1) === 0 || !this.#getModifier(e) || !this.#hasLiveDragContext()) {
+                this.#resetState();
+            }
         }
 
         #handleMouseDown(e) {
@@ -712,6 +759,8 @@
             // 문서 캡처 이후 사이트의 mousedown 핸들러가 preventDefault()한
             // 경우도 다음 이동에서 확인할 수 있도록 시작 이벤트를 보관합니다.
             this.#mouseDownEvent = e;
+            this.#gestureStartedAt = Date.now();
+            this.#armGestureWatchdog();
             this.#startPos = { x: e.clientX, y: e.clientY };
             this.#lastMouseEvent = e;
             this.#lastObservedScrollY = window.scrollY;
