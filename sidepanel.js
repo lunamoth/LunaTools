@@ -422,11 +422,10 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         // 예약된 재포커스보다 사용자의 직접 조작을 항상 우선합니다.
-        pane.addEventListener('pointerdown', (event) => {
-            if (event.target !== UI.urlInput) {
-                cancelPendingUrlInputAutoFocus();
-            }
-        }, true);
+        // URL 입력칸 자체의 클릭·드래그·Ctrl+A도 사용자의 편집입니다.
+        // 예약된 setSelectionRange()가 선택 영역이나 커서를 끝으로 되돌리지 않습니다.
+        pane.addEventListener('pointerdown', cancelPendingUrlInputAutoFocus, true);
+        pane.addEventListener('keydown', cancelPendingUrlInputAutoFocus, true);
         pane.addEventListener('focusin', (event) => {
             if (event.target !== UI.urlInput) {
                 cancelPendingUrlInputAutoFocus();

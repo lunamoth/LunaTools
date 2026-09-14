@@ -10,6 +10,8 @@
         ACTIVATION_KEY: 'v',
         DEBOUNCE_DELAY: 200,
         MAX_PENDING_NODE_COUNT: 500,
+        MAX_SCAN_SLICE_MS: 8,
+        MAX_SCAN_SLICE_ELEMENTS: 250,
         SAFE_MEDIA_PROTOCOLS: new Set(['blob:', 'data:', 'mediastream:']),
         UI: {
             INDICATOR_ID: 'sound-booster-indicator',
@@ -21,27 +23,53 @@
 
     // 하나의 MutationObserver 배치에 부모와 자손이 함께 들어와도 각 하위
     // 트리는 한 번만 방문합니다. 이미 방문한 요소는 자손까지 건너뜁니다.
-    function visitElementsOnce(rootNodes, visit) {
+    async function visitElementsOnce(rootNodes, visit, isCancelled = () => false) {
         const roots = Array.from(rootNodes || []);
         const visited = new WeakSet();
+        let sliceStartedAt = performance.now();
+        let sliceElements = 0;
         const collect = element => {
             visit(element);
             if (element.shadowRoot) roots.push(element.shadowRoot);
         };
         for (let index = 0; index < roots.length; index += 1) {
+            if (isCancelled()) return false;
             const root = roots[index];
             if (!root || visited.has(root) || ![Node.DOCUMENT_NODE, Node.DOCUMENT_FRAGMENT_NODE, Node.ELEMENT_NODE].includes(root.nodeType)) continue;
             visited.add(root);
-            if (root.nodeType === Node.ELEMENT_NODE) collect(root);
+            if (root.nodeType === Node.ELEMENT_NODE) {
+                collect(root);
+                sliceElements++;
+            }
             const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
                 acceptNode: element => visited.has(element) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
             });
             let element;
             while ((element = walker.nextNode())) {
+                if (isCancelled()) return false;
                 visited.add(element);
                 collect(element);
+                sliceElements++;
+                if (sliceElements >= CONFIG.MAX_SCAN_SLICE_ELEMENTS ||
+                    performance.now() - sliceStartedAt >= CONFIG.MAX_SCAN_SLICE_MS) {
+                    // A microtask alone does not let input/rendering run. Yield
+                    // to a new task even when one added subtree is very large.
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                    if (isCancelled()) return false;
+                    sliceElements = 0;
+                    sliceStartedAt = performance.now();
+                }
+            }
+            // Many separate leaf roots must obey the same budget as a subtree.
+            if (sliceElements >= CONFIG.MAX_SCAN_SLICE_ELEMENTS ||
+                performance.now() - sliceStartedAt >= CONFIG.MAX_SCAN_SLICE_MS) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+                if (isCancelled()) return false;
+                sliceElements = 0;
+                sliceStartedAt = performance.now();
             }
         }
+        return !isCancelled();
     }
 
     class UIController {
@@ -107,30 +135,21 @@
             const style = document.createElement('style');
             style.id = styleId;
             style.textContent = `
-                :root {
-                    --sbi-size: 40px;
-                    --sbi-bg-color: rgba(255, 255, 255, 0.2);
-                    --sbi-border-color: rgba(255, 255, 255, 0.4);
-                    --sbi-icon-color: rgba(0, 0, 0, 0.7);
-                    --sbi-font-size: 24px;
-                    --sbi-scale-initial: 0.9;
-                    --sbi-scale-hover: 1.08;
-                    --sbi-scale-active: 1.02;
-                }
-                @media (prefers-color-scheme: dark) {
-                    :root {
-                        --sbi-bg-color: rgba(0, 0, 0, 0.3);
-                        --sbi-border-color: rgba(255, 255, 255, 0.3);
-                        --sbi-icon-color: rgba(255, 255, 255, 0.8);
-                    }
-                }
                 #${this.#indicatorId} {
+                    --lunatools-sbi-size: 40px;
+                    --lunatools-sbi-bg-color: rgba(255, 255, 255, 0.2);
+                    --lunatools-sbi-border-color: rgba(255, 255, 255, 0.4);
+                    --lunatools-sbi-icon-color: rgba(0, 0, 0, 0.7);
+                    --lunatools-sbi-font-size: 24px;
+                    --lunatools-sbi-scale-initial: 0.9;
+                    --lunatools-sbi-scale-hover: 1.08;
+                    --lunatools-sbi-scale-active: 1.02;
                     position: fixed; bottom: 25px; right: 25px;
-                    width: var(--sbi-size); height: var(--sbi-size);
-                    background: var(--sbi-bg-color);
-                    border: 1px solid var(--sbi-border-color);
-                    color: var(--sbi-icon-color);
-                    font-size: var(--sbi-font-size);
+                    width: var(--lunatools-sbi-size); height: var(--lunatools-sbi-size);
+                    background: var(--lunatools-sbi-bg-color);
+                    border: 1px solid var(--lunatools-sbi-border-color);
+                    color: var(--lunatools-sbi-icon-color);
+                    font-size: var(--lunatools-sbi-font-size);
                     backdrop-filter: blur(12px) saturate(180%);
                     -webkit-backdrop-filter: blur(12px) saturate(180%);
                     border-radius: 50%;
@@ -138,13 +157,20 @@
                     display: flex; justify-content: center; align-items: center;
                     z-index: 2147483647;
                     user-select: none;
-                    opacity: 0; transform: scale(var(--sbi-scale-initial)) translateY(10px);
+                    opacity: 0; transform: scale(var(--lunatools-sbi-scale-initial)) translateY(10px);
                     pointer-events: none; transition: opacity 0.3s ease-out, transform 0.3s ease-out;
                     cursor: pointer;
                 }
+                @media (prefers-color-scheme: dark) {
+                    #${this.#indicatorId} {
+                        --lunatools-sbi-bg-color: rgba(0, 0, 0, 0.3);
+                        --lunatools-sbi-border-color: rgba(255, 255, 255, 0.3);
+                        --lunatools-sbi-icon-color: rgba(255, 255, 255, 0.8);
+                    }
+                }
                 #${this.#indicatorId}.${this.#visibleClass} { opacity: 1; transform: scale(1) translateY(0); pointer-events: auto; }
-                #${this.#indicatorId}:hover { transform: scale(var(--sbi-scale-hover)); }
-                #${this.#indicatorId}:active { transform: scale(var(--sbi-scale-active)); }
+                #${this.#indicatorId}:hover { transform: scale(var(--lunatools-sbi-scale-hover)); }
+                #${this.#indicatorId}:active { transform: scale(var(--lunatools-sbi-scale-active)); }
             `;
             (document.head || document.documentElement).appendChild(style);
         }
@@ -153,6 +179,8 @@
     class AudioProcessor {
         #audioContext = null;
         #sourceNodeMap = new WeakMap();
+        #trackedMediaRefs = new Set();
+        #volumeUpdateGeneration = 0;
         #warnedUnsafeMedia = new WeakSet();
         #disconnectedMediaRefs = new Set();
         #disconnectedMediaRefByElement = new WeakMap();
@@ -202,22 +230,34 @@
             }
         }
 
-        async updateAllVolumes(isActivated, multiplier) {
-            // 비동기 AudioContext 재개가 역순으로 끝나더라도 마지막 사용자 상태를 적용합니다.
+        setDesiredActivation(isActivated, multiplier) {
+            this.#volumeUpdateGeneration++;
             this.#targetVolume = isActivated ? multiplier : 1.0;
             this.#allowNewSetup = isActivated;
+        }
+
+        async updateAllVolumes(isActivated, multiplier) {
+            // 비동기 AudioContext 재개가 역순으로 끝나더라도 마지막 사용자 상태를 적용합니다.
+            this.setDesiredActivation(isActivated, multiplier);
+            const generation = this.#volumeUpdateGeneration;
             this.#pruneDeadMediaRefs();
 
             const context = await this.ensureContextIsRunning();
-            if (!context) return; 
+            if (!context || generation !== this.#volumeUpdateGeneration) return false;
             const volume = this.#targetVolume;
-            this.#applyVolume(
-                this.#findMediaInNodes([document.documentElement]),
-                volume,
-                context,
-                this.#allowNewSetup
-            );
+            // OFF must restore all routed media immediately, including media
+            // later in a huge document. It must not depend on a cancellable scan.
+            for (const mediaRef of this.#trackedMediaRefs) {
+                const media = mediaRef.deref();
+                if (media?.isConnected) this.#applyVolume([media], volume, context, false);
+            }
             this.#applyVolumeToDetachedMedia(volume, context);
+            if (!isActivated) return true;
+
+            const isCancelled = () => generation !== this.#volumeUpdateGeneration;
+            await this.#processMediaInNodes([document.documentElement], context, isCancelled);
+            if (isCancelled()) return false;
+            return true;
         }
 
         #applyVolumeToDetachedMedia(volume, context) {
@@ -240,18 +280,12 @@
         }
 
         async processNewNodes(nodeList) {
+            const generation = this.#volumeUpdateGeneration;
             const context = await this.ensureContextIsRunning();
-            if (!context || !nodeList?.length) return; 
+            if (!context || !nodeList?.length || generation !== this.#volumeUpdateGeneration) return;
 
-            const newMediaElements = this.#findMediaInNodes(nodeList);
-            if (newMediaElements.length === 0) return;
-
-            this.#applyVolume(
-                newMediaElements,
-                this.#targetVolume,
-                context,
-                this.#allowNewSetup
-            );
+            const isCancelled = () => generation !== this.#volumeUpdateGeneration || !this.#allowNewSetup;
+            await this.#processMediaInNodes(nodeList, context, isCancelled);
         }
 
         handleAddedNodes(nodeList) {
@@ -259,8 +293,17 @@
             this.#pruneDeadMediaRefs();
             if (!this.#hasSetupMedia || !this.#audioContext) return;
 
-            for (const media of this.#findMediaInNodes(nodeList)) {
-                if (!media.isConnected) continue;
+            // Reinsertions only need attention for media already tracked by this
+            // processor. Walking every descendant of every added DOM subtree here
+            // duplicated the debounced new-media scan and could synchronously stall
+            // large SPAs even after the booster had been turned off.
+            const trackedRefs = new Set([
+                ...this.#pendingDetachedMediaRefs,
+                ...this.#disconnectedMediaRefs
+            ]);
+            for (const mediaRef of trackedRefs) {
+                const media = mediaRef.deref();
+                if (!media || !media.isConnected) continue;
 
                 this.#cancelPendingDetachedCleanup(media);
                 const audioComponents = this.#setup(media, false);
@@ -275,6 +318,9 @@
         }
 
         #pruneDeadMediaRefs() {
+            for (const mediaRef of this.#trackedMediaRefs) {
+                if (!mediaRef.deref()) this.#trackedMediaRefs.delete(mediaRef);
+            }
             for (const mediaRef of Array.from(this.#disconnectedMediaRefs)) {
                 if (!mediaRef.deref()) this.#disconnectedMediaRefs.delete(mediaRef);
             }
@@ -406,7 +452,11 @@
             this.#pruneDeadMediaRefs();
             if (!this.#hasSetupMedia) return;
 
-            for (const media of this.#findMediaInNodes(nodeList)) {
+            // DOM removal can include hundreds of thousands of unrelated nodes,
+            // even while OFF. Only our already-routed media need cleanup.
+            for (const mediaRef of this.#trackedMediaRefs) {
+                const media = mediaRef.deref();
+                if (!media) continue;
                 const audioComponents = this.#sourceNodeMap.get(media);
                 if (audioComponents && !media.isConnected && audioComponents.connected) {
                     if (!media.paused && !media.ended) {
@@ -418,15 +468,19 @@
             }
         }
 
-        #findMediaInNodes(nodeList) {
-            const mediaElements = new Set();
-            visitElementsOnce(nodeList, element => {
-                if (element.matches('video, audio')) mediaElements.add(element);
+        async #processMediaInNodes(nodeList, context, isCancelled = () => false) {
+            const processedMedia = new WeakSet();
+            await visitElementsOnce(nodeList, element => {
+                let media = element.matches('video, audio') ? element : null;
                 if (element.matches('source') && element.parentElement?.matches('video, audio')) {
-                    mediaElements.add(element.parentElement);
+                    media = element.parentElement;
                 }
-            });
-            return Array.from(mediaElements);
+                if (!media || processedMedia.has(media)) return;
+                processedMedia.add(media);
+                // Graph creation is part of the bounded scan as well; do not
+                // collect thousands of media and route them in one final task.
+                this.#applyVolume([media], this.#targetVolume, context, this.#allowNewSetup);
+            }, isCancelled);
         }
 
         #isSafeToRouteThroughWebAudio(mediaElement) {
@@ -493,6 +547,7 @@
                 const audioComponents = { source, gainNode, connected: true };
                 this.#hasSetupMedia = true;
                 this.#sourceNodeMap.set(mediaElement, audioComponents);
+                this.#trackedMediaRefs.add(new WeakRef(mediaElement));
                 return audioComponents;
             } catch {
                 return null;
@@ -520,7 +575,7 @@
 
         #handleMediaReady(event) {
             const mediaElement = event?.target;
-            if (!this.#isActivated || !(mediaElement instanceof Element) || !mediaElement.matches('video, audio')) {
+            if (!this.#requestedActivation || !(mediaElement instanceof Element) || !mediaElement.matches('video, audio')) {
                 return;
             }
 
@@ -571,10 +626,10 @@
             this.#observedMutationRoots.add(rootNode);
         }
 
-        #observeOpenShadowRoots(rootNodes) {
-            visitElementsOnce(rootNodes, element => {
+        async #observeOpenShadowRoots(rootNodes) {
+            return visitElementsOnce(rootNodes, element => {
                 if (element.shadowRoot) this.#observeMutationRoot(element.shadowRoot);
-            });
+            }, () => !this.#requestedActivation);
         }
 
         #schedulePendingNodeScan() {
@@ -598,7 +653,9 @@
         async #flushPendingAddedNodes() {
             if (this.#isFlushingPendingNodes) return;
             if (!this.#isActivated) {
-                this.#clearPendingNodeScan();
+                // Keep mutations received during the first asynchronous ON scan.
+                // They are processed once activation has finished.
+                if (!this.#requestedActivation) this.#clearPendingNodeScan();
                 return;
             }
             if (this.#pendingAddedNodes.size === 0 && !this.#needsFullDocumentScan) return;
@@ -608,10 +665,14 @@
                 if (this.#needsFullDocumentScan) {
                     this.#pendingAddedNodes.clear();
                     this.#needsFullDocumentScan = false;
+                    await this.#observeOpenShadowRoots([document.documentElement]);
+                    if (!this.#requestedActivation) return;
                     await this.#audioProcessor.updateAllVolumes(this.#isActivated, CONFIG.VOLUME_MULTIPLIER);
                 } else {
                     const nodes = Array.from(this.#pendingAddedNodes);
                     this.#pendingAddedNodes.clear();
+                    await this.#observeOpenShadowRoots(nodes);
+                    if (!this.#requestedActivation) return;
                     await this.#audioProcessor.processNewNodes(nodes);
                 }
             } finally {
@@ -630,6 +691,7 @@
         async #toggleActivation() {
             // 비동기 전환 중의 추가 입력도 버리지 않고 마지막 요청 상태를 보존합니다.
             this.#requestedActivation = !this.#requestedActivation;
+            this.#audioProcessor.setDesiredActivation(this.#requestedActivation, CONFIG.VOLUME_MULTIPLIER);
             if (this.#toggleInProgress) return;
             this.#toggleInProgress = true;
 
@@ -644,17 +706,26 @@
                     }
 
                     const targetActivation = this.#requestedActivation;
-                    // 사용하지 않는 탭에는 DOM 감시 비용이 생기지 않도록 최초
-                    // 활성화 시점에만 문서와 열린 ShadowRoot 관찰을 시작합니다.
-                    if (targetActivation && !this.#domObserver) {
-                        this.#setupDOMObserver();
+                    // 최초 활성화에서 관찰을 시작하고, OFF 동안 새로 생긴
+                    // ShadowRoot는 다음 ON 전환 때 한 번만 다시 발견합니다.
+                    // OFF 상태의 매 DOM 삽입마다 대형 하위 트리를 순회하지 않습니다.
+                    if (targetActivation) {
+                        if (!this.#domObserver) {
+                            this.#setupDOMObserver();
+                        }
+                        await this.#observeOpenShadowRoots([document.documentElement]);
                     }
+                    if (targetActivation !== this.#requestedActivation) continue;
 
                     const multiplier = CONFIG.VOLUME_MULTIPLIER;
-                    await this.#audioProcessor.updateAllVolumes(targetActivation, multiplier);
+                    const applied = await this.#audioProcessor.updateAllVolumes(targetActivation, multiplier);
+                    if (!applied) continue;
                     this.#isActivated = targetActivation;
                     if (!this.#isActivated) this.#clearPendingNodeScan();
                     this.#uiController.update(this.#isActivated, multiplier);
+                    if (this.#isActivated && (this.#pendingAddedNodes.size || this.#needsFullDocumentScan)) {
+                        this.#schedulePendingNodeScan();
+                    }
                 }
             } finally {
                 this.#toggleInProgress = false;
@@ -703,22 +774,19 @@
                     }
                 }
 
-                if (addedNodes.length > 0) this.#observeOpenShadowRoots(addedNodes);
+                // OFF 상태에서는 새 DOM의 ShadowRoot/하위 요소를 매번 전수
+                // 순회하지 않습니다. 기존에 처리했던 미디어 재삽입만 추적하고,
+                // 다음 ON 전환 때 문서의 열린 ShadowRoot를 한 번 재동기화합니다.
                 if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
                 if (addedNodes.length > 0) {
                     this.#audioProcessor.handleAddedNodes(addedNodes);
-                    if (this.#isActivated) {
+                    if (this.#requestedActivation) {
                         this.#queueAddedNodes(addedNodes);
-                    } else {
-                        // 일시정지/종료 후 정리된 요소가 OFF 상태에서 재삽입되어도
-                        // 끊긴 graph와 기본 gain을 즉시 복구합니다.
-                        void this.#audioProcessor.reconnectDisconnectedMedia().catch(() => {});
                     }
                 }
             });
 
             this.#observeMutationRoot(document.documentElement);
-            this.#observeOpenShadowRoots([document.documentElement]);
         }
     }
 

@@ -1214,6 +1214,15 @@ class TabManager {
             this._refreshTabCacheFromLiveTab(liveDuplicate);
             continue;
           }
+          // Pinning can change while the asynchronous duplicate checks run.
+          // The original keeper decision is no longer valid after either tab's
+          // pinned state changes. Do not focus or close using that old decision.
+          if (Boolean(liveDuplicate.pinned) !== Boolean(duplicateTab.pinned) ||
+              Boolean(liveKeeper.pinned) !== Boolean(tabToKeep.pinned)) {
+            this._refreshTabCacheFromLiveTab(liveKeeper);
+            this._refreshTabCacheFromLiveTab(liveDuplicate);
+            continue;
+          }
           // The tab may have entered Split View after the initial duplicate scan.
           // Re-check the live object immediately before any focus/removal workflow.
           if (this._isTabInSplitView(liveDuplicate)) {
@@ -1320,6 +1329,8 @@ class TabManager {
             const removalStateIsSafe =
               liveKeeper.windowId === currentTab.windowId &&
               finalKeeperUrl?.href === parsedUrl.href &&
+              Boolean(liveKeeper.pinned) === Boolean(tabToKeep.pinned) &&
+              Boolean(liveDuplicate.pinned) === Boolean(duplicateTab.pinned) &&
               liveDuplicate.active === false &&
               liveDuplicate.windowId === currentTab.windowId &&
               finalDuplicateUrl?.href === parsedUrl.href &&

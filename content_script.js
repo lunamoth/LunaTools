@@ -17,6 +17,10 @@ function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includ
     if (!(element instanceof Element) || visited.has(element)) continue;
     visited.add(element);
     if (element.isContentEditable || element.matches('input, textarea, select, .CodeMirror, .codemirror, .monaco-editor, .ace_editor')) return true;
+    // Keyboard shortcuts must never steal input from a site-owned focusable widget.
+    // Pointer gestures pass includeActiveElement:false, so links/custom widgets remain
+    // available as drag starting points while focused keyboard controls are protected.
+    if (includeActiveElement && element instanceof HTMLElement && element.tabIndex >= 0 && (element === document.activeElement || element.matches(':focus'))) return true;
     const editableValue = element.getAttribute('contenteditable');
     if (editableValue !== null && editableValue.toLowerCase() !== 'false') return true;
     const roles = String(element.getAttribute('role') || '').toLowerCase().split(/\s+/);
@@ -3737,8 +3741,8 @@ async function lunaToolsWriteTextToClipboard(text) {
 		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} b { color: #800 !important; }
 		@media (prefers-color-scheme: dark) { #${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} { background-color: rgba(60,28,30,.7); border-color: rgba(255,80,70,.3); } #${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} .smart-converter-item-text-content div, #${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_ERROR_CLASS} b { color: #ffcdd2 !important; } }
 		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content { min-height: 2.5em; display: flex; align-items: center; }
-		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content div::after { content: ""; display: inline-block; width: .9em; height: .9em; margin-left: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: smart-converter-spinner .8s linear infinite; vertical-align: middle; opacity: 0.7; }
-		@keyframes smart-converter-spinner { to { transform: rotate(360deg); } }
+		#${UI_STRINGS.POPUP_LAYER_ID}.${UI_STRINGS.POPUP_LOADING_CLASS} .smart-converter-item-text-content div::after { content: ""; display: inline-block; width: .9em; height: .9em; margin-left: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: lunatools-smart-converter-spinner-v42 .8s linear infinite; vertical-align: middle; opacity: 0.7; }
+		@keyframes lunatools-smart-converter-spinner-v42 { to { transform: rotate(360deg); } }
     `;
 
     const PopupUI = {
