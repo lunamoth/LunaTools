@@ -39,6 +39,93 @@ function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includ
   return false;
 }
 
+// 클립보드 권한 실패가 늦게 돌아와도 사용자가 새로 선택한 입력란이나
+// 복귀한 탭의 포커스를 숨은 textarea로 빼앗지 않도록 두 복사 기능이 공유합니다.
+async function lunaToolsWriteTextToClipboard(text) {
+  const getFocusedElement = () => {
+    let element = document.activeElement;
+    const visited = new Set();
+    while (element && !visited.has(element)) {
+      visited.add(element);
+      let root = element.shadowRoot;
+      if (!root && element instanceof HTMLElement) {
+        try { root = chrome.dom?.openOrClosedShadowRoot(element); } catch (_) {}
+      }
+      if (!root?.activeElement) break;
+      element = root.activeElement;
+    }
+    return element;
+  };
+  const originalFocus = getFocusedElement();
+  const originalUrl = window.location.href;
+  let interactionChanged = false;
+  const cancelFallback = () => { interactionChanged = true; };
+  const onWindowBlur = event => { if (event.target === window) cancelFallback(); };
+  const pendingEvents = ['pointerdown', 'keydown', 'focusin', 'visibilitychange'];
+
+  for (const type of pendingEvents) document.addEventListener(type, cancelFallback, true);
+  window.addEventListener('blur', onWindowBlur);
+  window.addEventListener('pagehide', cancelFallback, true);
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(String(text));
+      return true;
+    }
+  } catch (_) {
+  } finally {
+    for (const type of pendingEvents) document.removeEventListener(type, cancelFallback, true);
+    window.removeEventListener('blur', onWindowBlur);
+    window.removeEventListener('pagehide', cancelFallback, true);
+  }
+
+  const isCurrentDocument = () => document.visibilityState !== 'hidden' &&
+    document.hasFocus() && window.location.href === originalUrl;
+  if (interactionChanged || !isCurrentDocument() || getFocusedElement() !== originalFocus) return false;
+
+  const selection = window.getSelection();
+  const ranges = [];
+  for (let index = 0; index < (selection?.rangeCount || 0); index += 1) {
+    ranges.push(selection.getRangeAt(index).cloneRange());
+  }
+  const inputSelection = Number.isInteger(originalFocus?.selectionStart)
+    ? [originalFocus.selectionStart, originalFocus.selectionEnd, originalFocus.selectionDirection]
+    : null;
+  const textArea = document.createElement('textarea');
+  textArea.value = String(text);
+  textArea.setAttribute('readonly', '');
+  textArea.setAttribute('aria-hidden', 'true');
+  textArea.tabIndex = -1;
+  textArea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none!important;';
+  try {
+    document.documentElement.appendChild(textArea);
+    textArea.focus({ preventScroll: true });
+    // 모달의 포커스 트랩이 되돌린 포커스를 다시 강제로 가져오지 않습니다.
+    if (getFocusedElement() !== textArea) return false;
+    textArea.select();
+    return document.execCommand('copy');
+  } catch (_) {
+    return false;
+  } finally {
+    const ownsFocus = getFocusedElement() === textArea;
+    textArea.remove();
+    if (ownsFocus && isCurrentDocument() && originalFocus?.isConnected) {
+      try { originalFocus.focus({ preventScroll: true }); } catch (_) {}
+      if (getFocusedElement() === originalFocus) {
+        if (inputSelection) {
+          try { originalFocus.setSelectionRange(...inputSelection); } catch (_) {}
+        } else {
+          try {
+            selection?.removeAllRanges();
+            for (const range of ranges) {
+              if (range.startContainer.isConnected && range.endContainer.isConnected) selection.addRange(range);
+            }
+          } catch (_) {}
+        }
+      }
+    }
+  }
+}
+
 (async () => {
   'use strict';
 
@@ -1804,28 +1891,7 @@ function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includ
             return fragment;
         },
         writeTextToClipboard: async function(text) {
-            try {
-                if (navigator.clipboard?.writeText) {
-                    await navigator.clipboard.writeText(String(text));
-                    return true;
-                }
-            } catch (_) {
-            }
-
-            const textArea = document.createElement('textarea');
-            textArea.value = String(text);
-            textArea.setAttribute('readonly', '');
-            textArea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
-            document.documentElement.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            try {
-                return document.execCommand('copy');
-            } catch (_) {
-                return false;
-            } finally {
-                textArea.remove();
-            }
+            return lunaToolsWriteTextToClipboard(text);
         },
         parseFloatLenient: function(inputStr) {
             if (inputStr === null || typeof inputStr === 'undefined') return null;

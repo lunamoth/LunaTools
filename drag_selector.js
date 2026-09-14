@@ -62,11 +62,14 @@
             },
             LIMITS: {
                 MAX_URLS_PER_ACTION: 100,
-                MAX_URL_LENGTH: 2048
+                MAX_URL_LENGTH: 2048,
+                MAX_SCAN_ELEMENTS: 50000,
+                MAX_SCAN_LINKS: 10000
             },
             TIMING: {
                 FADE_OUT_DURATION_MS: 250,
-                DELAY_OPEN_INTERVAL_MS: 2000
+                DELAY_OPEN_INTERVAL_MS: 2000,
+                MAX_SYNC_WORK_MS: 32
             }
         };
 
@@ -101,6 +104,7 @@
         #boundHandleFocusChange = this.#handleFocusChange.bind(this);
         #boundHandleEditableFocus = this.#handleEditableFocus.bind(this);
         #boundHandleWheel = this.#handleWheel.bind(this);
+        #boundHandlePointerCapture = this.#handlePointerCapture.bind(this);
 
         constructor() {
             this.#injectStyles();
@@ -136,6 +140,7 @@
             window.addEventListener('pagehide', this.#boundHandleInteractionAbort, true);
             window.addEventListener('pageshow', this.#boundHandleInteractionAbort, true);
             window.addEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
+            window.addEventListener('gotpointercapture', this.#boundHandlePointerCapture, { capture: true, passive: true });
             window.addEventListener('dragstart', this.#boundHandleInteractionAbort, true);
             window.addEventListener('dragend', this.#boundHandleInteractionAbort, true);
             window.addEventListener('wheel', this.#boundHandleWheel, { capture: true, passive: true });
@@ -156,6 +161,7 @@
             window.removeEventListener('pagehide', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('pageshow', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
+            window.removeEventListener('gotpointercapture', this.#boundHandlePointerCapture, true);
             window.removeEventListener('dragstart', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('dragend', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('wheel', this.#boundHandleWheel, true);
@@ -235,20 +241,26 @@
 
         #isRectIntersecting(r1, r2) { return !(r2.right < r1.left || r2.left > r1.right || r2.bottom < r1.top || r2.top > r1.bottom); }
 
-        #isElementIntersecting(element, selectionRect) {
+        #checkWorkBudget(deadline) {
+            if (performance.now() >= deadline) throw new Error('LunaTools: drag work budget exceeded');
+        }
+
+        #isElementIntersecting(element, selectionRect, deadline) {
             const clientRects = element.getClientRects();
             for (let i = 0; i < clientRects.length; i++) {
+                this.#checkWorkBudget(deadline);
                 if (this.#isRectIntersecting(clientRects[i], selectionRect)) return true;
             }
             return false;
         }
 
-        #isElementVisible(element) {
+        #isElementVisible(element, deadline) {
             const clientRects = element.getClientRects();
             if (!clientRects || clientRects.length === 0) return false;
             const style = window.getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
             for (let i = 0; i < clientRects.length; i++) {
+                this.#checkWorkBudget(deadline);
                 if (clientRects[i].width > 0 && clientRects[i].height > 0) return true;
             }
             return false;
@@ -273,19 +285,37 @@
         #findAllLinks(rootNode) {
             const links = [];
             const queue = [rootNode];
+            const deadline = performance.now() + DragSelector.CONFIG.TIMING.MAX_SYNC_WORK_MS;
+            let visitedElements = 0;
+            let candidateLinks = 0;
             for (let index = 0; index < queue.length; index += 1) {
                 const node = queue[index];
                 if (!node) continue;
-                // 대량의 링크를 함수 인자로 펼치면 인자 개수 제한으로 실패합니다.
-                for (const link of node.querySelectorAll('a[href]')) links.push(link);
-                for (const el of node.querySelectorAll('*')) { if (el.shadowRoot) queue.push(el.shadowRoot); }
+                // 거대한 정적 NodeList를 먼저 만들지 않고 순차 방문합니다.
+                // 예산을 넘으면 전체 동작을 취소하므로 일부 링크만 실행되지 않습니다.
+                const walker = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
+                let element = node.nodeType === Node.ELEMENT_NODE ? node : walker.nextNode();
+                while (element) {
+                    this.#checkWorkBudget(deadline);
+                    if (++visitedElements > DragSelector.CONFIG.LIMITS.MAX_SCAN_ELEMENTS) {
+                        throw new Error('LunaTools: drag element limit exceeded');
+                    }
+                    if (element.shadowRoot) queue.push(element.shadowRoot);
+                    if (element.matches('a[href]')) {
+                        if (++candidateLinks > DragSelector.CONFIG.LIMITS.MAX_SCAN_LINKS) {
+                            throw new Error('LunaTools: drag link limit exceeded');
+                        }
+                        const url = this.#getLinkUrl(element);
+                        if (url && !url.href.startsWith(window.location.href + '#') &&
+                            ['http:', 'https:'].includes(url.protocol) && this.#isElementVisible(element, deadline)) {
+                            links.push(element);
+                        }
+                    }
+                    element = walker.nextNode();
+                }
             }
-            return links.filter(link => {
-                if (!this.#isElementVisible(link)) return false;
-                const url = this.#getLinkUrl(link);
-                return url && !url.href.startsWith(window.location.href + '#') &&
-                    ['http:', 'https:'].includes(url.protocol);
-            });
+            this.#checkWorkBudget(deadline);
+            return links;
         }
 
         #createVisualElements() {
@@ -320,8 +350,8 @@
                 // DOM/UI 교체를 확인해 자동 스크롤이 계속되지 않게 합니다.
                 if (!this.#hasLiveDragContext()) { this.#resetState(); return; }
                 this.#handleAutoScroll();
-                this.#updateVisuals();
                 this.#updateLinkHighlights();
+                this.#updateVisuals();
                 if (this.#isDragging) {
                     this.#animationFrameId = requestAnimationFrame(() => this.#updateOnFrame());
                 }
@@ -395,11 +425,14 @@
         
         #getLinksInRect(selectionRect) {
             const linksInRect = new Set();
+            const deadline = performance.now() + DragSelector.CONFIG.TIMING.MAX_SYNC_WORK_MS;
             for (const link of this.#allLinksOnPage) {
-                if (this.#isElementIntersecting(link, selectionRect)) {
+                this.#checkWorkBudget(deadline);
+                if (this.#isElementIntersecting(link, selectionRect, deadline)) {
                     linksInRect.add(link);
                 }
             }
+            this.#checkWorkBudget(deadline);
             return linksInRect;
         }
 
@@ -489,28 +522,7 @@
         }
 
         async #copyTextToClipboard(text) {
-            try {
-                if (navigator.clipboard?.writeText) {
-                    await navigator.clipboard.writeText(text);
-                    return true;
-                }
-            } catch (_) {
-            }
-
-            const textArea = document.createElement('textarea');
-            textArea.value = text;
-            textArea.setAttribute('readonly', '');
-            textArea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
-            document.documentElement.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            try {
-                return document.execCommand('copy');
-            } catch (_) {
-                return false;
-            } finally {
-                textArea.remove();
-            }
+            return lunaToolsWriteTextToClipboard(text);
         }
 
         #sendOpenTabsMessage(urls) {
@@ -669,6 +681,13 @@
             if (this.#hasStaleInteractionState()) this.#resetState();
         }
 
+        #handlePointerCapture(e) {
+            if (!e.isTrusted) return;
+            // 사이트가 포인터 캡처를 시작한 슬라이더·드래그 UI에는 개입하지
+            // 않습니다. 사이트의 캡처/이벤트는 그대로 두고 확장 상태만 해제합니다.
+            if (this.#hasStaleInteractionState()) this.#resetState();
+        }
+
         #handleMouseDown(e) {
             if (!e.isTrusted) return;
 
@@ -765,6 +784,9 @@
                     this.#lastMouseEvent = e;
                     finalLinks = this.#getFinalSelectedLinks();
                 }
+            } catch (_) {
+                // 해제 시점의 레이아웃 오류나 작업량 초과도 부분 실행 없이 취소합니다.
+                finalLinks = null;
             } finally {
                 this.#resetState();
             }
