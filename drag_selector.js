@@ -89,6 +89,7 @@
 
         #listenerOptions = { capture: true, passive: false };
 
+        #boundHandlePointerDown = this.#handlePointerDown.bind(this);
         #boundHandleMouseDown = this.#handleMouseDown.bind(this);
         #boundHandleMouseMove = this.#handleMouseMove.bind(this);
         #boundHandleMouseUp = this.#handleMouseUp.bind(this);
@@ -98,6 +99,7 @@
         #boundHandleInteractionAbort = this.#handleInteractionAbort.bind(this);
         #boundHandleVisibilityChange = this.#handleVisibilityChange.bind(this);
         #boundHandleFocusChange = this.#handleFocusChange.bind(this);
+        #boundHandleEditableFocus = this.#handleEditableFocus.bind(this);
         #boundHandleWheel = this.#handleWheel.bind(this);
 
         constructor() {
@@ -114,18 +116,23 @@
         }
 
         #addEventListeners() {
+            // pointerdown은 mousedown보다 먼저 발생합니다. 이전 탭/창에서
+            // mouseup이 유실되어 남은 드래그 상태를 페이지의 새 포커스
+            // 기본 동작보다 먼저 해제하되, 이벤트 자체는 절대 차단하지 않습니다.
+            document.addEventListener('pointerdown', this.#boundHandlePointerDown, { capture: true, passive: true });
             document.addEventListener('mousedown', this.#boundHandleMouseDown, this.#listenerOptions);
             document.addEventListener('mousemove', this.#boundHandleMouseMove, this.#listenerOptions);
             window.addEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
             window.addEventListener('pointerup', this.#boundHandlePointerUp, { capture: true, passive: true });
             document.addEventListener('keydown', this.#boundHandleKeyDown, this.#listenerOptions);
             document.addEventListener('keyup', this.#boundHandleKeyUp, this.#listenerOptions);
-            window.addEventListener('blur', this.#boundHandleFocusChange, true);
+            window.addEventListener('blur', this.#boundHandleFocusChange);
             // 브라우저 창을 다시 활성화할 때 이전 창에서 끝나지 않은
             // 포인터 시퀀스가 남아 있으면 첫 mousemove가 페이지 입력을
             // 계속 가로챌 수 있습니다. 포커스 복귀도 새 시퀀스의 경계로
             // 취급해 드래그 잠금과 보조키 상태를 정리합니다.
-            window.addEventListener('focus', this.#boundHandleFocusChange, true);
+            window.addEventListener('focus', this.#boundHandleFocusChange);
+            document.addEventListener('focusin', this.#boundHandleEditableFocus);
             window.addEventListener('pagehide', this.#boundHandleInteractionAbort, true);
             window.addEventListener('pageshow', this.#boundHandleInteractionAbort, true);
             window.addEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
@@ -136,14 +143,16 @@
         }
 
         #removeEventListeners() {
+            document.removeEventListener('pointerdown', this.#boundHandlePointerDown, true);
             document.removeEventListener('mousedown', this.#boundHandleMouseDown, this.#listenerOptions);
             document.removeEventListener('mousemove', this.#boundHandleMouseMove, this.#listenerOptions);
             window.removeEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
             window.removeEventListener('pointerup', this.#boundHandlePointerUp, true);
             document.removeEventListener('keydown', this.#boundHandleKeyDown, this.#listenerOptions);
             document.removeEventListener('keyup', this.#boundHandleKeyUp, this.#listenerOptions);
-            window.removeEventListener('blur', this.#boundHandleFocusChange, true);
-            window.removeEventListener('focus', this.#boundHandleFocusChange, true);
+            window.removeEventListener('blur', this.#boundHandleFocusChange);
+            window.removeEventListener('focus', this.#boundHandleFocusChange);
+            document.removeEventListener('focusin', this.#boundHandleEditableFocus);
             window.removeEventListener('pagehide', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('pageshow', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('pointercancel', this.#boundHandleInteractionAbort, true);
@@ -643,13 +652,29 @@
             }
         }
         
+        #hasStaleInteractionState() {
+            return this.#isTrustedSequence || this.#isDragging || Boolean(this.#modifier) ||
+                document.body?.classList.contains(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE);
+        }
+
+        #handlePointerDown(e) {
+            if (!e.isTrusted || e.button !== 0) return;
+            if (e.pointerType && e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
+
+            // 새 primary pointerdown은 이전 포인터 시퀀스와 동시에 존재할 수
+            // 없습니다. 페이지가 compatibility mousedown을 억제하는 경우에도
+            // textarea의 포커스 기본 동작 전에 잠금 상태를 복구합니다.
+            // passive 리스너이므로 사이트의 pointerdown 기본 동작/전파에는
+            // 전혀 개입하지 않습니다.
+            if (this.#hasStaleInteractionState()) this.#resetState();
+        }
+
         #handleMouseDown(e) {
             if (!e.isTrusted) return;
 
             // 새 마우스 버튼 입력은 이전 드래그 시퀀스와 동시에 성립할 수 없다.
             // 페이지 밖에서 mouseup/keyup이 유실된 경우 남아 있던 상태를 먼저 정리한다.
-            if (this.#isTrustedSequence || this.#isDragging || this.#modifier ||
-                document.body?.classList.contains(DragSelector.CONFIG.CSS_CLASSES.BODY_DRAG_STATE)) {
+            if (this.#hasStaleInteractionState()) {
                 this.#resetState();
             }
             if (e.button !== 0 || e.buttons !== 1) return;
@@ -777,13 +802,22 @@
         }
 
         #handleFocusChange(e) {
-            if (!e.isTrusted) return;
-            // capture는 요소의 focus/blur도 받습니다. 링크로의 정상적인
-            // 포커스 이동을 창 전환으로 오인하지 않도록 구별합니다.
-            const isEmbeddedContext = e.target instanceof Element && e.target.matches('iframe, object, embed');
-            if (e.target === window || (e.type === 'focus' && (isEmbeddedContext || this.#isEditableEvent(e)))) {
-                this.#handleInteractionAbort();
-            }
+            if (!e.isTrusted || e.target !== window) return;
+            // Window focus/blur는 캡처 없이 등록해 페이지 내부 요소의 focus/blur
+            // 수명주기에는 아예 참여하지 않습니다. 실제 브라우저 창 전환만
+            // 상호작용 경계로 취급합니다.
+            this.#handleInteractionAbort();
+        }
+
+        #handleEditableFocus(e) {
+            if (!e.isTrusted || !this.#hasStaleInteractionState() || !this.#isEditableEvent(e)) return;
+            // 입력 요소가 키보드/스크립트로 포커스를 얻은 경우에도 오래된
+            // 드래그 상태는 버려야 합니다. 단, focus 이벤트 처리 도중 DOM을
+            // 바꾸지 않고 현재 focus 작업이 완전히 끝난 다음 microtask에서
+            // 정리하여 브라우저의 포커스 수명주기와 재진입하지 않게 합니다.
+            queueMicrotask(() => {
+                if (this.#hasStaleInteractionState()) this.#resetState();
+            });
         }
 
         #handleWheel(e) {

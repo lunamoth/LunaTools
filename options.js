@@ -90,19 +90,29 @@ document.addEventListener('DOMContentLoaded', () => {
             : '다운로드가 완료되기 전에 중단되었습니다.'
     );
 
+    const createDownloadErasedError = () => new Error(
+        '다운로드가 완료되기 전에 다운로드 기록이 삭제되었습니다.'
+    );
+
     const downloadAndWaitForCompletion = (options) => new Promise((resolve, reject) => {
         let downloadId = null;
         let settled = false;
         const terminalStates = new Map();
         const interruptionReasons = new Map();
+        const erasedDownloadIds = new Set();
 
         const cleanup = () => {
             try {
                 chrome.downloads.onChanged.removeListener(handleDownloadChanged);
             } catch (_) {
             }
+            try {
+                chrome.downloads.onErased.removeListener(handleDownloadErased);
+            } catch (_) {
+            }
             terminalStates.clear();
             interruptionReasons.clear();
+            erasedDownloadIds.clear();
         };
 
         const settle = (handler, value) => {
@@ -141,8 +151,19 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        function handleDownloadErased(erasedDownloadId) {
+            if (!Number.isInteger(erasedDownloadId)) return;
+
+            if (downloadId === null) {
+                erasedDownloadIds.add(erasedDownloadId);
+            } else if (erasedDownloadId === downloadId) {
+                settle(reject, createDownloadErasedError());
+            }
+        }
+
         try {
             chrome.downloads.onChanged.addListener(handleDownloadChanged);
+            chrome.downloads.onErased.addListener(handleDownloadErased);
             chrome.downloads.download(options, (createdDownloadId) => {
                 const downloadError = chrome.runtime.lastError;
                 if (!Number.isInteger(createdDownloadId) || downloadError) {
@@ -154,6 +175,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const earlyTerminalState = terminalStates.get(downloadId);
                 if (earlyTerminalState) {
                     handleTerminalState(earlyTerminalState);
+                    return;
+                }
+                if (erasedDownloadIds.has(downloadId)) {
+                    settle(reject, createDownloadErasedError());
                     return;
                 }
 

@@ -33,19 +33,29 @@ document.addEventListener('DOMContentLoaded', function() {
             : '다운로드가 완료되기 전에 중단되었습니다.'
     );
 
+    const createDownloadErasedError = () => new Error(
+        '다운로드가 완료되기 전에 다운로드 기록이 삭제되었습니다.'
+    );
+
     const downloadAndWaitForCompletion = (options) => new Promise((resolve, reject) => {
         let downloadId = null;
         let settled = false;
         const terminalStates = new Map();
         const interruptionReasons = new Map();
+        const erasedDownloadIds = new Set();
 
         const cleanup = () => {
             try {
                 chrome.downloads.onChanged.removeListener(handleDownloadChanged);
             } catch (_) {
             }
+            try {
+                chrome.downloads.onErased.removeListener(handleDownloadErased);
+            } catch (_) {
+            }
             terminalStates.clear();
             interruptionReasons.clear();
+            erasedDownloadIds.clear();
         };
 
         const settle = (handler, value) => {
@@ -84,8 +94,19 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        function handleDownloadErased(erasedDownloadId) {
+            if (!Number.isInteger(erasedDownloadId)) return;
+
+            if (downloadId === null) {
+                erasedDownloadIds.add(erasedDownloadId);
+            } else if (erasedDownloadId === downloadId) {
+                settle(reject, createDownloadErasedError());
+            }
+        }
+
         try {
             chrome.downloads.onChanged.addListener(handleDownloadChanged);
+            chrome.downloads.onErased.addListener(handleDownloadErased);
             chrome.downloads.download(options, (createdDownloadId) => {
                 const downloadError = chrome.runtime.lastError;
                 if (!Number.isInteger(createdDownloadId) || downloadError) {
@@ -97,6 +118,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 const earlyTerminalState = terminalStates.get(downloadId);
                 if (earlyTerminalState) {
                     handleTerminalState(earlyTerminalState);
+                    return;
+                }
+                if (erasedDownloadIds.has(downloadId)) {
+                    settle(reject, createDownloadErasedError());
                     return;
                 }
 
@@ -363,12 +388,50 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
-        const focusUrlInputWhenPanelIsReady = () => {
-            requestAnimationFrame(focusUrlInput);
-            setTimeout(focusUrlInput, 80);
-            setTimeout(focusUrlInput, 250);
-            setTimeout(focusUrlInput, 600);
+        let urlInputAutoFocusGeneration = 0;
+
+        const cancelPendingUrlInputAutoFocus = () => {
+            urlInputAutoFocusGeneration++;
         };
+
+        const hasUserFocusedAnotherControl = () => {
+            const activeElement = document.activeElement;
+            return Boolean(
+                activeElement &&
+                activeElement !== document.body &&
+                activeElement !== document.documentElement &&
+                activeElement !== UI.urlInput
+            );
+        };
+
+        const focusUrlInputWhenPanelIsReady = ({ force = false } = {}) => {
+            const generation = ++urlInputAutoFocusGeneration;
+            const attemptFocus = () => {
+                if (generation !== urlInputAutoFocusGeneration) return;
+                if (!force && hasUserFocusedAnotherControl()) {
+                    cancelPendingUrlInputAutoFocus();
+                    return;
+                }
+                focusUrlInput();
+            };
+
+            requestAnimationFrame(attemptFocus);
+            setTimeout(attemptFocus, 80);
+            setTimeout(attemptFocus, 250);
+            setTimeout(attemptFocus, 600);
+        };
+
+        // 예약된 재포커스보다 사용자의 직접 조작을 항상 우선합니다.
+        pane.addEventListener('pointerdown', (event) => {
+            if (event.target !== UI.urlInput) {
+                cancelPendingUrlInputAutoFocus();
+            }
+        }, true);
+        pane.addEventListener('focusin', (event) => {
+            if (event.target !== UI.urlInput) {
+                cancelPendingUrlInputAutoFocus();
+            }
+        }, true);
 
         const escapeHtml = (value) => String(value ?? '').replace(/[&<>"'`]/g, (ch) => ({
             '&': '&amp;',
@@ -2946,7 +3009,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const multiUrlTabButton = document.querySelector('.tab-button[data-tab="multi-url-opener"]');
             if (multiUrlTabButton) {
-                multiUrlTabButton.addEventListener('click', focusUrlInputWhenPanelIsReady);
+                multiUrlTabButton.addEventListener('click', () => {
+                    focusUrlInputWhenPanelIsReady({ force: true });
+                });
             }
             window.addEventListener('focus', focusUrlInputWhenPanelIsReady);
             window.addEventListener('pageshow', focusUrlInputWhenPanelIsReady);
@@ -4692,8 +4757,17 @@ document.addEventListener('DOMContentLoaded', function() {
         };
         saveAllWindowsBtn.addEventListener('click', saveAllWindowsAction);
 
-        sessionInput.addEventListener('keypress', (e) => {
-          if (e.key === 'Enter') {
+        sessionInput.addEventListener('keydown', (e) => {
+          if (
+            e.key === 'Enter' &&
+            !e.isComposing &&
+            e.keyCode !== 229 &&
+            !e.repeat &&
+            !e.ctrlKey &&
+            !e.altKey &&
+            !e.metaKey &&
+            !e.shiftKey
+          ) {
             e.preventDefault();
             saveAllWindowsBtn.click();
           }
