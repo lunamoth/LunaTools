@@ -1166,8 +1166,11 @@ class TabManager {
         const tabsToRemove = liveDuplicateTabs
           // Never close a Split View participant automatically. If one or more
           // split tabs share the URL, remove only ordinary duplicates and leave
-          // the split relationship intact.
-          .filter(tab => tab.id !== tabToKeep.id && !this._isTabInSplitView(tab))
+          // the split relationship intact. An inactive highlighted tab is also
+          // an explicit Ctrl/Shift multi-selection and must remain user-owned.
+          .filter(tab => tab.id !== tabToKeep.id &&
+            !this._isTabInSplitView(tab) &&
+            !(tab.highlighted && !tab.active))
           .sort((a, b) => this._compareTabAge(b, a));
 
         for (const duplicateTab of tabsToRemove) {
@@ -1211,6 +1214,15 @@ class TabManager {
 
           const duplicateUrl = this._tryParseUrl(this._getTabUrlString(liveDuplicate));
           if (liveDuplicate.windowId !== currentTab.windowId || duplicateUrl?.href !== parsedUrl.href) {
+            this._refreshTabCacheFromLiveTab(liveDuplicate);
+            continue;
+          }
+          const duplicateWasAccessedAfterScan = Number.isFinite(duplicateTab.lastAccessed) &&
+            Number.isFinite(liveDuplicate.lastAccessed) &&
+            liveDuplicate.lastAccessed > duplicateTab.lastAccessed;
+          if ((liveDuplicate.highlighted && !liveDuplicate.active) || duplicateWasAccessedAfterScan) {
+            // 비동기 검사 중 사용자가 탭을 선택/방문했다면 URL이 그대로여도
+            // 폼·스크롤·재생 상태 등 저장되지 않은 탭 내부 상태가 생겼을 수 있습니다.
             this._refreshTabCacheFromLiveTab(liveDuplicate);
             continue;
           }
@@ -1287,11 +1299,16 @@ class TabManager {
 
               const focusedKeeperUrl = this._tryParseUrl(this._getTabUrlString(liveKeeper));
               const duplicateUrlAfterFocus = this._tryParseUrl(this._getTabUrlString(liveDuplicate));
+              const duplicateWasAccessedAfterFocus = Number.isFinite(duplicateTab.lastAccessed) &&
+                Number.isFinite(liveDuplicate.lastAccessed) &&
+                liveDuplicate.lastAccessed > duplicateTab.lastAccessed;
               const focusStateIsSafe =
                 liveKeeper.active === true &&
                 liveKeeper.windowId === currentTab.windowId &&
                 focusedKeeperUrl?.href === parsedUrl.href &&
                 liveDuplicate.active === false &&
+                liveDuplicate.highlighted === false &&
+                !duplicateWasAccessedAfterFocus &&
                 liveDuplicate.windowId === currentTab.windowId &&
                 duplicateUrlAfterFocus?.href === parsedUrl.href;
 
@@ -1326,12 +1343,17 @@ class TabManager {
             const finalKeeperGroupId = Number.isInteger(liveKeeper.groupId)
               ? liveKeeper.groupId
               : -1;
+            const duplicateWasAccessedBeforeRemoval = Number.isFinite(duplicateTab.lastAccessed) &&
+              Number.isFinite(liveDuplicate.lastAccessed) &&
+              liveDuplicate.lastAccessed > duplicateTab.lastAccessed;
             const removalStateIsSafe =
               liveKeeper.windowId === currentTab.windowId &&
               finalKeeperUrl?.href === parsedUrl.href &&
               Boolean(liveKeeper.pinned) === Boolean(tabToKeep.pinned) &&
               Boolean(liveDuplicate.pinned) === Boolean(duplicateTab.pinned) &&
               liveDuplicate.active === false &&
+              liveDuplicate.highlighted === false &&
+              !duplicateWasAccessedBeforeRemoval &&
               liveDuplicate.windowId === currentTab.windowId &&
               finalDuplicateUrl?.href === parsedUrl.href &&
               finalDuplicateGroupId === duplicateGroupId &&

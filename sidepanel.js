@@ -215,8 +215,21 @@ document.addEventListener('DOMContentLoaded', function() {
             } catch (_) {
             }
         };
+        const handleTabsHighlighted = async ({ tabIds, windowId } = {}) => {
+            if (stopped || !Array.isArray(tabIds) || !Number.isInteger(windowId)) return;
+            try {
+                // Ctrl/Shift 다중 선택은 active 탭을 바꾸지 않을 수 있습니다.
+                // 비동기 삭제/복원 중 사용자가 선택한 탭은 이후 다시 선택 해제되더라도
+                // 이번 작업의 소유물로 간주하지 않도록 명시적 상호작용으로 기록합니다.
+                const windowInfo = await chrome.windows.get(windowId, { populate: false });
+                if (!windowInfo?.focused) return;
+                for (const tabId of tabIds) markIfWatched(tabId);
+            } catch (_) {
+            }
+        };
 
         chrome.tabs.onActivated.addListener(handleTabActivated);
+        if (chrome.tabs.onHighlighted) chrome.tabs.onHighlighted.addListener(handleTabsHighlighted);
         chrome.windows.onFocusChanged.addListener(handleWindowFocusChanged);
 
         return {
@@ -231,6 +244,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (stopped) return;
                 stopped = true;
                 chrome.tabs.onActivated.removeListener(handleTabActivated);
+                if (chrome.tabs.onHighlighted) chrome.tabs.onHighlighted.removeListener(handleTabsHighlighted);
                 chrome.windows.onFocusChanged.removeListener(handleWindowFocusChanged);
                 watchedTabIds.clear();
             }

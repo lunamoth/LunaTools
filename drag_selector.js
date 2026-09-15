@@ -234,6 +234,10 @@
 
         #getModifier(e) { return e.altKey ? 'alt' : e.ctrlKey ? 'ctrl' : e.shiftKey ? 'shift' : null; }
 
+        #hasOriginalModifier(e) {
+            return Boolean(this.#modifier) && this.#getModifier(e) === this.#modifier;
+        }
+
         #isEditableEvent(e) {
             if (lunaToolsIsProtectedInputEvent(e, { includeControls: true, includeActiveElement: false })) return true;
             if (document.designMode === 'on') return true;
@@ -733,7 +737,7 @@
             // Chromium/사이트가 compatibility mousemove를 전달하지 못하는
             // 경로에서도 실제 왼쪽 버튼이 풀렸거나 보조키가 사라졌으면
             // 확장 상태만 즉시 해제합니다. 이 리스너는 passive입니다.
-            if ((e.buttons & 1) === 0 || !this.#getModifier(e) || !this.#hasLiveDragContext()) {
+            if ((e.buttons & 1) === 0 || !this.#hasOriginalModifier(e) || !this.#hasLiveDragContext()) {
                 this.#resetState();
             }
         }
@@ -772,7 +776,7 @@
         #handleMouseMove(e) {
             if (!e.isTrusted || !this.#isTrustedSequence) return;
             if (!this.#modifier) return;
-            if (e.buttons !== 1 || !this.#getModifier(e) || !this.#hasLiveDragContext()) {
+            if (e.buttons !== 1 || !this.#hasOriginalModifier(e) || !this.#hasLiveDragContext()) {
                 this.#resetState();
                 return;
             }
@@ -821,7 +825,7 @@
         #handleMouseUp(e) {
             if (!e.isTrusted || !this.#isTrustedSequence) return;
             if (e.button !== 0) return;
-            if (!this.#getModifier(e) || !this.#hasLiveDragContext()) {
+            if (!this.#hasOriginalModifier(e) || !this.#hasLiveDragContext()) {
                 this.#resetState();
                 return;
             }
@@ -860,9 +864,10 @@
 
         #handleKeyUp(e) {
             if (!e.isTrusted) return;
-            if (this.#isDragging && !e.altKey && !e.ctrlKey && !e.shiftKey) {
-                this.#resetState();
-            } else if (!this.#isDragging && this.#modifier && !this.#getModifier(e)) {
+            // 시작 보조키가 풀렸는데 다른 보조키가 눌려 있다는 이유로 이전
+            // 드래그를 계속 유지하면 사이트의 다음 mousemove 기본 동작을
+            // 잘못 막고, 처음 보조키의 동작까지 실행할 수 있습니다.
+            if (this.#modifier && !this.#hasOriginalModifier(e)) {
                 this.#resetState();
             }
         }
@@ -895,7 +900,7 @@
 
         #handleWheel(e) {
             if (!e.isTrusted || !this.#isTrustedSequence) return;
-            if ((e.buttons & 1) === 0 || !this.#getModifier(e) || !this.#hasLiveDragContext()) {
+            if ((e.buttons & 1) === 0 || !this.#hasOriginalModifier(e) || !this.#hasLiveDragContext()) {
                 this.#resetState();
             }
             // passive 리스너이므로 일반 스크롤의 기본 동작을 막지 않습니다.
