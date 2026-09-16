@@ -947,17 +947,27 @@
         }
     };
 
+    let dragSettingsGeneration = 0;
+
     const loadAndSyncDragSelectorState = () => {
+        const generation = ++dragSettingsGeneration;
+
         try {
             chrome.storage.sync.get({ disabledDragSites: [] }, ({ disabledDragSites }) => {
+                if (generation !== dragSettingsGeneration) return;
+
                 if (chrome.runtime.lastError) {
-                    initializeDragSelector();
+                    // 설정 상태를 확인할 수 없을 때 전역 드래그 훅을 임의로 활성화하지 않습니다.
+                    // 웹페이지 기본 인터랙션 보존을 우선하여 fail-safe로 비활성 상태를 유지합니다.
+                    destroyDragSelector();
                     return;
                 }
                 syncDragSelectorState(disabledDragSites);
             });
         } catch {
-            initializeDragSelector();
+            if (generation === dragSettingsGeneration) {
+                destroyDragSelector();
+            }
         }
     };
 
@@ -966,6 +976,10 @@
     try {
         chrome.storage.onChanged.addListener((changes, areaName) => {
             if (areaName !== 'sync' || !changes.disabledDragSites) return;
+
+            // 초기 storage.get보다 최신인 설정 변경이 도착했다면, 늦게 도착한 초기 콜백이
+            // 새 설정을 덮어쓰며 드래그 훅을 재활성화하지 못하도록 세대를 무효화합니다.
+            ++dragSettingsGeneration;
             syncDragSelectorState(changes.disabledDragSites.newValue);
         });
     } catch {}

@@ -342,6 +342,12 @@ async function lunaToolsWriteTextToClipboard(text) {
       const shouldLock = Array.isArray(lockedSites) && lockedSites.some(rule => matchesLockedSiteRule(currentUrl, rule));
       setSiteLockEnabled(shouldLock);
     } catch (e) {
+      // 설정 조회가 실패했을 때 이전 검사에서 등록한 beforeunload 잠금이 남으면
+      // 사용자가 잠금을 해제했는데도 페이지 이동/닫기가 계속 방해될 수 있습니다.
+      // 현재 URL/검사 세대가 여전히 유효할 때만 fail-safe로 해제합니다.
+      if (isCurrentSiteSettingsCheck(checkGeneration, checkedHref)) {
+        setSiteLockEnabled(false);
+      }
     }
 
     return false;
