@@ -3754,6 +3754,7 @@ async function lunaToolsWriteTextToClipboard(text) {
     const PopupUI = {
         create: function() {
             if (document.getElementById(UI_STRINGS.POPUP_LAYER_ID)) return;
+            if (!document.body) return;
             const popup = document.createElement('div');
             popup.id = UI_STRINGS.POPUP_LAYER_ID;
             popup.style.setProperty('display', 'none', 'important');
@@ -3870,6 +3871,18 @@ async function lunaToolsWriteTextToClipboard(text) {
             return { top, left };
         },
         display: function(messagesArray, isErrorState = false, isLoadingState = false) {
+            const popupDisconnected = !AppState.currentPopupElement?.isConnected ||
+                !AppState.popupContentContainer?.isConnected ||
+                !AppState.currentPopupElement?.contains(AppState.popupContentContainer);
+            if (popupDisconnected) {
+                // SPA가 body를 통째로 교체하면 이전 popup 참조는 살아 있어도
+                // 실제 문서에서는 분리됩니다. 오래된 참조를 버리고 현재 body에 재생성합니다.
+                AppState.popupDisplayGeneration += 1;
+                clearTimeout(AppState.closePopupTimeout);
+                AppState.closePopupTimeout = null;
+                AppState.currentPopupElement = null;
+                AppState.popupContentContainer = null;
+            }
             if (!AppState.currentPopupElement) PopupUI.create();
             if (!AppState.currentPopupElement || !AppState.popupContentContainer) return;
             const popupDisplayGeneration = ++AppState.popupDisplayGeneration;
@@ -3907,12 +3920,21 @@ async function lunaToolsWriteTextToClipboard(text) {
             if (isErrorState) AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_ERROR_CLASS);
             else if (isLoadingState) AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_LOADING_CLASS);
             else AppState.currentPopupElement.classList.add(UI_STRINGS.POPUP_DEFAULT_CLASS);
+            // 백그라운드 탭에서는 rAF가 중단될 수 있으므로 display:block 상태를
+            // 만들어 두지 않습니다. visibilitychange에서도 진행 중 변환을 무효화합니다.
+            if (document.visibilityState === 'hidden') {
+                PopupUI.close();
+                return;
+            }
             AppState.currentPopupElement.inert = false;
             AppState.currentPopupElement.style.setProperty('pointer-events', 'auto', 'important');
             AppState.currentPopupElement.style.setProperty('display', 'block', 'important'); AppState.currentPopupElement.style.visibility = 'hidden';
             requestAnimationFrame(() => {
                 if (popupDisplayGeneration !== AppState.popupDisplayGeneration ||
-                    !AppState.currentPopupElement ||
+                    document.visibilityState === 'hidden' ||
+                    !AppState.currentPopupElement?.isConnected ||
+                    !AppState.popupContentContainer?.isConnected ||
+                    !AppState.currentPopupElement.contains(AppState.popupContentContainer) ||
                     AppState.currentPopupElement.style.display === 'none') {
                     return;
                 }
@@ -3998,6 +4020,9 @@ async function lunaToolsWriteTextToClipboard(text) {
                 }
                 if (event.key === 'Escape' || event.code === 'Escape') { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none') PopupUI.close(); }
             });
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') PopupUI.close();
+            }, true);
             window.addEventListener('scroll', () => { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) PopupUI.close(); }, true);
             window.addEventListener('resize', Utils.debounce(() => { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) { const { top, left } = PopupUI.calculatePosition(AppState.currentPopupElement); AppState.currentPopupElement.style.top = `${top}px`; AppState.currentPopupElement.style.left = `${left}px`; } }, 250));
         }

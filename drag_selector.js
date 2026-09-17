@@ -34,6 +34,10 @@
         return Boolean(rule) && (hostname === rule || hostname.endsWith(`.${rule}`));
     };
 
+    // 프레임 시간 예산 초과와 실제 DOM/로직 예외를 구분합니다.
+    // 예산 초과는 현재 하이라이트 계산만 건너뛰고 다음 프레임에서 재시도합니다.
+    const DRAG_WORK_BUDGET_EXCEEDED = Symbol('LunaToolsDragWorkBudgetExceeded');
+
     class DragSelector {
         static CONFIG = {
             MODIFIERS: {
@@ -70,6 +74,7 @@
                 FADE_OUT_DURATION_MS: 250,
                 DELAY_OPEN_INTERVAL_MS: 2000,
                 MAX_SYNC_WORK_MS: 32,
+                OUTSIDE_DOCUMENT_RELEASE_MS: 1500,
                 // OS/Chromium이 포인터 해제·blur 계열 이벤트를 유실하더라도
                 // 확장 프로그램의 드래그 상태가 무기한 유지되지 않게 합니다.
                 MAX_GESTURE_DURATION_MS: 30000
@@ -93,6 +98,8 @@
         #mouseDownEvent = null;
         #pointerReleaseTimer = null;
         #gestureWatchdogTimer = null;
+        #outsideDocumentTimer = null;
+        #pointerOutsideDocument = false;
         #gestureStartedAt = 0;
 
         #listenerOptions = { capture: true, passive: false };
@@ -111,6 +118,8 @@
         #boundHandleEditableFocus = this.#handleEditableFocus.bind(this);
         #boundHandleWheel = this.#handleWheel.bind(this);
         #boundHandlePointerCapture = this.#handlePointerCapture.bind(this);
+        #boundHandleMouseOut = this.#handleMouseOut.bind(this);
+        #boundHandleMouseOver = this.#handleMouseOver.bind(this);
 
         constructor() {
             this.#injectStyles();
@@ -134,6 +143,11 @@
             // 유실되어도 PointerEvent의 buttons 상태로 확장 상태만 복구합니다.
             // passive이므로 사이트의 포인터 동작에는 개입하지 않습니다.
             document.addEventListener('pointermove', this.#boundHandlePointerMove, { capture: true, passive: true });
+            // 포인터가 현재 문서나 iframe 경계를 벗어난 뒤 그 밖에서 버튼이
+            // 해제되면 mouseup/pointerup이 돌아오지 않을 수 있습니다. 경계 이탈은
+            // passive하게 감시해 자동 스크롤을 즉시 멈추고 짧은 유예 뒤 상태를 회수합니다.
+            document.addEventListener('mouseout', this.#boundHandleMouseOut, { capture: true, passive: true });
+            document.addEventListener('mouseover', this.#boundHandleMouseOver, { capture: true, passive: true });
             document.addEventListener('mousedown', this.#boundHandleMouseDown, this.#listenerOptions);
             document.addEventListener('mousemove', this.#boundHandleMouseMove, this.#listenerOptions);
             window.addEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
@@ -168,6 +182,8 @@
         #removeEventListeners() {
             document.removeEventListener('pointerdown', this.#boundHandlePointerDown, true);
             document.removeEventListener('pointermove', this.#boundHandlePointerMove, true);
+            document.removeEventListener('mouseout', this.#boundHandleMouseOut, true);
+            document.removeEventListener('mouseover', this.#boundHandleMouseOver, true);
             document.removeEventListener('mousedown', this.#boundHandleMouseDown, this.#listenerOptions);
             document.removeEventListener('mousemove', this.#boundHandleMouseMove, this.#listenerOptions);
             window.removeEventListener('mouseup', this.#boundHandleMouseUp, this.#listenerOptions);
@@ -287,7 +303,7 @@
         #isRectIntersecting(r1, r2) { return !(r2.right < r1.left || r2.left > r1.right || r2.bottom < r1.top || r2.top > r1.bottom); }
 
         #checkWorkBudget(deadline) {
-            if (performance.now() >= deadline) throw new Error('LunaTools: drag work budget exceeded');
+            if (performance.now() >= deadline) throw DRAG_WORK_BUDGET_EXCEEDED;
         }
 
         #isElementIntersecting(element, selectionRect, deadline) {
@@ -394,15 +410,24 @@
                 // blur를 놓쳐도 실행 중인 기존 프레임에서 포커스 상실과
                 // DOM/UI 교체를 확인해 자동 스크롤이 계속되지 않게 합니다.
                 if (!this.#hasLiveDragContext()) { this.#resetState(); return; }
+                // 문서/iframe 밖에서는 마지막 좌표로 자동 스크롤하거나 하이라이트를
+                // 갱신하지 않습니다. 복귀 시 mouseover/pointermove가 새 좌표로 재개합니다.
+                if (this.#pointerOutsideDocument) return;
                 this.#handleAutoScroll();
-                this.#updateLinkHighlights();
+                try {
+                    this.#updateLinkHighlights();
+                } catch (error) {
+                    if (error !== DRAG_WORK_BUDGET_EXCEEDED) throw error;
+                    // 링크가 많은 페이지에서 32ms 예산을 넘겨도 드래그 전체를
+                    // 종료하지 않고 이번 프레임의 하이라이트 계산만 건너뜁니다.
+                }
                 this.#updateVisuals();
                 if (this.#isDragging) {
                     this.#animationFrameId = requestAnimationFrame(() => this.#updateOnFrame());
                 }
             } catch (_) {
                 // SPA DOM 교체나 페이지별 DOM 객체가 프레임 처리 중
-                // 예외를 내더라도 전역 입력 잠금이 남지 않도록 복구합니다.
+                // 실제 예외를 내면 전역 입력 잠금이 남지 않도록 복구합니다.
                 this.#resetState();
                 return;
             }
@@ -668,6 +693,7 @@
             const frameId = this.#animationFrameId;
             const releaseTimer = this.#pointerReleaseTimer;
             const watchdogTimer = this.#gestureWatchdogTimer;
+            const outsideDocumentTimer = this.#outsideDocumentTimer;
             const highlightedLinks = this.#highlightedLinks;
             const overlays = [this.#selectionBox, this.#actionIndicator];
             // DOM 조작보다 먼저 입력 상태를 해제합니다. 정리 중 예외나
@@ -687,6 +713,8 @@
             this.#mouseDownEvent = null;
             this.#pointerReleaseTimer = null;
             this.#gestureWatchdogTimer = null;
+            this.#outsideDocumentTimer = null;
+            this.#pointerOutsideDocument = false;
             this.#gestureStartedAt = 0;
 
             const safely = action => { try { action(); } catch (_) {} };
@@ -694,6 +722,7 @@
             if (frameId !== null) safely(() => cancelAnimationFrame(frameId));
             if (releaseTimer !== null) safely(() => clearTimeout(releaseTimer));
             if (watchdogTimer !== null) safely(() => clearTimeout(watchdogTimer));
+            if (outsideDocumentTimer !== null) safely(() => clearTimeout(outsideDocumentTimer));
             highlightedLinks.forEach(link => safely(() => {
                 if (link.getAttribute(C.ATTRIBUTES.HIGHLIGHT_OWNER) === 'true') {
                     link.removeAttribute(C.ATTRIBUTES.HIGHLIGHT_OWNER);
@@ -734,12 +763,72 @@
             if (!e.isTrusted || !this.#hasStaleInteractionState()) return;
             if (e.pointerType && e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
 
+            let resumedFromOutside = false;
+            if (this.#pointerOutsideDocument) {
+                resumedFromOutside = true;
+                this.#pointerOutsideDocument = false;
+                if (this.#outsideDocumentTimer !== null) {
+                    clearTimeout(this.#outsideDocumentTimer);
+                    this.#outsideDocumentTimer = null;
+                }
+                this.#lastObservedScrollY = window.scrollY;
+            }
+
             // Chromium/사이트가 compatibility mousemove를 전달하지 못하는
             // 경로에서도 실제 왼쪽 버튼이 풀렸거나 보조키가 사라졌으면
             // 확장 상태만 즉시 해제합니다. 이 리스너는 passive입니다.
             if ((e.buttons & 1) === 0 || !this.#hasOriginalModifier(e) || !this.#hasLiveDragContext()) {
                 this.#resetState();
+                return;
             }
+            if (resumedFromOutside && this.#isDragging && this.#animationFrameId === null) {
+                this.#lastMouseEvent = e;
+                this.#updateOnFrame();
+            }
+        }
+
+        #handleMouseOut(e) {
+            if (!e.isTrusted || !this.#hasStaleInteractionState()) return;
+
+            const relatedTarget = e.relatedTarget;
+            const crossedDocumentBoundary = relatedTarget === null || relatedTarget instanceof HTMLIFrameElement;
+            if (!crossedDocumentBoundary) return;
+
+            this.#pointerOutsideDocument = true;
+            if (this.#animationFrameId !== null) {
+                cancelAnimationFrame(this.#animationFrameId);
+                this.#animationFrameId = null;
+            }
+            this.#lastObservedScrollY = window.scrollY;
+
+            if (this.#outsideDocumentTimer !== null) clearTimeout(this.#outsideDocumentTimer);
+            const startEvent = this.#mouseDownEvent;
+            this.#outsideDocumentTimer = setTimeout(() => {
+                this.#outsideDocumentTimer = null;
+                if (this.#pointerOutsideDocument && this.#mouseDownEvent === startEvent && this.#hasStaleInteractionState()) {
+                    this.#resetState();
+                }
+            }, DragSelector.CONFIG.TIMING.OUTSIDE_DOCUMENT_RELEASE_MS);
+        }
+
+        #handleMouseOver(e) {
+            if (!e.isTrusted || !this.#pointerOutsideDocument) return;
+
+            this.#pointerOutsideDocument = false;
+            if (this.#outsideDocumentTimer !== null) {
+                clearTimeout(this.#outsideDocumentTimer);
+                this.#outsideDocumentTimer = null;
+            }
+
+            if (!this.#hasStaleInteractionState()) return;
+            if ((e.buttons & 1) === 0 || !this.#hasOriginalModifier(e) || !this.#hasLiveDragContext()) {
+                this.#resetState();
+                return;
+            }
+
+            this.#lastMouseEvent = e;
+            this.#lastObservedScrollY = window.scrollY;
+            if (this.#isDragging && this.#animationFrameId === null) this.#updateOnFrame();
         }
 
         #handleMouseDown(e) {
@@ -758,7 +847,12 @@
             // Shadow DOM 밖에서는 event.target이 입력란 대신 호스트로 바뀝니다.
             // 공개된 이벤트 경로의 실제 시작 요소를 사용해 입력 영역을 보호합니다.
             if (this.#isEditableEvent(e)) return;
-            
+
+            this.#pointerOutsideDocument = false;
+            if (this.#outsideDocumentTimer !== null) {
+                clearTimeout(this.#outsideDocumentTimer);
+                this.#outsideDocumentTimer = null;
+            }
             this.#abortDelayedOpen();
             this.#modifier = modifier;
             this.#isTrustedSequence = true;
@@ -854,9 +948,10 @@
         #handleKeyDown(e) {
             if (!e.isTrusted || e.key !== 'Escape') return;
 
-            if (this.#isDragging || this.#activeDelayedOpenController) {
-                e.preventDefault();
-            }
+            // 실제 링크 선택 드래그를 취소하는 Esc만 확장이 소비합니다.
+            // 지연 열기만 진행 중인 경우에는 작업은 중단하되 페이지의 Esc
+            // 기본 동작(모달/검색 오버레이 닫기 등)은 그대로 허용합니다.
+            if (this.#isDragging) e.preventDefault();
 
             if (this.#isTrustedSequence || this.#isDragging || this.#modifier) this.#resetState();
             this.#abortDelayedOpen();
