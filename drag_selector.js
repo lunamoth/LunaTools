@@ -74,6 +74,8 @@
                 FADE_OUT_DURATION_MS: 250,
                 DELAY_OPEN_INTERVAL_MS: 2000,
                 MAX_SYNC_WORK_MS: 32,
+                MAX_SCAN_SLICE_MS: 8,
+                MAX_SCAN_SLICE_ELEMENTS: 250,
                 OUTSIDE_DOCUMENT_RELEASE_MS: 1500,
                 // OS/Chromium이 포인터 해제·blur 계열 이벤트를 유실하더라도
                 // 확장 프로그램의 드래그 상태가 무기한 유지되지 않게 합니다.
@@ -101,6 +103,7 @@
         #outsideDocumentTimer = null;
         #pointerOutsideDocument = false;
         #gestureStartedAt = 0;
+        #activeLinkScanTask = null;
 
         #listenerOptions = { capture: true, passive: false };
 
@@ -343,21 +346,72 @@
             }
         }
 
-        #findAllLinks(rootNode) {
-            const links = [];
+        #isLinkScanTaskUsable(task) {
+            return Boolean(task) && !task.cancelled && !task.error &&
+                task.body === document.body && Boolean(task.body?.isConnected) &&
+                task.href === window.location.href && document.visibilityState !== 'hidden' &&
+                document.hasFocus();
+        }
+
+        #yieldLinkScanTask(task) {
+            return new Promise(resolve => {
+                setTimeout(() => resolve(this.#isLinkScanTaskUsable(task)), 0);
+            });
+        }
+
+        #isElementVisibleWithoutBudget(element) {
+            const clientRects = element.getClientRects();
+            if (!clientRects || clientRects.length === 0) return false;
+            const style = window.getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+            for (let i = 0; i < clientRects.length; i++) {
+                if (clientRects[i].width > 0 && clientRects[i].height > 0) return true;
+            }
+            return false;
+        }
+
+        #isElementIntersectingWithoutBudget(element, selectionRect) {
+            const clientRects = element.getClientRects();
+            for (let i = 0; i < clientRects.length; i++) {
+                if (this.#isRectIntersecting(clientRects[i], selectionRect)) return true;
+            }
+            return false;
+        }
+
+        #startLinkScan(rootNode) {
+            const task = {
+                cancelled: false,
+                error: null,
+                body: document.body,
+                href: window.location.href,
+                links: [],
+                promise: null
+            };
+            task.promise = this.#findAllLinksIncrementally(rootNode, task)
+                .catch(error => {
+                    task.error = error;
+                    if (this.#activeLinkScanTask === task) this.#resetState();
+                    return task.links;
+                });
+            return task;
+        }
+
+        async #findAllLinksIncrementally(rootNode, task) {
             const queue = [rootNode];
-            const deadline = performance.now() + DragSelector.CONFIG.TIMING.MAX_SYNC_WORK_MS;
             let visitedElements = 0;
             let candidateLinks = 0;
+            let sliceStartedAt = performance.now();
+            let sliceElements = 0;
+            const { MAX_SCAN_SLICE_MS, MAX_SCAN_SLICE_ELEMENTS } = DragSelector.CONFIG.TIMING;
+
             for (let index = 0; index < queue.length; index += 1) {
+                if (!this.#isLinkScanTaskUsable(task)) return task.links;
                 const node = queue[index];
                 if (!node) continue;
-                // 거대한 정적 NodeList를 먼저 만들지 않고 순차 방문합니다.
-                // 예산을 넘으면 전체 동작을 취소하므로 일부 링크만 실행되지 않습니다.
                 const walker = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
                 let element = node.nodeType === Node.ELEMENT_NODE ? node : walker.nextNode();
                 while (element) {
-                    this.#checkWorkBudget(deadline);
+                    if (!this.#isLinkScanTaskUsable(task)) return task.links;
                     if (++visitedElements > DragSelector.CONFIG.LIMITS.MAX_SCAN_ELEMENTS) {
                         throw new Error('LunaTools: drag element limit exceeded');
                     }
@@ -368,15 +422,53 @@
                         }
                         const url = this.#getLinkUrl(element);
                         if (url && !url.href.startsWith(window.location.href + '#') &&
-                            ['http:', 'https:'].includes(url.protocol) && this.#isElementVisible(element, deadline)) {
-                            links.push(element);
+                            ['http:', 'https:'].includes(url.protocol) && this.#isElementVisibleWithoutBudget(element)) {
+                            task.links.push(element);
                         }
                     }
                     element = walker.nextNode();
+                    sliceElements += 1;
+                    if (sliceElements >= MAX_SCAN_SLICE_ELEMENTS || performance.now() - sliceStartedAt >= MAX_SCAN_SLICE_MS) {
+                        if (!(await this.#yieldLinkScanTask(task))) return task.links;
+                        sliceElements = 0;
+                        sliceStartedAt = performance.now();
+                    }
                 }
             }
-            this.#checkWorkBudget(deadline);
-            return links;
+            return task.links;
+        }
+
+        async #getLinksInRectIncrementally(links, selectionRect, task) {
+            const selected = new Set();
+            let sliceStartedAt = performance.now();
+            let sliceElements = 0;
+            const { MAX_SCAN_SLICE_MS, MAX_SCAN_SLICE_ELEMENTS } = DragSelector.CONFIG.TIMING;
+            for (const link of links) {
+                if (!this.#isLinkScanTaskUsable(task)) return null;
+                if (link?.isConnected && this.#isElementIntersectingWithoutBudget(link, selectionRect)) {
+                    selected.add(link);
+                }
+                sliceElements += 1;
+                if (sliceElements >= MAX_SCAN_SLICE_ELEMENTS || performance.now() - sliceStartedAt >= MAX_SCAN_SLICE_MS) {
+                    if (!(await this.#yieldLinkScanTask(task))) return null;
+                    sliceElements = 0;
+                    sliceStartedAt = performance.now();
+                }
+            }
+            return selected;
+        }
+
+        async #finalizeActionAfterLinkScan(task, selectionRect, modifier) {
+            if (!task || !modifier) return;
+            try {
+                await task.promise;
+                if (!this.#isLinkScanTaskUsable(task)) return;
+                const finalLinks = await this.#getLinksInRectIncrementally(task.links, selectionRect, task);
+                if (finalLinks) await this.#performAction(finalLinks, modifier);
+            } catch (_) {
+            } finally {
+                task.cancelled = true;
+            }
         }
 
         #createVisualElements() {
@@ -689,11 +781,12 @@
             }
         }
 
-        #resetState() {
+        #resetState(preservedLinkScanTask = null) {
             const frameId = this.#animationFrameId;
             const releaseTimer = this.#pointerReleaseTimer;
             const watchdogTimer = this.#gestureWatchdogTimer;
             const outsideDocumentTimer = this.#outsideDocumentTimer;
+            const activeLinkScanTask = this.#activeLinkScanTask;
             const highlightedLinks = this.#highlightedLinks;
             const overlays = [this.#selectionBox, this.#actionIndicator];
             // DOM 조작보다 먼저 입력 상태를 해제합니다. 정리 중 예외나
@@ -716,6 +809,10 @@
             this.#outsideDocumentTimer = null;
             this.#pointerOutsideDocument = false;
             this.#gestureStartedAt = 0;
+            this.#activeLinkScanTask = null;
+            if (activeLinkScanTask && activeLinkScanTask !== preservedLinkScanTask) {
+                activeLinkScanTask.cancelled = true;
+            }
 
             const safely = action => { try { action(); } catch (_) {} };
             const C = DragSelector.CONFIG;
@@ -884,11 +981,13 @@
             const dragDistance = Math.hypot(e.clientX - this.#startPos.x, e.clientY - this.#startPos.y);
             if (dragDistance > DragSelector.CONFIG.BEHAVIOR.MIN_DRAG_DISTANCE) {
                 try {
-                    // 제스처마다 현재 DOM을 한 번만 읽어 SPA에서 교체된 링크까지 반영합니다.
-                    this.#allLinksOnPage = this.#findAllLinks(document.body);
-                    if (!this.#hasLiveDragContext()) { this.#resetState(); return; }
+                    // 링크가 많은 페이지에서도 한 이벤트 턴을 32ms 이상 점유하거나
+                    // 작업 예산 초과로 드래그 전체를 취소하지 않도록 링크 수집을 작은
+                    // task 조각으로 나눕니다. 수집된 링크는 다음 프레임부터 즉시 사용합니다.
                     this.#createVisualElements();
                     this.#isDragging = true;
+                    this.#activeLinkScanTask = this.#startLinkScan(document.body);
+                    this.#allLinksOnPage = this.#activeLinkScanTask.links;
                     if (!this.#isDragging) return;
                     // 페이지 body 전체에 user-select/cursor 잠금을 남기지 않습니다.
                     // 해당 mousemove의 기본 동작만 막아 확장 제스처 중 텍스트 선택을 억제합니다.
@@ -927,21 +1026,24 @@
             // mousedown을 받은 사이트가 자체 드래그/스크롤 잠금을 해제할 수
             // 있도록 짝이 되는 mouseup의 기본 동작과 전파를 막지 않습니다.
             const modifier = this.#modifier;
-            let finalLinks = null;
+            const linkScanTask = this.#activeLinkScanTask;
+            let finalSelectionRect = null;
             try {
                 if (this.#isDragging) {
                     // mousemove 이후 다음 프레임 전에 놓아도 실제 해제 좌표를 사용합니다.
                     this.#lastMouseEvent = e;
-                    finalLinks = this.#getFinalSelectedLinks();
+                    finalSelectionRect = this.#getSelectionRect();
                 }
             } catch (_) {
-                // 해제 시점의 레이아웃 오류나 작업량 초과도 부분 실행 없이 취소합니다.
-                finalLinks = null;
+                finalSelectionRect = null;
             } finally {
-                this.#resetState();
+                // 정상 mouseup에서는 진행 중인 링크 스캔을 보존해 남은 조각을 완료한 뒤
+                // 최종 선택을 비동기로 판정합니다. blur/visibility/새 입력으로 정리되는
+                // 경로는 기존처럼 task를 취소합니다.
+                this.#resetState(finalSelectionRect ? linkScanTask : null);
             }
-            if (finalLinks) {
-                void this.#performAction(finalLinks, modifier);
+            if (finalSelectionRect && linkScanTask) {
+                void this.#finalizeActionAfterLinkScan(linkScanTask, finalSelectionRect, modifier);
             }
         }
 
