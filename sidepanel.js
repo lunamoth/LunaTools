@@ -3885,6 +3885,33 @@ document.addEventListener('DOMContentLoaded', function() {
         return false;
       };
       
+      const protectTabsFromDuplicateCleanupDuringRestore = async (tabIds) => {
+        const uniqueTabIds = [...new Set(tabIds.filter(tabId => Number.isInteger(tabId) && tabId >= 0))];
+        if (uniqueTabIds.length === 0) return;
+
+        const response = await chrome.runtime.sendMessage({
+          action: 'protectSessionRestoreTabs',
+          tabIds: uniqueTabIds
+        });
+        if (!response?.ok) {
+          throw new Error(response?.error || '세션 복원 탭의 중복 제거 보호를 설정하지 못했습니다.');
+        }
+      };
+
+      const releaseDuplicateCleanupProtectionForRestore = async (tabIds) => {
+        const uniqueTabIds = [...new Set(tabIds.filter(tabId => Number.isInteger(tabId) && tabId >= 0))];
+        if (uniqueTabIds.length === 0) return;
+        try {
+          await chrome.runtime.sendMessage({
+            action: 'unprotectSessionRestoreTabs',
+            tabIds: uniqueTabIds
+          });
+        } catch (_) {
+          // The background protection is also bounded by a TTL and removed when
+          // a tab closes, so rollback must never fail only because cleanup did.
+        }
+      };
+
       const restoreTabGroupsForWindow = async (createdTabs, windowId, onGroupCreated = null) => {
         const groupsToRestore = new Map();
         createdTabs.forEach(({ savedTab, createdTabId }) => {
@@ -4043,6 +4070,16 @@ document.addEventListener('DOMContentLoaded', function() {
               if (restoreTab) restoreTab.expectedGroupId = groupId;
             });
 
+            // The extension-wide duplicate-tab cleaner normally removes exact
+            // duplicate URLs. A saved session, however, must reproduce every
+            // saved tab even when two tabs intentionally share the same URL.
+            // Register the neutral placeholders before assigning real URLs so
+            // their initial restore navigation cannot be mistaken for a new
+            // duplicate and closed by background.js.
+            await protectTabsFromDuplicateCleanupDuringRestore(
+              windowRestoreTabs.map(restoreTab => restoreTab.tabId)
+            );
+
             // With the structural layout in place, assign the real URLs. Verify
             // every placeholder immediately beforehand so a tab that the user
             // selected, moved, pinned, regrouped, or navigated during restoration
@@ -4081,6 +4118,14 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
         } catch (error) {
+          // A failed restore owns no future navigation. Release all registrations
+          // before rollback so user-preserved tabs immediately return to normal
+          // duplicate handling. Successful restores auto-release in background.js
+          // after each tab's first real navigation completes.
+          await releaseDuplicateCleanupProtectionForRestore(
+            createdRestoreTabs.map(restoreTab => restoreTab.tabId)
+          );
+
           let rollbackFailureCount = 0;
           let preservedChangedTabCount = 0;
           let focusedWindowId = null;

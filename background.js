@@ -36,6 +36,11 @@ const URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
 const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
+const PROTECT_SESSION_RESTORE_TABS_ACTION = 'protectSessionRestoreTabs';
+const UNPROTECT_SESSION_RESTORE_TABS_ACTION = 'unprotectSessionRestoreTabs';
+const SESSION_RESTORE_PROTECTION_STORAGE_KEY = 'lunaToolsSessionRestoreProtectionV1';
+const SESSION_RESTORE_PROTECTION_TTL_MS = 30 * 60 * 1000;
+const MAX_SESSION_RESTORE_PROTECTED_TABS = 300;
 
 let exchangeRateRefreshPromise = null;
 let tabCountBadgeUpdatePromise = null;
@@ -164,6 +169,215 @@ function normalizeOpenTabsRequestUrls(rawUrls) {
 
 function isPositiveFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function normalizeSessionRestoreProtectionTabIds(rawTabIds) {
+  if (!Array.isArray(rawTabIds) || rawTabIds.length === 0 || rawTabIds.length > MAX_SESSION_RESTORE_PROTECTED_TABS) {
+    return null;
+  }
+
+  const normalizedTabIds = [];
+  const seenTabIds = new Set();
+  for (const rawTabId of rawTabIds) {
+    if (!Number.isInteger(rawTabId) || rawTabId < 0 || seenTabIds.has(rawTabId)) continue;
+    seenTabIds.add(rawTabId);
+    normalizedTabIds.push(rawTabId);
+  }
+
+  return normalizedTabIds.length > 0 ? normalizedTabIds : null;
+}
+
+const sessionRestoreProtection = new Map();
+let sessionRestoreProtectionLoaded = false;
+let sessionRestoreProtectionLoadPromise = null;
+let sessionRestoreProtectionMutationQueue = Promise.resolve();
+
+function queueSessionRestoreProtectionMutation(operation) {
+  const nextOperation = sessionRestoreProtectionMutationQueue.then(operation, operation);
+  sessionRestoreProtectionMutationQueue = nextOperation.catch(() => {});
+  return nextOperation;
+}
+
+function getSessionRestoreProtectionStorageArea() {
+  return chrome.storage?.session && typeof chrome.storage.session.get === 'function' &&
+    typeof chrome.storage.session.set === 'function'
+    ? chrome.storage.session
+    : null;
+}
+
+function pruneExpiredSessionRestoreProtection(now = Date.now()) {
+  let changed = false;
+  for (const [tabId, entry] of sessionRestoreProtection.entries()) {
+    if (!entry || !Number.isFinite(entry.expiresAt) || entry.expiresAt <= now) {
+      sessionRestoreProtection.delete(tabId);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+async function ensureSessionRestoreProtectionLoaded() {
+  if (sessionRestoreProtectionLoaded) return;
+  if (!sessionRestoreProtectionLoadPromise) {
+    sessionRestoreProtectionLoadPromise = (async () => {
+      const storageArea = getSessionRestoreProtectionStorageArea();
+      sessionRestoreProtection.clear();
+      if (storageArea) {
+        try {
+          const stored = await storageArea.get(SESSION_RESTORE_PROTECTION_STORAGE_KEY);
+          const rawEntries = stored?.[SESSION_RESTORE_PROTECTION_STORAGE_KEY];
+          if (rawEntries && typeof rawEntries === 'object' && !Array.isArray(rawEntries)) {
+            const now = Date.now();
+            for (const [rawTabId, rawEntry] of Object.entries(rawEntries)) {
+              const tabId = Number(rawTabId);
+              if (!Number.isInteger(tabId) || tabId < 0 ||
+                  !rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry) ||
+                  !Number.isFinite(rawEntry.expiresAt) || rawEntry.expiresAt <= now) {
+                continue;
+              }
+              sessionRestoreProtection.set(tabId, {
+                navigationStarted: rawEntry.navigationStarted === true,
+                expiresAt: rawEntry.expiresAt
+              });
+            }
+          }
+        } catch (error) {
+          console.warn('LunaTools: 세션 복원 탭 보호 상태를 읽지 못했습니다.', error);
+        }
+      }
+      sessionRestoreProtectionLoaded = true;
+    })().finally(() => {
+      sessionRestoreProtectionLoadPromise = null;
+    });
+  }
+  await sessionRestoreProtectionLoadPromise;
+}
+
+async function persistSessionRestoreProtection() {
+  const storageArea = getSessionRestoreProtectionStorageArea();
+  if (!storageArea) return;
+
+  const serialized = {};
+  for (const [tabId, entry] of sessionRestoreProtection.entries()) {
+    serialized[String(tabId)] = {
+      navigationStarted: entry.navigationStarted === true,
+      expiresAt: entry.expiresAt
+    };
+  }
+
+  try {
+    if (Object.keys(serialized).length === 0 && typeof storageArea.remove === 'function') {
+      await storageArea.remove(SESSION_RESTORE_PROTECTION_STORAGE_KEY);
+    } else {
+      await storageArea.set({ [SESSION_RESTORE_PROTECTION_STORAGE_KEY]: serialized });
+    }
+  } catch (error) {
+    // In-memory protection still prevents an immediate duplicate removal. The
+    // storage copy only exists so an MV3 service-worker restart cannot lose it.
+    console.warn('LunaTools: 세션 복원 탭 보호 상태를 저장하지 못했습니다.', error);
+  }
+}
+
+async function protectSessionRestoreTabs(rawTabIds) {
+  const tabIds = normalizeSessionRestoreProtectionTabIds(rawTabIds);
+  if (!tabIds) throw new Error('Invalid session-restore tab protection request.');
+
+  return queueSessionRestoreProtectionMutation(async () => {
+    await ensureSessionRestoreProtectionLoaded();
+    pruneExpiredSessionRestoreProtection();
+    const expiresAt = Date.now() + SESSION_RESTORE_PROTECTION_TTL_MS;
+    for (const tabId of tabIds) {
+      sessionRestoreProtection.set(tabId, { navigationStarted: false, expiresAt });
+    }
+    await persistSessionRestoreProtection();
+    return tabIds.length;
+  });
+}
+
+async function unprotectSessionRestoreTabs(rawTabIds) {
+  const tabIds = normalizeSessionRestoreProtectionTabIds(rawTabIds);
+  if (!tabIds) return 0;
+
+  return queueSessionRestoreProtectionMutation(async () => {
+    await ensureSessionRestoreProtectionLoaded();
+    let removed = 0;
+    for (const tabId of tabIds) {
+      if (sessionRestoreProtection.delete(tabId)) removed += 1;
+    }
+    if (removed > 0) await persistSessionRestoreProtection();
+    return removed;
+  });
+}
+
+async function transferSessionRestoreTabProtection(removedTabId, addedTabId) {
+  if (!Number.isInteger(removedTabId) || !Number.isInteger(addedTabId)) return false;
+
+  return queueSessionRestoreProtectionMutation(async () => {
+    await ensureSessionRestoreProtectionLoaded();
+    const entry = sessionRestoreProtection.get(removedTabId);
+    if (!entry) return false;
+    sessionRestoreProtection.delete(removedTabId);
+    sessionRestoreProtection.set(addedTabId, entry);
+    await persistSessionRestoreProtection();
+    return true;
+  });
+}
+
+async function removeSessionRestoreTabProtection(tabId) {
+  if (!Number.isInteger(tabId)) return;
+  await queueSessionRestoreProtectionMutation(async () => {
+    await ensureSessionRestoreProtectionLoaded();
+    if (!sessionRestoreProtection.delete(tabId)) return;
+    await persistSessionRestoreProtection();
+  });
+}
+
+async function shouldSuppressDuplicateCleanupForSessionRestore(tabId, changeInfo, tab) {
+  if (!Number.isInteger(tabId)) return false;
+
+  return queueSessionRestoreProtectionMutation(async () => {
+    await ensureSessionRestoreProtectionLoaded();
+    const pruned = pruneExpiredSessionRestoreProtection();
+    const entry = sessionRestoreProtection.get(tabId);
+    if (!entry) {
+      if (pruned) await persistSessionRestoreProtection();
+      return false;
+    }
+
+    let stateChanged = pruned;
+    if (typeof changeInfo?.url === 'string' && changeInfo.url.length > 0 && !entry.navigationStarted) {
+      entry.navigationStarted = true;
+      stateChanged = true;
+    }
+
+    // A service worker can occasionally miss the URL-change event that started
+    // the restore navigation. A completed http(s) page is enough to identify
+    // that the placeholder navigation has moved to its real destination.
+    const liveUrl = typeof tab?.pendingUrl === 'string' && tab.pendingUrl
+      ? tab.pendingUrl
+      : (typeof tab?.url === 'string' ? tab.url : '');
+    const hasReachedWebNavigation = /^https?:/i.test(liveUrl);
+    if (!entry.navigationStarted && changeInfo?.status === 'complete' && hasReachedWebNavigation) {
+      entry.navigationStarted = true;
+      stateChanged = true;
+    }
+
+    if (!entry.navigationStarted) {
+      if (stateChanged) await persistSessionRestoreProtection();
+      return false;
+    }
+
+    // Keep the duplicate cleaner disabled through redirects and the final
+    // completion event, then automatically release the tab for normal future
+    // duplicate handling.
+    if (changeInfo?.status === 'complete') {
+      sessionRestoreProtection.delete(tabId);
+      stateChanged = true;
+    }
+
+    if (stateChanged) await persistSessionRestoreProtection();
+    return true;
+  });
 }
 
 function normalizeFrankfurterV2RatesResponse(candidate) {
@@ -1588,7 +1802,7 @@ class TabManager {
     }
   }
 
-  async handleTabUpdate(tab, { currentBecameDuplicate = false } = {}) {
+  async handleTabUpdate(tab, { currentBecameDuplicate = false, suppressDuplicateHandling = false } = {}) {
     if (!this._isValidTabForProcessing(tab)) return;
 
     const newUrlString = this._getTabUrlString(tab);
@@ -1614,6 +1828,12 @@ class TabManager {
       if (oldCachedInfo) this._removeUrlFromCache(tab.id, oldCachedInfo.url);
       this._addUrlToCache(tab.id, newParsedUrl, tab.windowId);
     }
+
+    // Session restoration intentionally recreates every saved tab, including
+    // exact duplicate URLs. Keep the URL cache current, but do not let the
+    // generic duplicate cleaner delete a tab while its restore navigation is
+    // still committing/redirecting.
+    if (suppressDuplicateHandling) return;
 
     // A service worker can wake on the URL-change event and initialize its
     // cache after Chrome has already exposed the destination URL. In that
@@ -1696,6 +1916,20 @@ chrome.commands.onCommand.addListener((command, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === PROTECT_SESSION_RESTORE_TABS_ACTION) {
+    protectSessionRestoreTabs(message.tabIds)
+      .then((protectedCount) => sendResponse({ ok: true, protectedCount }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.action === UNPROTECT_SESSION_RESTORE_TABS_ACTION) {
+    unprotectSessionRestoreTabs(message.tabIds)
+      .then((removedCount) => sendResponse({ ok: true, removedCount }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
   if (message?.action === 'openTabsInNewTab' && Array.isArray(message.urls)) {
     let request;
     try {
@@ -1833,8 +2067,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!tabManager._isValidTabForProcessing(tabToProcess)) return;
 
   if (changeInfo.url || changeInfo.status === 'complete') {
+    const suppressDuplicateHandling = await shouldSuppressDuplicateCleanupForSessionRestore(
+      tabId,
+      changeInfo,
+      tabToProcess
+    );
     await tabManager.handleTabUpdate(tabToProcess, {
-      currentBecameDuplicate: typeof changeInfo.url === 'string' && changeInfo.url.length > 0
+      currentBecameDuplicate: typeof changeInfo.url === 'string' && changeInfo.url.length > 0,
+      suppressDuplicateHandling
     });
   }
 });
@@ -1842,6 +2082,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 if (chrome.tabs.onReplaced) {
   chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
     tabManager._transferTabCreationOrder(removedTabId, addedTabId);
+    const suppressDuplicateHandling = await transferSessionRestoreTabProtection(removedTabId, addedTabId);
     await ensureTabCacheInitialized();
 
     const cachedInfo = tabManager.urlCache.get(removedTabId);
@@ -1851,7 +2092,7 @@ if (chrome.tabs.onReplaced) {
 
     try {
       const addedTab = await chrome.tabs.get(addedTabId);
-      await tabManager.handleTabUpdate(addedTab);
+      await tabManager.handleTabUpdate(addedTab, { suppressDuplicateHandling });
     } catch (error) {
       if (!tabManager._isTabNotFoundError(error)) {
         console.warn("LunaTools: 교체된 탭 캐시 갱신 실패", error);
@@ -1863,6 +2104,7 @@ if (chrome.tabs.onReplaced) {
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   void updateTabCountBadge();
   tabManager.handleTabRemoved(tabId, removeInfo);
+  void removeSessionRestoreTabProtection(tabId);
 });
 
 chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
