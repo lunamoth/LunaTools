@@ -570,7 +570,7 @@
         #needsFullDocumentScan = false;
         #toggleInProgress = false;
         #domObserver = null;
-        #observedMutationRoots = new WeakSet();
+        #observedMutationRoots = new Set();
         #boundHandleMediaReady = this.#handleMediaReady.bind(this);
 
         #handleMediaReady(event) {
@@ -613,17 +613,43 @@
             return target instanceof Element && target.matches('video, audio, source');
         }
 
-        #observeMutationRoot(rootNode) {
-            if (!this.#domObserver || !rootNode || this.#observedMutationRoots.has(rootNode)) return;
-
+        #observeMutationRootWithObserver(rootNode) {
             this.#domObserver.observe(rootNode, {
                 childList: true,
                 subtree: true,
                 attributes: true,
                 attributeFilter: ['src', 'crossorigin']
             });
+        }
+
+        #observeMutationRoot(rootNode) {
+            if (!this.#domObserver || !rootNode || this.#observedMutationRoots.has(rootNode)) return;
+
+            this.#observeMutationRootWithObserver(rootNode);
             rootNode.addEventListener('loadedmetadata', this.#boundHandleMediaReady, true);
             this.#observedMutationRoots.add(rootNode);
+        }
+
+        #pruneDetachedMutationRoots() {
+            if (!this.#domObserver || this.#observedMutationRoots.size === 0) return;
+
+            let removedObservedRoot = false;
+            for (const rootNode of Array.from(this.#observedMutationRoots)) {
+                if (!(rootNode instanceof ShadowRoot) || rootNode.host?.isConnected) continue;
+                rootNode.removeEventListener('loadedmetadata', this.#boundHandleMediaReady, true);
+                this.#observedMutationRoots.delete(rootNode);
+                removedObservedRoot = true;
+            }
+            if (!removedObservedRoot) return;
+
+            // MutationObserver has no per-target unobserve(). Disconnect once
+            // only when an observed ShadowRoot actually became detached, then
+            // immediately re-register the still-live roots. This prevents an
+            // unbounded list of detached SPA ShadowRoots from being retained.
+            this.#domObserver.disconnect();
+            for (const rootNode of this.#observedMutationRoots) {
+                this.#observeMutationRootWithObserver(rootNode);
+            }
         }
 
         async #observeOpenShadowRoots(rootNodes) {
@@ -777,7 +803,10 @@
                 // OFF 상태에서는 새 DOM의 ShadowRoot/하위 요소를 매번 전수
                 // 순회하지 않습니다. 기존에 처리했던 미디어 재삽입만 추적하고,
                 // 다음 ON 전환 때 문서의 열린 ShadowRoot를 한 번 재동기화합니다.
-                if (removedNodes.length > 0) this.#audioProcessor.cleanupRemovedNodes(removedNodes);
+                if (removedNodes.length > 0) {
+                    this.#audioProcessor.cleanupRemovedNodes(removedNodes);
+                    this.#pruneDetachedMutationRoots();
+                }
                 if (addedNodes.length > 0) {
                     this.#audioProcessor.handleAddedNodes(addedNodes);
                     if (this.#requestedActivation) {
@@ -786,7 +815,10 @@
                 }
             });
 
-            this.#observeMutationRoot(document.documentElement);
+            // Observe the stable Document node so replacing documentElement cannot
+            // strand the observer on a detached root. Open ShadowRoots are added
+            // separately as they are discovered.
+            this.#observeMutationRoot(document);
         }
     }
 

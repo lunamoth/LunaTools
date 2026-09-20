@@ -189,6 +189,7 @@ function normalizeSessionRestoreProtectionTabIds(rawTabIds) {
 
 const sessionRestoreProtection = new Map();
 let sessionRestoreProtectionLoaded = false;
+let sessionRestoreProtectionLoadReliable = false;
 let sessionRestoreProtectionLoadPromise = null;
 let sessionRestoreProtectionMutationQueue = Promise.resolve();
 
@@ -217,45 +218,64 @@ function pruneExpiredSessionRestoreProtection(now = Date.now()) {
 }
 
 async function ensureSessionRestoreProtectionLoaded() {
-  if (sessionRestoreProtectionLoaded) return;
+  if (sessionRestoreProtectionLoaded) return sessionRestoreProtectionLoadReliable;
   if (!sessionRestoreProtectionLoadPromise) {
     sessionRestoreProtectionLoadPromise = (async () => {
       const storageArea = getSessionRestoreProtectionStorageArea();
       sessionRestoreProtection.clear();
-      if (storageArea) {
-        try {
-          const stored = await storageArea.get(SESSION_RESTORE_PROTECTION_STORAGE_KEY);
-          const rawEntries = stored?.[SESSION_RESTORE_PROTECTION_STORAGE_KEY];
-          if (rawEntries && typeof rawEntries === 'object' && !Array.isArray(rawEntries)) {
-            const now = Date.now();
-            for (const [rawTabId, rawEntry] of Object.entries(rawEntries)) {
-              const tabId = Number(rawTabId);
-              if (!Number.isInteger(tabId) || tabId < 0 ||
-                  !rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry) ||
-                  !Number.isFinite(rawEntry.expiresAt) || rawEntry.expiresAt <= now) {
-                continue;
-              }
-              sessionRestoreProtection.set(tabId, {
-                navigationStarted: rawEntry.navigationStarted === true,
-                expiresAt: rawEntry.expiresAt
-              });
-            }
-          }
-        } catch (error) {
-          console.warn('LunaTools: 세션 복원 탭 보호 상태를 읽지 못했습니다.', error);
-        }
+      if (!storageArea) {
+        // Current Chromium exposes storage.session when the storage permission is
+        // granted. If it is unavailable, destructive duplicate cleanup must fail
+        // closed because a restore-in-progress state cannot be reconstructed.
+        sessionRestoreProtectionLoaded = true;
+        sessionRestoreProtectionLoadReliable = false;
+        return false;
       }
-      sessionRestoreProtectionLoaded = true;
+
+      try {
+        const stored = await storageArea.get(SESSION_RESTORE_PROTECTION_STORAGE_KEY);
+        const rawEntries = stored?.[SESSION_RESTORE_PROTECTION_STORAGE_KEY];
+        if (rawEntries && typeof rawEntries === 'object' && !Array.isArray(rawEntries)) {
+          const now = Date.now();
+          for (const [rawTabId, rawEntry] of Object.entries(rawEntries)) {
+            const tabId = Number(rawTabId);
+            if (!Number.isInteger(tabId) || tabId < 0 ||
+                !rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry) ||
+                !Number.isFinite(rawEntry.expiresAt) || rawEntry.expiresAt <= now) {
+              continue;
+            }
+            sessionRestoreProtection.set(tabId, {
+              navigationStarted: rawEntry.navigationStarted === true,
+              expiresAt: rawEntry.expiresAt
+            });
+          }
+        }
+        sessionRestoreProtectionLoaded = true;
+        sessionRestoreProtectionLoadReliable = true;
+        return true;
+      } catch (error) {
+        // Do not mark the failed read as loaded. A later event can retry, while
+        // the current event suppresses destructive duplicate cleanup.
+        sessionRestoreProtectionLoaded = false;
+        sessionRestoreProtectionLoadReliable = false;
+        console.warn('LunaTools: 세션 복원 탭 보호 상태를 읽지 못했습니다.', error);
+        return false;
+      }
     })().finally(() => {
       sessionRestoreProtectionLoadPromise = null;
     });
   }
-  await sessionRestoreProtectionLoadPromise;
+  return sessionRestoreProtectionLoadPromise;
 }
 
-async function persistSessionRestoreProtection() {
+async function persistSessionRestoreProtection({ requireDurable = false } = {}) {
   const storageArea = getSessionRestoreProtectionStorageArea();
-  if (!storageArea) return;
+  if (!storageArea) {
+    if (requireDurable) {
+      throw new Error('세션 복원 탭 보호 상태를 안전하게 저장할 수 없습니다.');
+    }
+    return false;
+  }
 
   const serialized = {};
   for (const [tabId, entry] of sessionRestoreProtection.entries()) {
@@ -271,10 +291,17 @@ async function persistSessionRestoreProtection() {
     } else {
       await storageArea.set({ [SESSION_RESTORE_PROTECTION_STORAGE_KEY]: serialized });
     }
+    return true;
   } catch (error) {
-    // In-memory protection still prevents an immediate duplicate removal. The
-    // storage copy only exists so an MV3 service-worker restart cannot lose it.
+    // Normal cleanup can remain best-effort, but starting a restore must not
+    // report success unless its duplicate-cleanup protection survives an MV3
+    // service-worker restart. Otherwise intentionally duplicated saved tabs can
+    // be deleted while their real URLs are being assigned.
     console.warn('LunaTools: 세션 복원 탭 보호 상태를 저장하지 못했습니다.', error);
+    if (requireDurable) {
+      throw new Error('세션 복원 탭 보호 상태를 안전하게 저장하지 못했습니다.');
+    }
+    return false;
   }
 }
 
@@ -283,13 +310,41 @@ async function protectSessionRestoreTabs(rawTabIds) {
   if (!tabIds) throw new Error('Invalid session-restore tab protection request.');
 
   return queueSessionRestoreProtectionMutation(async () => {
-    await ensureSessionRestoreProtectionLoaded();
+    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
+    if (!protectionStateReliable) {
+      throw new Error('세션 복원 탭 보호 상태를 안전하게 불러올 수 없습니다.');
+    }
     pruneExpiredSessionRestoreProtection();
+
+    // Registration is the point of no return for the restore workflow: once the
+    // side panel receives success it starts navigating neutral placeholders to
+    // the saved URLs. Keep a rollback snapshot so a storage failure cannot leave
+    // an in-memory-only registration that misleadingly reports success.
+    const previousEntries = new Map();
+    for (const tabId of tabIds) {
+      previousEntries.set(tabId, sessionRestoreProtection.has(tabId)
+        ? sessionRestoreProtection.get(tabId)
+        : null);
+    }
+
     const expiresAt = Date.now() + SESSION_RESTORE_PROTECTION_TTL_MS;
     for (const tabId of tabIds) {
       sessionRestoreProtection.set(tabId, { navigationStarted: false, expiresAt });
     }
-    await persistSessionRestoreProtection();
+
+    try {
+      await persistSessionRestoreProtection({ requireDurable: true });
+    } catch (error) {
+      for (const tabId of tabIds) {
+        const previousEntry = previousEntries.get(tabId);
+        if (previousEntry) {
+          sessionRestoreProtection.set(tabId, previousEntry);
+        } else {
+          sessionRestoreProtection.delete(tabId);
+        }
+      }
+      throw error;
+    }
     return tabIds.length;
   });
 }
@@ -299,7 +354,8 @@ async function unprotectSessionRestoreTabs(rawTabIds) {
   if (!tabIds) return 0;
 
   return queueSessionRestoreProtectionMutation(async () => {
-    await ensureSessionRestoreProtectionLoaded();
+    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
+    if (!protectionStateReliable) return 0;
     let removed = 0;
     for (const tabId of tabIds) {
       if (sessionRestoreProtection.delete(tabId)) removed += 1;
@@ -313,11 +369,23 @@ async function transferSessionRestoreTabProtection(removedTabId, addedTabId) {
   if (!Number.isInteger(removedTabId) || !Number.isInteger(addedTabId)) return false;
 
   return queueSessionRestoreProtectionMutation(async () => {
-    await ensureSessionRestoreProtectionLoaded();
+    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
+    // A replacement is itself a destructive-cleanup trigger. If durable state
+    // cannot be reconstructed, suppress duplicate handling for this event.
+    if (!protectionStateReliable) return true;
     const entry = sessionRestoreProtection.get(removedTabId);
     if (!entry) return false;
-    sessionRestoreProtection.delete(removedTabId);
+
+    // Tab replacement changes the identifier that must survive a worker restart.
+    // Persist the new ID before deleting the old one. If the cleanup write later
+    // fails, retaining a stale old ID is harmless (TTL/tab-close cleanup removes
+    // it); persisting only the old ID and losing the new one could delete a real
+    // restored tab after the next service-worker restart.
     sessionRestoreProtection.set(addedTabId, entry);
+    const addedIdPersisted = await persistSessionRestoreProtection();
+    if (!addedIdPersisted) return true;
+
+    sessionRestoreProtection.delete(removedTabId);
     await persistSessionRestoreProtection();
     return true;
   });
@@ -326,7 +394,8 @@ async function transferSessionRestoreTabProtection(removedTabId, addedTabId) {
 async function removeSessionRestoreTabProtection(tabId) {
   if (!Number.isInteger(tabId)) return;
   await queueSessionRestoreProtectionMutation(async () => {
-    await ensureSessionRestoreProtectionLoaded();
+    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
+    if (!protectionStateReliable) return;
     if (!sessionRestoreProtection.delete(tabId)) return;
     await persistSessionRestoreProtection();
   });
@@ -336,7 +405,10 @@ async function shouldSuppressDuplicateCleanupForSessionRestore(tabId, changeInfo
   if (!Number.isInteger(tabId)) return false;
 
   return queueSessionRestoreProtectionMutation(async () => {
-    await ensureSessionRestoreProtectionLoaded();
+    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
+    // Never guess that a tab is unprotected after a storage read failure. Leaving
+    // a duplicate open is reversible; deleting a restored tab is not.
+    if (!protectionStateReliable) return true;
     const pruned = pruneExpiredSessionRestoreProtection();
     const entry = sessionRestoreProtection.get(tabId);
     if (!entry) {
