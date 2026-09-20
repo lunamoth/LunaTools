@@ -104,6 +104,7 @@
         #pointerOutsideDocument = false;
         #gestureStartedAt = 0;
         #activeLinkScanTask = null;
+        #pendingActionTask = null;
 
         #listenerOptions = { capture: true, passive: false };
 
@@ -464,10 +465,13 @@
                 await task.promise;
                 if (!this.#isLinkScanTaskUsable(task)) return;
                 const finalLinks = await this.#getLinksInRectIncrementally(task.links, selectionRect, task);
-                if (finalLinks) await this.#performAction(finalLinks, modifier);
+                if (finalLinks && this.#isLinkScanTaskUsable(task)) {
+                    await this.#performAction(finalLinks, modifier);
+                }
             } catch (_) {
             } finally {
                 task.cancelled = true;
+                if (this.#pendingActionTask === task) this.#pendingActionTask = null;
             }
         }
 
@@ -787,6 +791,7 @@
             const watchdogTimer = this.#gestureWatchdogTimer;
             const outsideDocumentTimer = this.#outsideDocumentTimer;
             const activeLinkScanTask = this.#activeLinkScanTask;
+            const pendingActionTask = this.#pendingActionTask;
             const highlightedLinks = this.#highlightedLinks;
             const overlays = [this.#selectionBox, this.#actionIndicator];
             // DOM 조작보다 먼저 입력 상태를 해제합니다. 정리 중 예외나
@@ -810,8 +815,15 @@
             this.#pointerOutsideDocument = false;
             this.#gestureStartedAt = 0;
             this.#activeLinkScanTask = null;
+            // A normal mouseup releases pointer state, but its unfinished scan
+            // must remain reachable by Escape, new input, lifecycle cleanup and
+            // destroy(). Otherwise the released selection can execute later.
+            this.#pendingActionTask = preservedLinkScanTask;
             if (activeLinkScanTask && activeLinkScanTask !== preservedLinkScanTask) {
                 activeLinkScanTask.cancelled = true;
+            }
+            if (pendingActionTask && pendingActionTask !== preservedLinkScanTask) {
+                pendingActionTask.cancelled = true;
             }
 
             const safely = action => { try { action(); } catch (_) {} };
@@ -845,7 +857,7 @@
             // textarea의 포커스 기본 동작 전에 잠금 상태를 복구합니다.
             // passive 리스너이므로 사이트의 pointerdown 기본 동작/전파에는
             // 전혀 개입하지 않습니다.
-            if (this.#hasStaleInteractionState()) this.#resetState();
+            if (this.#hasStaleInteractionState() || this.#pendingActionTask) this.#resetState();
         }
 
         #handlePointerCapture(e) {
@@ -933,7 +945,7 @@
 
             // 새 마우스 버튼 입력은 이전 드래그 시퀀스와 동시에 성립할 수 없다.
             // 페이지 밖에서 mouseup/keyup이 유실된 경우 남아 있던 상태를 먼저 정리한다.
-            if (this.#hasStaleInteractionState()) {
+            if (this.#hasStaleInteractionState() || this.#pendingActionTask) {
                 this.#resetState();
             }
             if (e.button !== 0 || e.buttons !== 1) return;
@@ -1055,7 +1067,7 @@
             // 기본 동작(모달/검색 오버레이 닫기 등)은 그대로 허용합니다.
             if (this.#isDragging) e.preventDefault();
 
-            if (this.#isTrustedSequence || this.#isDragging || this.#modifier) this.#resetState();
+            if (this.#hasStaleInteractionState() || this.#pendingActionTask) this.#resetState();
             this.#abortDelayedOpen();
         }
 
@@ -1071,7 +1083,7 @@
 
         #handleInteractionAbort() {
             this.#abortDelayedOpen();
-            if (this.#isTrustedSequence || this.#isDragging || this.#modifier) {
+            if (this.#hasStaleInteractionState() || this.#pendingActionTask) {
                 this.#resetState();
             }
         }
@@ -1085,13 +1097,13 @@
         }
 
         #handleEditableFocus(e) {
-            if (!e.isTrusted || !this.#hasStaleInteractionState() || !this.#isEditableEvent(e)) return;
+            if (!e.isTrusted || (!this.#hasStaleInteractionState() && !this.#pendingActionTask) || !this.#isEditableEvent(e)) return;
             // 입력 요소가 키보드/스크립트로 포커스를 얻은 경우에도 오래된
             // 드래그 상태는 버려야 합니다. 단, focus 이벤트 처리 도중 DOM을
             // 바꾸지 않고 현재 focus 작업이 완전히 끝난 다음 microtask에서
             // 정리하여 브라우저의 포커스 수명주기와 재진입하지 않게 합니다.
             queueMicrotask(() => {
-                if (this.#hasStaleInteractionState()) this.#resetState();
+                if (this.#hasStaleInteractionState() || this.#pendingActionTask) this.#resetState();
             });
         }
 

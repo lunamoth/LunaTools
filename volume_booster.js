@@ -724,7 +724,10 @@
             try {
                 this.#audioProcessor.setUserInteracted();
 
-                while (this.#isActivated !== this.#requestedActivation) {
+                // A cancelled ON scan may already have boosted some media even
+                // though #isActivated is still false. Always apply the latest
+                // request once more after cancellation, including OFF -> OFF.
+                while (true) {
                     const context = await this.#audioProcessor.ensureContextIsRunning();
                     if (!context) {
                         this.#requestedActivation = this.#isActivated;
@@ -752,6 +755,7 @@
                     if (this.#isActivated && (this.#pendingAddedNodes.size || this.#needsFullDocumentScan)) {
                         this.#schedulePendingNodeScan();
                     }
+                    if (this.#isActivated === this.#requestedActivation) break;
                 }
             } finally {
                 this.#toggleInProgress = false;

@@ -36,11 +36,9 @@ const URL_CONTROL_CHARACTER_REGEX = /[\u0000-\u001F\u007F]/u;
 const HOSTNAME_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const IPV4_HOSTNAME_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const IPV6_HOSTNAME_REGEX = /^\[[0-9a-f:.]+\]$/i;
-const PROTECT_SESSION_RESTORE_TABS_ACTION = 'protectSessionRestoreTabs';
-const UNPROTECT_SESSION_RESTORE_TABS_ACTION = 'unprotectSessionRestoreTabs';
-const SESSION_RESTORE_PROTECTION_STORAGE_KEY = 'lunaToolsSessionRestoreProtectionV1';
-const SESSION_RESTORE_PROTECTION_TTL_MS = 30 * 60 * 1000;
-const MAX_SESSION_RESTORE_PROTECTED_TABS = 300;
+const RECONCILE_TAB_REFERENCES_ACTION = 'reconcileTabReferences';
+const DUPLICATE_TAB_REMOVED_ACTION = 'duplicateTabRemoved';
+const MAX_RECONCILE_TAB_REFERENCES = 300;
 
 let exchangeRateRefreshPromise = null;
 let tabCountBadgeUpdatePromise = null;
@@ -169,287 +167,6 @@ function normalizeOpenTabsRequestUrls(rawUrls) {
 
 function isPositiveFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
-}
-
-function normalizeSessionRestoreProtectionTabIds(rawTabIds) {
-  if (!Array.isArray(rawTabIds) || rawTabIds.length === 0 || rawTabIds.length > MAX_SESSION_RESTORE_PROTECTED_TABS) {
-    return null;
-  }
-
-  const normalizedTabIds = [];
-  const seenTabIds = new Set();
-  for (const rawTabId of rawTabIds) {
-    if (!Number.isInteger(rawTabId) || rawTabId < 0 || seenTabIds.has(rawTabId)) continue;
-    seenTabIds.add(rawTabId);
-    normalizedTabIds.push(rawTabId);
-  }
-
-  return normalizedTabIds.length > 0 ? normalizedTabIds : null;
-}
-
-const sessionRestoreProtection = new Map();
-let sessionRestoreProtectionLoaded = false;
-let sessionRestoreProtectionLoadReliable = false;
-let sessionRestoreProtectionLoadPromise = null;
-let sessionRestoreProtectionMutationQueue = Promise.resolve();
-
-function queueSessionRestoreProtectionMutation(operation) {
-  const nextOperation = sessionRestoreProtectionMutationQueue.then(operation, operation);
-  sessionRestoreProtectionMutationQueue = nextOperation.catch(() => {});
-  return nextOperation;
-}
-
-function getSessionRestoreProtectionStorageArea() {
-  return chrome.storage?.session && typeof chrome.storage.session.get === 'function' &&
-    typeof chrome.storage.session.set === 'function'
-    ? chrome.storage.session
-    : null;
-}
-
-function pruneExpiredSessionRestoreProtection(now = Date.now()) {
-  let changed = false;
-  for (const [tabId, entry] of sessionRestoreProtection.entries()) {
-    if (!entry || !Number.isFinite(entry.expiresAt) || entry.expiresAt <= now) {
-      sessionRestoreProtection.delete(tabId);
-      changed = true;
-    }
-  }
-  return changed;
-}
-
-async function ensureSessionRestoreProtectionLoaded() {
-  if (sessionRestoreProtectionLoaded) return sessionRestoreProtectionLoadReliable;
-  if (!sessionRestoreProtectionLoadPromise) {
-    sessionRestoreProtectionLoadPromise = (async () => {
-      const storageArea = getSessionRestoreProtectionStorageArea();
-      sessionRestoreProtection.clear();
-      if (!storageArea) {
-        // Current Chromium exposes storage.session when the storage permission is
-        // granted. If it is unavailable, destructive duplicate cleanup must fail
-        // closed because a restore-in-progress state cannot be reconstructed.
-        sessionRestoreProtectionLoaded = true;
-        sessionRestoreProtectionLoadReliable = false;
-        return false;
-      }
-
-      try {
-        const stored = await storageArea.get(SESSION_RESTORE_PROTECTION_STORAGE_KEY);
-        const rawEntries = stored?.[SESSION_RESTORE_PROTECTION_STORAGE_KEY];
-        if (rawEntries && typeof rawEntries === 'object' && !Array.isArray(rawEntries)) {
-          const now = Date.now();
-          for (const [rawTabId, rawEntry] of Object.entries(rawEntries)) {
-            const tabId = Number(rawTabId);
-            if (!Number.isInteger(tabId) || tabId < 0 ||
-                !rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry) ||
-                !Number.isFinite(rawEntry.expiresAt) || rawEntry.expiresAt <= now) {
-              continue;
-            }
-            sessionRestoreProtection.set(tabId, {
-              navigationStarted: rawEntry.navigationStarted === true,
-              expiresAt: rawEntry.expiresAt
-            });
-          }
-        }
-        sessionRestoreProtectionLoaded = true;
-        sessionRestoreProtectionLoadReliable = true;
-        return true;
-      } catch (error) {
-        // Do not mark the failed read as loaded. A later event can retry, while
-        // the current event suppresses destructive duplicate cleanup.
-        sessionRestoreProtectionLoaded = false;
-        sessionRestoreProtectionLoadReliable = false;
-        console.warn('LunaTools: 세션 복원 탭 보호 상태를 읽지 못했습니다.', error);
-        return false;
-      }
-    })().finally(() => {
-      sessionRestoreProtectionLoadPromise = null;
-    });
-  }
-  return sessionRestoreProtectionLoadPromise;
-}
-
-async function persistSessionRestoreProtection({ requireDurable = false } = {}) {
-  const storageArea = getSessionRestoreProtectionStorageArea();
-  if (!storageArea) {
-    if (requireDurable) {
-      throw new Error('세션 복원 탭 보호 상태를 안전하게 저장할 수 없습니다.');
-    }
-    return false;
-  }
-
-  const serialized = {};
-  for (const [tabId, entry] of sessionRestoreProtection.entries()) {
-    serialized[String(tabId)] = {
-      navigationStarted: entry.navigationStarted === true,
-      expiresAt: entry.expiresAt
-    };
-  }
-
-  try {
-    if (Object.keys(serialized).length === 0 && typeof storageArea.remove === 'function') {
-      await storageArea.remove(SESSION_RESTORE_PROTECTION_STORAGE_KEY);
-    } else {
-      await storageArea.set({ [SESSION_RESTORE_PROTECTION_STORAGE_KEY]: serialized });
-    }
-    return true;
-  } catch (error) {
-    // Normal cleanup can remain best-effort, but starting a restore must not
-    // report success unless its duplicate-cleanup protection survives an MV3
-    // service-worker restart. Otherwise intentionally duplicated saved tabs can
-    // be deleted while their real URLs are being assigned.
-    console.warn('LunaTools: 세션 복원 탭 보호 상태를 저장하지 못했습니다.', error);
-    if (requireDurable) {
-      throw new Error('세션 복원 탭 보호 상태를 안전하게 저장하지 못했습니다.');
-    }
-    return false;
-  }
-}
-
-async function protectSessionRestoreTabs(rawTabIds) {
-  const tabIds = normalizeSessionRestoreProtectionTabIds(rawTabIds);
-  if (!tabIds) throw new Error('Invalid session-restore tab protection request.');
-
-  return queueSessionRestoreProtectionMutation(async () => {
-    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
-    if (!protectionStateReliable) {
-      throw new Error('세션 복원 탭 보호 상태를 안전하게 불러올 수 없습니다.');
-    }
-    pruneExpiredSessionRestoreProtection();
-
-    // Registration is the point of no return for the restore workflow: once the
-    // side panel receives success it starts navigating neutral placeholders to
-    // the saved URLs. Keep a rollback snapshot so a storage failure cannot leave
-    // an in-memory-only registration that misleadingly reports success.
-    const previousEntries = new Map();
-    for (const tabId of tabIds) {
-      previousEntries.set(tabId, sessionRestoreProtection.has(tabId)
-        ? sessionRestoreProtection.get(tabId)
-        : null);
-    }
-
-    const expiresAt = Date.now() + SESSION_RESTORE_PROTECTION_TTL_MS;
-    for (const tabId of tabIds) {
-      sessionRestoreProtection.set(tabId, { navigationStarted: false, expiresAt });
-    }
-
-    try {
-      await persistSessionRestoreProtection({ requireDurable: true });
-    } catch (error) {
-      for (const tabId of tabIds) {
-        const previousEntry = previousEntries.get(tabId);
-        if (previousEntry) {
-          sessionRestoreProtection.set(tabId, previousEntry);
-        } else {
-          sessionRestoreProtection.delete(tabId);
-        }
-      }
-      throw error;
-    }
-    return tabIds.length;
-  });
-}
-
-async function unprotectSessionRestoreTabs(rawTabIds) {
-  const tabIds = normalizeSessionRestoreProtectionTabIds(rawTabIds);
-  if (!tabIds) return 0;
-
-  return queueSessionRestoreProtectionMutation(async () => {
-    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
-    if (!protectionStateReliable) return 0;
-    let removed = 0;
-    for (const tabId of tabIds) {
-      if (sessionRestoreProtection.delete(tabId)) removed += 1;
-    }
-    if (removed > 0) await persistSessionRestoreProtection();
-    return removed;
-  });
-}
-
-async function transferSessionRestoreTabProtection(removedTabId, addedTabId) {
-  if (!Number.isInteger(removedTabId) || !Number.isInteger(addedTabId)) return false;
-
-  return queueSessionRestoreProtectionMutation(async () => {
-    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
-    // A replacement is itself a destructive-cleanup trigger. If durable state
-    // cannot be reconstructed, suppress duplicate handling for this event.
-    if (!protectionStateReliable) return true;
-    const entry = sessionRestoreProtection.get(removedTabId);
-    if (!entry) return false;
-
-    // Tab replacement changes the identifier that must survive a worker restart.
-    // Persist the new ID before deleting the old one. If the cleanup write later
-    // fails, retaining a stale old ID is harmless (TTL/tab-close cleanup removes
-    // it); persisting only the old ID and losing the new one could delete a real
-    // restored tab after the next service-worker restart.
-    sessionRestoreProtection.set(addedTabId, entry);
-    const addedIdPersisted = await persistSessionRestoreProtection();
-    if (!addedIdPersisted) return true;
-
-    sessionRestoreProtection.delete(removedTabId);
-    await persistSessionRestoreProtection();
-    return true;
-  });
-}
-
-async function removeSessionRestoreTabProtection(tabId) {
-  if (!Number.isInteger(tabId)) return;
-  await queueSessionRestoreProtectionMutation(async () => {
-    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
-    if (!protectionStateReliable) return;
-    if (!sessionRestoreProtection.delete(tabId)) return;
-    await persistSessionRestoreProtection();
-  });
-}
-
-async function shouldSuppressDuplicateCleanupForSessionRestore(tabId, changeInfo, tab) {
-  if (!Number.isInteger(tabId)) return false;
-
-  return queueSessionRestoreProtectionMutation(async () => {
-    const protectionStateReliable = await ensureSessionRestoreProtectionLoaded();
-    // Never guess that a tab is unprotected after a storage read failure. Leaving
-    // a duplicate open is reversible; deleting a restored tab is not.
-    if (!protectionStateReliable) return true;
-    const pruned = pruneExpiredSessionRestoreProtection();
-    const entry = sessionRestoreProtection.get(tabId);
-    if (!entry) {
-      if (pruned) await persistSessionRestoreProtection();
-      return false;
-    }
-
-    let stateChanged = pruned;
-    if (typeof changeInfo?.url === 'string' && changeInfo.url.length > 0 && !entry.navigationStarted) {
-      entry.navigationStarted = true;
-      stateChanged = true;
-    }
-
-    // A service worker can occasionally miss the URL-change event that started
-    // the restore navigation. A completed http(s) page is enough to identify
-    // that the placeholder navigation has moved to its real destination.
-    const liveUrl = typeof tab?.pendingUrl === 'string' && tab.pendingUrl
-      ? tab.pendingUrl
-      : (typeof tab?.url === 'string' ? tab.url : '');
-    const hasReachedWebNavigation = /^https?:/i.test(liveUrl);
-    if (!entry.navigationStarted && changeInfo?.status === 'complete' && hasReachedWebNavigation) {
-      entry.navigationStarted = true;
-      stateChanged = true;
-    }
-
-    if (!entry.navigationStarted) {
-      if (stateChanged) await persistSessionRestoreProtection();
-      return false;
-    }
-
-    // Keep the duplicate cleaner disabled through redirects and the final
-    // completion event, then automatically release the tab for normal future
-    // duplicate handling.
-    if (changeInfo?.status === 'complete') {
-      sessionRestoreProtection.delete(tabId);
-      stateChanged = true;
-    }
-
-    if (stateChanged) await persistSessionRestoreProtection();
-    return true;
-  });
 }
 
 function normalizeFrankfurterV2RatesResponse(candidate) {
@@ -1058,7 +775,9 @@ class TabManager {
   }
 
   _isTabNotFoundError(error) {
-    return isTabAccessError(error);
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('no tab with id') ||
+      message.includes('invalid tab id') || message.includes('tab id not found');
   }
 
   _isValidTabForProcessing(tab) {
@@ -1362,34 +1081,6 @@ class TabManager {
     return liveUrl;
   }
 
-  _isTabInSplitView(tab) {
-    return Number.isInteger(tab?.splitViewId) && tab.splitViewId >= 0;
-  }
-
-  async _canAutomaticallyRemoveTabFromGroup(tab, keeperTab = null) {
-    const groupId = Number.isInteger(tab?.groupId) ? tab.groupId : -1;
-    if (groupId < 0) return true;
-
-    // Removing the only member of a regular group destroys its title, color,
-    // and collapsed state. More generally, removing a duplicate whose keeper is
-    // outside the group silently changes the user's group layout. A grouped tab
-    // is therefore removable only when the verified keeper remains in the exact
-    // same non-shared group. Shared-group changes are never performed
-    // automatically because they propagate to collaborators.
-    if (typeof chrome.tabGroups?.get !== 'function') return false;
-    try {
-      const group = await chrome.tabGroups.get(groupId);
-      const keeperGroupId = Number.isInteger(keeperTab?.groupId) ? keeperTab.groupId : -1;
-      return Number.isInteger(group?.windowId) &&
-        group.windowId === tab.windowId &&
-        group.shared !== true &&
-        keeperTab?.windowId === tab.windowId &&
-        keeperGroupId === groupId;
-    } catch (_) {
-      return false;
-    }
-  }
-
   _selectDuplicateTabToKeep(liveTabs, currentTabId, currentBecameDuplicate) {
     const pinnedTabs = liveTabs.filter(tab => Boolean(tab.pinned));
     const candidates = pinnedTabs.length > 0 ? pinnedTabs : liveTabs;
@@ -1414,282 +1105,199 @@ class TabManager {
     const lockKey = `${currentTab.windowId}\u0000${parsedUrl.href}`;
 
     return this._runDuplicateOperationSerially(lockKey, async () => {
-      try {
-        const candidateTabIds = new Set([currentTab.id]);
-        for (const entry of this.reverseUrlLookup.get(parsedUrl.href) || []) {
-          if (entry.windowId === currentTab.windowId) {
-            candidateTabIds.add(entry.tabId);
+      const candidateTabIds = new Set([currentTab.id]);
+      for (const entry of this.reverseUrlLookup.get(parsedUrl.href) || []) {
+        if (entry.windowId === currentTab.windowId) candidateTabIds.add(entry.tabId);
+      }
+      if (candidateTabIds.size <= 1) return;
+
+      const liveDuplicateTabs = [];
+      for (const tabId of candidateTabIds) {
+        try {
+          const liveTab = await chrome.tabs.get(tabId);
+          const liveUrl = this._refreshTabCacheFromLiveTab(liveTab);
+          if (liveTab.windowId === currentTab.windowId && liveUrl?.href === parsedUrl.href) {
+            liveDuplicateTabs.push(liveTab);
+          }
+        } catch (error) {
+          if (this._isTabNotFoundError(error)) {
+            this._removeUrlFromCache(tabId);
+            this._forgetTabCreationOrder(tabId);
           }
         }
+      }
+      if (liveDuplicateTabs.length <= 1) return;
 
-        if (candidateTabIds.size <= 1) return;
+      const tabToKeep = this._selectDuplicateTabToKeep(
+        liveDuplicateTabs, currentTab.id, currentBecameDuplicate
+      );
+      // One URL per window, including grouped, split-view and restored tabs.
+      // Pinning affects which tab survives; it never exempts another duplicate.
+      const tabsToRemove = liveDuplicateTabs
+        .filter(tab => tab.id !== tabToKeep.id)
+        .sort((a, b) => this._compareTabAge(b, a));
 
-        const liveDuplicateTabs = [];
-        for (const tabId of candidateTabIds) {
-          try {
-            const liveTab = await chrome.tabs.get(tabId);
-            const liveUrl = this._tryParseUrl(this._getTabUrlString(liveTab));
-            if (liveTab.windowId === currentTab.windowId && liveUrl?.href === parsedUrl.href) {
-              liveDuplicateTabs.push(liveTab);
-            } else {
-              this._refreshTabCacheFromLiveTab(liveTab);
-            }
-          } catch (error) {
-            if (this._isTabNotFoundError(error)) {
-              this._removeUrlFromCache(tabId, parsedUrl);
-              this._forgetTabCreationOrder(tabId);
-            }
-          }
-        }
+      for (const duplicateTab of tabsToRemove) {
+        try {
+          let [liveKeeper, liveDuplicate] = await Promise.all([
+            chrome.tabs.get(tabToKeep.id), chrome.tabs.get(duplicateTab.id)
+          ]);
+          const keeperUrl = this._refreshTabCacheFromLiveTab(liveKeeper);
+          const duplicateUrl = this._refreshTabCacheFromLiveTab(liveDuplicate);
+          if (liveKeeper.windowId !== currentTab.windowId || keeperUrl?.href !== parsedUrl.href) return;
+          if (liveDuplicate.windowId !== currentTab.windowId || duplicateUrl?.href !== parsedUrl.href) continue;
 
-        if (liveDuplicateTabs.length <= 1) return;
+          const wasAccessed = (tab) => Number.isFinite(duplicateTab.lastAccessed) &&
+            Number.isFinite(tab.lastAccessed) && tab.lastAccessed > duplicateTab.lastAccessed;
+          // A changed URL/window is never a duplicate of the stale snapshot.
+          // Reconsider a changed selection or pin state on the next event.
+          if (wasAccessed(liveDuplicate) ||
+              Boolean(liveDuplicate.highlighted) !== Boolean(duplicateTab.highlighted) ||
+              Boolean(liveKeeper.pinned) !== Boolean(tabToKeep.pinned) ||
+              Boolean(liveDuplicate.pinned) !== Boolean(duplicateTab.pinned)) continue;
 
-        const tabToKeep = this._selectDuplicateTabToKeep(
-          liveDuplicateTabs,
-          currentTab.id,
-          currentBecameDuplicate
-        );
-        const tabsToRemove = liveDuplicateTabs
-          // Never close a Split View participant automatically. If one or more
-          // split tabs share the URL, remove only ordinary duplicates and leave
-          // the split relationship intact. An inactive highlighted tab is also
-          // an explicit Ctrl/Shift multi-selection and must remain user-owned.
-          .filter(tab => tab.id !== tabToKeep.id &&
-            !this._isTabInSplitView(tab) &&
-            !(tab.highlighted && !tab.active))
-          .sort((a, b) => this._compareTabAge(b, a));
-
-        for (const duplicateTab of tabsToRemove) {
-          let liveKeeper;
-          let liveDuplicate;
-          try {
+          if (liveDuplicate.active) {
+            await chrome.tabs.update(liveKeeper.id, { active: true });
             [liveKeeper, liveDuplicate] = await Promise.all([
-              chrome.tabs.get(tabToKeep.id),
-              chrome.tabs.get(duplicateTab.id)
+              chrome.tabs.get(tabToKeep.id), chrome.tabs.get(duplicateTab.id)
             ]);
-          } catch (error) {
-            if (this._isTabNotFoundError(error)) {
-              try {
-                await chrome.tabs.get(tabToKeep.id);
-              } catch (keeperError) {
-                if (this._isTabNotFoundError(keeperError)) {
-                  this._removeUrlFromCache(tabToKeep.id, parsedUrl);
-                  this._forgetTabCreationOrder(tabToKeep.id);
-                  return;
-                }
-              }
-
-              try {
-                await chrome.tabs.get(duplicateTab.id);
-              } catch (duplicateError) {
-                if (this._isTabNotFoundError(duplicateError)) {
-                  this._removeUrlFromCache(duplicateTab.id, parsedUrl);
-                  this._forgetTabCreationOrder(duplicateTab.id);
-                }
-              }
-            }
-            continue;
+            if (!liveKeeper.active || liveDuplicate.active) continue;
           }
 
-          const keeperUrl = this._tryParseUrl(this._getTabUrlString(liveKeeper));
-          if (liveKeeper.windowId !== currentTab.windowId || keeperUrl?.href !== parsedUrl.href) {
-            this._refreshTabCacheFromLiveTab(liveKeeper);
-            this._refreshTabCacheFromLiveTab(liveDuplicate);
-            return;
-          }
+          // Groups and Split View do not preserve duplicates, but changes made
+          // while a deletion is being prepared still invalidate that snapshot.
+          const expectedHighlighted = Boolean(liveDuplicate.highlighted);
+          const expectedGroupId = liveDuplicate.groupId ?? -1;
+          const expectedSplitViewId = liveDuplicate.splitViewId ?? -1;
+          [liveKeeper, liveDuplicate] = await Promise.all([
+            chrome.tabs.get(tabToKeep.id), chrome.tabs.get(duplicateTab.id)
+          ]);
+          const finalKeeperUrl = this._refreshTabCacheFromLiveTab(liveKeeper);
+          const finalDuplicateUrl = this._refreshTabCacheFromLiveTab(liveDuplicate);
+          const removalStateIsSafe =
+            liveKeeper.windowId === currentTab.windowId &&
+            liveDuplicate.windowId === currentTab.windowId &&
+            finalKeeperUrl?.href === parsedUrl.href &&
+            finalDuplicateUrl?.href === parsedUrl.href &&
+            Boolean(liveKeeper.pinned) === Boolean(tabToKeep.pinned) &&
+            Boolean(liveDuplicate.pinned) === Boolean(duplicateTab.pinned) &&
+            liveDuplicate.active === false &&
+            Boolean(liveDuplicate.highlighted) === expectedHighlighted &&
+            (liveDuplicate.groupId ?? -1) === expectedGroupId &&
+            (liveDuplicate.splitViewId ?? -1) === expectedSplitViewId &&
+            !wasAccessed(liveDuplicate);
+          if (!removalStateIsSafe) continue;
 
-          const duplicateUrl = this._tryParseUrl(this._getTabUrlString(liveDuplicate));
-          if (liveDuplicate.windowId !== currentTab.windowId || duplicateUrl?.href !== parsedUrl.href) {
-            this._refreshTabCacheFromLiveTab(liveDuplicate);
-            continue;
-          }
-          const duplicateWasAccessedAfterScan = Number.isFinite(duplicateTab.lastAccessed) &&
-            Number.isFinite(liveDuplicate.lastAccessed) &&
-            liveDuplicate.lastAccessed > duplicateTab.lastAccessed;
-          if ((liveDuplicate.highlighted && !liveDuplicate.active) || duplicateWasAccessedAfterScan) {
-            // 비동기 검사 중 사용자가 탭을 선택/방문했다면 URL이 그대로여도
-            // 폼·스크롤·재생 상태 등 저장되지 않은 탭 내부 상태가 생겼을 수 있습니다.
-            this._refreshTabCacheFromLiveTab(liveDuplicate);
-            continue;
-          }
-          // Pinning can change while the asynchronous duplicate checks run.
-          // The original keeper decision is no longer valid after either tab's
-          // pinned state changes. Do not focus or close using that old decision.
-          if (Boolean(liveDuplicate.pinned) !== Boolean(duplicateTab.pinned) ||
-              Boolean(liveKeeper.pinned) !== Boolean(tabToKeep.pinned)) {
-            this._refreshTabCacheFromLiveTab(liveKeeper);
-            this._refreshTabCacheFromLiveTab(liveDuplicate);
-            continue;
-          }
-          // The tab may have entered Split View after the initial duplicate scan.
-          // Re-check the live object immediately before any focus/removal workflow.
-          if (this._isTabInSplitView(liveDuplicate)) {
-            this._refreshTabCacheFromLiveTab(liveDuplicate);
-            continue;
-          }
-
-          // Do not focus away from an active grouped tab unless it is already
-          // safe to remove. Otherwise a protected duplicate would remain open
-          // after the user was unexpectedly switched to another tab.
-          if (!(await this._canAutomaticallyRemoveTabFromGroup(liveDuplicate, liveKeeper))) {
-            this._refreshTabCacheFromLiveTab(liveKeeper);
-            this._refreshTabCacheFromLiveTab(liveDuplicate);
-            continue;
-          }
-
+          await chrome.tabs.remove(liveDuplicate.id);
+          this._removeUrlFromCache(liveDuplicate.id);
+          this._forgetTabCreationOrder(liveDuplicate.id);
+          // Report a completed common-cleaner operation, never an intention to
+          // delete. Open extension pages can follow the surviving tab through
+          // redirects without treating an unrelated disappearance as success.
           try {
-            if (liveDuplicate.active) {
-              try {
-                await chrome.tabs.update(liveKeeper.id, { active: true });
-
-                // Focusing the keeper is an asynchronous, destructive-operation
-                // prerequisite. Re-read both tabs afterwards: the keeper may have
-                // closed/navigated, or the user may have selected/changed the
-                // duplicate while Chrome was processing the focus request.
-                [liveKeeper, liveDuplicate] = await Promise.all([
-                  chrome.tabs.get(liveKeeper.id),
-                  chrome.tabs.get(liveDuplicate.id)
-                ]);
-              } catch (focusError) {
-                if (this._isTabNotFoundError(focusError)) {
-                  try {
-                    await chrome.tabs.get(liveKeeper.id);
-                  } catch (keeperError) {
-                    if (this._isTabNotFoundError(keeperError)) {
-                      this._removeUrlFromCache(liveKeeper.id, parsedUrl);
-                      this._forgetTabCreationOrder(liveKeeper.id);
-                    }
-                  }
-
-                  try {
-                    await chrome.tabs.get(liveDuplicate.id);
-                  } catch (duplicateError) {
-                    if (this._isTabNotFoundError(duplicateError)) {
-                      this._removeUrlFromCache(liveDuplicate.id, parsedUrl);
-                      this._forgetTabCreationOrder(liveDuplicate.id);
-                    }
-                  }
-                }
-                // Never remove the active duplicate unless the intended keeper
-                // was successfully focused and both tabs are still unchanged.
-                continue;
+            await chrome.runtime.sendMessage({
+              action: DUPLICATE_TAB_REMOVED_ACTION,
+              tabId: liveDuplicate.id, keptTabId: liveKeeper.id,
+              windowId: currentTab.windowId, url: parsedUrl.href
+            });
+          } catch (_) {
+            // No extension page is required to be open during normal browsing.
+          }
+        } catch (error) {
+          // A failed get/update/remove never proves that either tab was closed.
+          // Reconcile both independently; a missing keeper must not evict the
+          // still-live duplicate from the cache or cause its deletion.
+          let keeperStillExists = false;
+          for (const tabId of [tabToKeep.id, duplicateTab.id]) {
+            try {
+              const tab = await chrome.tabs.get(tabId);
+              this._refreshTabCacheFromLiveTab(tab);
+              if (tabId === tabToKeep.id) keeperStillExists = true;
+            } catch (readError) {
+              if (this._isTabNotFoundError(readError)) {
+                this._removeUrlFromCache(tabId);
+                this._forgetTabCreationOrder(tabId);
               }
-
-              // The duplicate can enter Split View while focus is moving to
-              // the keeper. Use the post-focus live state, not the earlier snapshot.
-              if (this._isTabInSplitView(liveDuplicate)) {
-                this._refreshTabCacheFromLiveTab(liveKeeper);
-                this._refreshTabCacheFromLiveTab(liveDuplicate);
-                continue;
-              }
-
-              const focusedKeeperUrl = this._tryParseUrl(this._getTabUrlString(liveKeeper));
-              const duplicateUrlAfterFocus = this._tryParseUrl(this._getTabUrlString(liveDuplicate));
-              const duplicateWasAccessedAfterFocus = Number.isFinite(duplicateTab.lastAccessed) &&
-                Number.isFinite(liveDuplicate.lastAccessed) &&
-                liveDuplicate.lastAccessed > duplicateTab.lastAccessed;
-              const focusStateIsSafe =
-                liveKeeper.active === true &&
-                liveKeeper.windowId === currentTab.windowId &&
-                focusedKeeperUrl?.href === parsedUrl.href &&
-                liveDuplicate.active === false &&
-                liveDuplicate.highlighted === false &&
-                !duplicateWasAccessedAfterFocus &&
-                liveDuplicate.windowId === currentTab.windowId &&
-                duplicateUrlAfterFocus?.href === parsedUrl.href;
-
-              if (!focusStateIsSafe) {
-                this._refreshTabCacheFromLiveTab(liveKeeper);
-                this._refreshTabCacheFromLiveTab(liveDuplicate);
-                continue;
-              }
-            }
-
-            const duplicateGroupId = Number.isInteger(liveDuplicate.groupId)
-              ? liveDuplicate.groupId
-              : -1;
-            if (!(await this._canAutomaticallyRemoveTabFromGroup(liveDuplicate, liveKeeper))) {
-              this._refreshTabCacheFromLiveTab(liveKeeper);
-              this._refreshTabCacheFromLiveTab(liveDuplicate);
-              continue;
-            }
-
-            // The group lookup above is asynchronous. Re-read both tabs and
-            // require the duplicate to remain inactive, unchanged, outside
-            // Split View, and in the exact group that was just checked.
-            [liveKeeper, liveDuplicate] = await Promise.all([
-              chrome.tabs.get(liveKeeper.id),
-              chrome.tabs.get(liveDuplicate.id)
-            ]);
-            const finalKeeperUrl = this._tryParseUrl(this._getTabUrlString(liveKeeper));
-            const finalDuplicateUrl = this._tryParseUrl(this._getTabUrlString(liveDuplicate));
-            const finalDuplicateGroupId = Number.isInteger(liveDuplicate.groupId)
-              ? liveDuplicate.groupId
-              : -1;
-            const finalKeeperGroupId = Number.isInteger(liveKeeper.groupId)
-              ? liveKeeper.groupId
-              : -1;
-            const duplicateWasAccessedBeforeRemoval = Number.isFinite(duplicateTab.lastAccessed) &&
-              Number.isFinite(liveDuplicate.lastAccessed) &&
-              liveDuplicate.lastAccessed > duplicateTab.lastAccessed;
-            const removalStateIsSafe =
-              liveKeeper.windowId === currentTab.windowId &&
-              finalKeeperUrl?.href === parsedUrl.href &&
-              Boolean(liveKeeper.pinned) === Boolean(tabToKeep.pinned) &&
-              Boolean(liveDuplicate.pinned) === Boolean(duplicateTab.pinned) &&
-              liveDuplicate.active === false &&
-              liveDuplicate.highlighted === false &&
-              !duplicateWasAccessedBeforeRemoval &&
-              liveDuplicate.windowId === currentTab.windowId &&
-              finalDuplicateUrl?.href === parsedUrl.href &&
-              finalDuplicateGroupId === duplicateGroupId &&
-              (finalDuplicateGroupId < 0 || finalKeeperGroupId === finalDuplicateGroupId) &&
-              !this._isTabInSplitView(liveDuplicate);
-            if (!removalStateIsSafe) {
-              this._refreshTabCacheFromLiveTab(liveKeeper);
-              this._refreshTabCacheFromLiveTab(liveDuplicate);
-              continue;
-            }
-
-            await chrome.tabs.remove(liveDuplicate.id);
-            this._removeUrlFromCache(liveDuplicate.id, parsedUrl);
-            this._forgetTabCreationOrder(liveDuplicate.id);
-          } catch (error) {
-            if (this._isTabNotFoundError(error)) {
-              // Promise.all does not reveal which tab disappeared. Reconcile
-              // both IDs independently so a vanished keeper cannot evict the
-              // still-live duplicate from the cache.
-              let keeperStillExists = false;
-              try {
-                const latestKeeper = await chrome.tabs.get(liveKeeper.id);
-                keeperStillExists = true;
-                this._refreshTabCacheFromLiveTab(latestKeeper);
-              } catch (keeperError) {
-                if (this._isTabNotFoundError(keeperError)) {
-                  this._removeUrlFromCache(liveKeeper.id, parsedUrl);
-                  this._forgetTabCreationOrder(liveKeeper.id);
-                }
-              }
-
-              try {
-                const latestDuplicate = await chrome.tabs.get(liveDuplicate.id);
-                this._refreshTabCacheFromLiveTab(latestDuplicate);
-              } catch (duplicateError) {
-                if (this._isTabNotFoundError(duplicateError)) {
-                  this._removeUrlFromCache(liveDuplicate.id, parsedUrl);
-                  this._forgetTabCreationOrder(liveDuplicate.id);
-                }
-              }
-
-              // The selected keeper is no longer valid, so a new duplicate
-              // decision must be made by a later tab event using live state.
-              if (!keeperStillExists) return;
             }
           }
+          if (!this._isTabNotFoundError(error)) {
+            console.warn('LunaTools: 중복 탭 정리 실패', error);
+          }
+          if (!keeperStillExists) return;
         }
-      } catch (error) {
       }
     });
+  }
+
+  async reconcileTabReferences(rawReferences) {
+    if (!Array.isArray(rawReferences) || rawReferences.length === 0 ||
+        rawReferences.length > MAX_RECONCILE_TAB_REFERENCES) {
+      throw new Error('탭 확인 요청이 올바르지 않습니다.');
+    }
+    const references = rawReferences.map(reference => {
+      const url = typeof reference?.url === 'string' && reference.url.length <= MAX_OPEN_TAB_URL_LENGTH
+        ? this._tryParseUrl(reference.url) : null;
+      if (!Number.isInteger(reference?.tabId) || reference.tabId < 0 ||
+          !Number.isInteger(reference.windowId) || reference.windowId < 0 || !url) {
+        throw new Error('탭 확인 요청의 창·탭·URL이 올바르지 않습니다.');
+      }
+      return { ...reference, url: url.href };
+    });
+    if (!(await ensureTabCacheInitialized())) throw new Error('탭 목록을 확인하지 못했습니다.');
+
+    const windows = new Set(references.map(reference => reference.windowId));
+    const tabsByWindow = new Map();
+    for (const windowId of windows) {
+      // Await the common cleaner, including a navigation event already in
+      // flight. No restoration exemption or protection state is involved.
+      await Promise.all([...this.duplicateOperationQueues.entries()]
+        .filter(([key]) => key.startsWith(`${windowId}\u0000`))
+        .map(([, operation]) => operation));
+      const tabs = await chrome.tabs.query({ windowId });
+      const tabsByUrl = new Map();
+      for (const tab of tabs) {
+        const url = this._refreshTabCacheFromLiveTab(tab);
+        if (url && !tabsByUrl.has(url.href)) tabsByUrl.set(url.href, tab);
+      }
+      for (const tab of tabsByUrl.values()) {
+        await this.checkForDuplicateAndFocusExisting(tab);
+      }
+      tabsByWindow.set(windowId, await chrome.tabs.query({ windowId }));
+    }
+
+    const resolved = [];
+    for (const reference of references) {
+      // Callers may follow a confirmed duplicateTabRemoved/onReplaced result.
+      // A coincidentally matching URL never proves that a missing ID was
+      // removed normally: the referenced survivor itself must still exist.
+      let liveTab;
+      try { liveTab = await chrome.tabs.get(reference.tabId); }
+      catch (error) {
+        if (!this._isTabNotFoundError(error)) throw error;
+        throw new Error('복원된 탭이 누락되어 확인하지 못했습니다.');
+      }
+      let liveUrl = this._tryParseUrl(this._getTabUrlString(liveTab));
+      let windowTabs = tabsByWindow.get(reference.windowId) || [];
+      if (!windowTabs.some(tab => tab.id === liveTab.id &&
+          this._tryParseUrl(this._getTabUrlString(tab))?.href === liveUrl?.href)) {
+        // Navigation may continue while verification reads other tabs. Refresh
+        // the window snapshot instead of comparing a redirect to stale URLs.
+        windowTabs = await chrome.tabs.query({ windowId: reference.windowId });
+        tabsByWindow.set(reference.windowId, windowTabs);
+        liveTab = windowTabs.find(tab => tab.id === reference.tabId);
+        liveUrl = this._tryParseUrl(this._getTabUrlString(liveTab));
+      }
+      if (liveTab?.windowId !== reference.windowId || !liveUrl ||
+          (reference.navigationFailed === true && liveUrl.href !== reference.url)) {
+        throw new Error('복원된 탭의 창 또는 주소를 확인하지 못했습니다.');
+      }
+      const duplicates = windowTabs.filter(tab =>
+        this._tryParseUrl(this._getTabUrlString(tab))?.href === liveUrl.href);
+      if (duplicates.length !== 1) throw new Error('같은 창의 중복 탭 정리가 완료되지 않았습니다.');
+      resolved.push({ requestedTabId: reference.tabId, tabId: liveTab.id,
+        windowId: liveTab.windowId, url: liveUrl.href });
+    }
+    return resolved;
   }
 
   async _resolveTargetWindowId(preferredWindowId = null) {
@@ -1874,7 +1482,7 @@ class TabManager {
     }
   }
 
-  async handleTabUpdate(tab, { currentBecameDuplicate = false, suppressDuplicateHandling = false } = {}) {
+  async handleTabUpdate(tab, { currentBecameDuplicate = false } = {}) {
     if (!this._isValidTabForProcessing(tab)) return;
 
     const newUrlString = this._getTabUrlString(tab);
@@ -1900,12 +1508,6 @@ class TabManager {
       if (oldCachedInfo) this._removeUrlFromCache(tab.id, oldCachedInfo.url);
       this._addUrlToCache(tab.id, newParsedUrl, tab.windowId);
     }
-
-    // Session restoration intentionally recreates every saved tab, including
-    // exact duplicate URLs. Keep the URL cache current, but do not let the
-    // generic duplicate cleaner delete a tab while its restore navigation is
-    // still committing/redirecting.
-    if (suppressDuplicateHandling) return;
 
     // A service worker can wake on the URL-change event and initialize its
     // cache after Chrome has already exposed the destination URL. In that
@@ -1988,16 +1590,9 @@ chrome.commands.onCommand.addListener((command, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.action === PROTECT_SESSION_RESTORE_TABS_ACTION) {
-    protectSessionRestoreTabs(message.tabIds)
-      .then((protectedCount) => sendResponse({ ok: true, protectedCount }))
-      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
-    return true;
-  }
-
-  if (message?.action === UNPROTECT_SESSION_RESTORE_TABS_ACTION) {
-    unprotectSessionRestoreTabs(message.tabIds)
-      .then((removedCount) => sendResponse({ ok: true, removedCount }))
+  if (message?.action === RECONCILE_TAB_REFERENCES_ACTION) {
+    tabManager.reconcileTabReferences(message.tabs)
+      .then((tabs) => sendResponse({ ok: true, tabs }))
       .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
   }
@@ -2106,7 +1701,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.action.onClicked.addListener(async (tab) => {
 });
 
-chrome.tabs.onCreated.addListener((tab) => {
+chrome.tabs.onCreated.addListener(async (tab) => {
   void updateTabCountBadge();
   if (!tabManager._isValidTabForProcessing(tab)) return;
   tabManager._recordTabCreated(tab.id);
@@ -2115,6 +1710,15 @@ chrome.tabs.onCreated.addListener((tab) => {
   const parsedUrl = tabManager._tryParseUrl(urlString);
   if (parsedUrl) {
     tabManager._addUrlToCache(tab.id, parsedUrl, tab.windowId);
+    try {
+      await ensureTabCacheInitialized();
+      const liveTab = await chrome.tabs.get(tab.id);
+      await tabManager.handleTabUpdate(liveTab, { currentBecameDuplicate: true });
+    } catch (error) {
+      if (!tabManager._isTabNotFoundError(error)) {
+        console.warn('LunaTools: 새 탭 중복 정리 실패', error);
+      }
+    }
   }
 });
 
@@ -2139,14 +1743,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!tabManager._isValidTabForProcessing(tabToProcess)) return;
 
   if (changeInfo.url || changeInfo.status === 'complete') {
-    const suppressDuplicateHandling = await shouldSuppressDuplicateCleanupForSessionRestore(
-      tabId,
-      changeInfo,
-      tabToProcess
-    );
     await tabManager.handleTabUpdate(tabToProcess, {
-      currentBecameDuplicate: typeof changeInfo.url === 'string' && changeInfo.url.length > 0,
-      suppressDuplicateHandling
+      currentBecameDuplicate: typeof changeInfo.url === 'string' && changeInfo.url.length > 0
     });
   }
 });
@@ -2154,7 +1752,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 if (chrome.tabs.onReplaced) {
   chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
     tabManager._transferTabCreationOrder(removedTabId, addedTabId);
-    const suppressDuplicateHandling = await transferSessionRestoreTabProtection(removedTabId, addedTabId);
     await ensureTabCacheInitialized();
 
     const cachedInfo = tabManager.urlCache.get(removedTabId);
@@ -2164,7 +1761,7 @@ if (chrome.tabs.onReplaced) {
 
     try {
       const addedTab = await chrome.tabs.get(addedTabId);
-      await tabManager.handleTabUpdate(addedTab, { suppressDuplicateHandling });
+      await tabManager.handleTabUpdate(addedTab);
     } catch (error) {
       if (!tabManager._isTabNotFoundError(error)) {
         console.warn("LunaTools: 교체된 탭 캐시 갱신 실패", error);
@@ -2176,7 +1773,6 @@ if (chrome.tabs.onReplaced) {
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   void updateTabCountBadge();
   tabManager.handleTabRemoved(tabId, removeInfo);
-  void removeSessionRestoreTabProtection(tabId);
 });
 
 chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {

@@ -3885,33 +3885,6 @@ document.addEventListener('DOMContentLoaded', function() {
         return false;
       };
       
-      const protectTabsFromDuplicateCleanupDuringRestore = async (tabIds) => {
-        const uniqueTabIds = [...new Set(tabIds.filter(tabId => Number.isInteger(tabId) && tabId >= 0))];
-        if (uniqueTabIds.length === 0) return;
-
-        const response = await chrome.runtime.sendMessage({
-          action: 'protectSessionRestoreTabs',
-          tabIds: uniqueTabIds
-        });
-        if (!response?.ok) {
-          throw new Error(response?.error || '세션 복원 탭의 중복 제거 보호를 설정하지 못했습니다.');
-        }
-      };
-
-      const releaseDuplicateCleanupProtectionForRestore = async (tabIds) => {
-        const uniqueTabIds = [...new Set(tabIds.filter(tabId => Number.isInteger(tabId) && tabId >= 0))];
-        if (uniqueTabIds.length === 0) return;
-        try {
-          await chrome.runtime.sendMessage({
-            action: 'unprotectSessionRestoreTabs',
-            tabIds: uniqueTabIds
-          });
-        } catch (_) {
-          // The background protection is also bounded by a TTL and removed when
-          // a tab closes, so rollback must never fail only because cleanup did.
-        }
-      };
-
       const restoreTabGroupsForWindow = async (createdTabs, windowId, onGroupCreated = null) => {
         const groupsToRestore = new Map();
         createdTabs.forEach(({ savedTab, createdTabId }) => {
@@ -3987,13 +3960,36 @@ document.addEventListener('DOMContentLoaded', function() {
         const createdWindowIds = [];
         const createdRestoreTabs = [];
         const tabInteractionTracker = createTabInteractionTracker();
+        // Only completed common-cleaner operations (or Chrome's own tab
+        // replacement event) may replace a missing restoration reference.
+        // These short-lived result links never exempt any tab from cleanup.
+        const tabReplacements = new Map();
+        const handleDuplicateTabRemoved = (message, sender, sendResponse) => {
+          if (message?.action !== 'duplicateTabRemoved' ||
+              sender?.id !== chrome.runtime.id || sender?.tab) return false;
+          if (createdWindowIds.includes(message.windowId) &&
+              Number.isInteger(message.tabId) && Number.isInteger(message.keptTabId) &&
+              message.tabId !== message.keptTabId) {
+            tabReplacements.set(message.tabId, message.keptTabId);
+          }
+          sendResponse({ ok: true });
+          return false;
+        };
+        const handleRestoreTabReplaced = (addedTabId, removedTabId) => {
+          const isTrackedTab = createdRestoreTabs.some(tab => tab.tabId === removedTabId) ||
+            [...tabReplacements.values()].includes(removedTabId);
+          if (isTrackedTab && Number.isInteger(addedTabId) && Number.isInteger(removedTabId) && addedTabId !== removedTabId) {
+            tabReplacements.set(removedTabId, addedTabId);
+          }
+        };
+        chrome.runtime.onMessage.addListener(handleDuplicateTabRemoved);
+        if (chrome.tabs.onReplaced) chrome.tabs.onReplaced.addListener(handleRestoreTabReplaced);
         try {
           for (const windowTabs of tabsByWindow.values()) {
             const [firstTab, ...remainingTabs] = windowTabs;
-            // Build the window with neutral tabs first. If saved URLs are assigned
-            // before their groups exist, LunaTools' duplicate-tab protection can
-            // legitimately see same-URL tabs as ordinary ungrouped duplicates and
-            // remove one before the saved group layout is restored.
+            // Build groups and pin states on neutral tabs before navigation.
+            // Once real URLs are assigned, the common window-scoped duplicate
+            // cleaner applies exactly as it does to ordinary browsing.
             const createdWindow = await chrome.windows.create({
               url: CONSTANTS.RESTORE.PLACEHOLDER_URL,
               focused: false
@@ -4070,47 +4066,76 @@ document.addEventListener('DOMContentLoaded', function() {
               if (restoreTab) restoreTab.expectedGroupId = groupId;
             });
 
-            // The extension-wide duplicate-tab cleaner normally removes exact
-            // duplicate URLs. A saved session, however, must reproduce every
-            // saved tab even when two tabs intentionally share the same URL.
-            // Register the neutral placeholders before assigning real URLs so
-            // their initial restore navigation cannot be mistaken for a new
-            // duplicate and closed by background.js.
-            await protectTabsFromDuplicateCleanupDuringRestore(
-              windowRestoreTabs.map(restoreTab => restoreTab.tabId)
-            );
-
             // With the structural layout in place, assign the real URLs. Verify
             // every placeholder immediately beforehand so a tab that the user
             // selected, moved, pinned, regrouped, or navigated during restoration
             // is never overwritten by the delayed URL assignment.
             for (const restoreTab of windowRestoreTabs) {
-              const livePlaceholderTab = await chrome.tabs.get(restoreTab.tabId);
-              const rawPendingUrl = typeof livePlaceholderTab.pendingUrl === 'string'
-                ? livePlaceholderTab.pendingUrl.trim()
-                : '';
-              const rawCommittedUrl = typeof livePlaceholderTab.url === 'string'
-                ? livePlaceholderTab.url.trim()
-                : '';
-              const effectiveRawUrl = rawPendingUrl || rawCommittedUrl;
-              const placeholderStateIsSafe =
-                livePlaceholderTab.windowId === restoreTab.windowId &&
-                Boolean(livePlaceholderTab.pinned) === restoreTab.expectedPinned &&
-                getSessionTabGroupId(livePlaceholderTab) === restoreTab.expectedGroupId &&
-                effectiveRawUrl === CONSTANTS.RESTORE.PLACEHOLDER_URL &&
-                !tabInteractionTracker.hasInteracted(restoreTab.tabId);
+              try {
+                const livePlaceholderTab = await chrome.tabs.get(restoreTab.tabId);
+                const rawPendingUrl = typeof livePlaceholderTab.pendingUrl === 'string'
+                  ? livePlaceholderTab.pendingUrl.trim()
+                  : '';
+                const rawCommittedUrl = typeof livePlaceholderTab.url === 'string'
+                  ? livePlaceholderTab.url.trim()
+                  : '';
+                const effectiveRawUrl = rawPendingUrl || rawCommittedUrl;
+                const placeholderStateIsSafe =
+                  livePlaceholderTab.windowId === restoreTab.windowId &&
+                  Boolean(livePlaceholderTab.pinned) === restoreTab.expectedPinned &&
+                  getSessionTabGroupId(livePlaceholderTab) === restoreTab.expectedGroupId &&
+                  effectiveRawUrl === CONSTANTS.RESTORE.PLACEHOLDER_URL &&
+                  !tabInteractionTracker.hasInteracted(restoreTab.tabId);
 
-              if (!placeholderStateIsSafe) {
-                throw new Error('복원 중 탭 상태가 변경되어 URL 적용을 중단했습니다.');
-              }
+                if (!placeholderStateIsSafe) {
+                  throw new Error('복원 중 탭 상태가 변경되어 URL 적용을 중단했습니다.');
+                }
 
-              const navigatedTab = await chrome.tabs.update(restoreTab.tabId, {
-                url: restoreTab.expectedUrl
-              });
-              if (!Number.isInteger(navigatedTab?.id) || navigatedTab.id !== restoreTab.tabId) {
-                throw new Error('복원된 탭에 URL을 적용하지 못했습니다.');
+                const navigatedTab = await chrome.tabs.update(restoreTab.tabId, {
+                  url: restoreTab.expectedUrl
+                });
+                if (!Number.isInteger(navigatedTab?.id) || navigatedTab.id !== restoreTab.tabId) {
+                  throw new Error('복원된 탭에 URL을 적용하지 못했습니다.');
+                }
+              } catch (navigationError) {
+                const message = String(navigationError?.message || '').toLowerCase();
+                const tabAlreadyGone = message.includes('no tab with id') ||
+                  message.includes('invalid tab id') || message.includes('tab id not found');
+                if (!tabAlreadyGone) throw navigationError;
+                // Defer only missing-tab errors. Final verification requires
+                // a confirmed replacement and its live same-window survivor;
+                // an unrelated disappearance or API error is still fatal.
+                restoreTab.navigationFailed = true;
               }
             }
+          }
+
+          for (let attempt = 0; ; attempt += 1) {
+            const references = createdRestoreTabs.map(restoreTab => {
+              let tabId = restoreTab.tabId;
+              const visited = new Set();
+              while (tabReplacements.has(tabId)) {
+                if (visited.has(tabId)) throw new Error('중복 탭 정리 결과가 올바르지 않습니다.');
+                visited.add(tabId);
+                tabId = tabReplacements.get(tabId);
+              }
+              return {
+                tabId, windowId: restoreTab.windowId,
+                url: restoreTab.expectedUrl,
+                navigationFailed: restoreTab.navigationFailed === true && tabId === restoreTab.tabId
+              };
+            });
+            const knownReplacementCount = tabReplacements.size;
+            const verification = await chrome.runtime.sendMessage({ action: 'reconcileTabReferences', tabs: references });
+            // Cleanup can finish while this request waits for the common
+            // queue. Follow its newly confirmed result, with a bounded retry;
+            // never retry an unexplained missing tab or ignore an API error.
+            if (tabReplacements.size > knownReplacementCount && attempt < createdRestoreTabs.length) continue;
+            if (!verification?.ok || !Array.isArray(verification.tabs) ||
+                verification.tabs.length !== createdRestoreTabs.length) {
+              throw new Error(verification?.error || '복원된 탭의 중복 정리 결과를 확인하지 못했습니다.');
+            }
+            break;
           }
 
           if (createdWindowIds.length > 0) {
@@ -4118,14 +4143,6 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
         } catch (error) {
-          // A failed restore owns no future navigation. Release all registrations
-          // before rollback so user-preserved tabs immediately return to normal
-          // duplicate handling. Successful restores auto-release in background.js
-          // after each tab's first real navigation completes.
-          await releaseDuplicateCleanupProtectionForRestore(
-            createdRestoreTabs.map(restoreTab => restoreTab.tabId)
-          );
-
           let rollbackFailureCount = 0;
           let preservedChangedTabCount = 0;
           let focusedWindowId = null;
@@ -4185,6 +4202,8 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           throw new Error(`${reason}${rollbackStatus}`);
         } finally {
+          chrome.runtime.onMessage.removeListener(handleDuplicateTabRemoved);
+          if (chrome.tabs.onReplaced) chrome.tabs.onReplaced.removeListener(handleRestoreTabReplaced);
           tabInteractionTracker.stop();
         }
       };
