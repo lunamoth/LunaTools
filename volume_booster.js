@@ -35,7 +35,7 @@
         for (let index = 0; index < roots.length; index += 1) {
             if (isCancelled()) return false;
             const root = roots[index];
-            if (!root || visited.has(root) || ![Node.DOCUMENT_NODE, Node.DOCUMENT_FRAGMENT_NODE, Node.ELEMENT_NODE].includes(root.nodeType)) continue;
+            if (!root?.isConnected || visited.has(root) || ![Node.DOCUMENT_NODE, Node.DOCUMENT_FRAGMENT_NODE, Node.ELEMENT_NODE].includes(root.nodeType)) continue;
             visited.add(root);
             if (root.nodeType === Node.ELEMENT_NODE) {
                 collect(root);
@@ -47,6 +47,11 @@
             let element;
             while ((element = walker.nextNode())) {
                 if (isCancelled()) return false;
+                // A yielded scan can outlive removal of its subtree. Do not
+                // rediscover detached ShadowRoots after the removal observer
+                // has already pruned them, or retain them until another removal.
+                if (!root.isConnected) break;
+                if (!element.isConnected) continue;
                 visited.add(element);
                 collect(element);
                 sliceElements++;
@@ -623,7 +628,7 @@
         }
 
         #observeMutationRoot(rootNode) {
-            if (!this.#domObserver || !rootNode || this.#observedMutationRoots.has(rootNode)) return;
+            if (!this.#domObserver || !rootNode?.isConnected || this.#observedMutationRoots.has(rootNode)) return;
 
             this.#observeMutationRootWithObserver(rootNode);
             rootNode.addEventListener('loadedmetadata', this.#boundHandleMediaReady, true);

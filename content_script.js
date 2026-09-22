@@ -2428,7 +2428,10 @@ async function lunaToolsWriteTextToClipboard(text) {
             const magnitudeSuffix = String.raw`(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT])`;
             const numericWithMagnitude = `${numeric}\\s*${magnitudeSuffix}`;
             const koreanOrPlainNumber = String.raw`[+\-\u2212\uFE63\uFF0D]?[\d,\.\s천백십경조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
-            return `${NUMERIC_TOKEN_START_BOUNDARY_SOURCE}(?:${numericWithMagnitude}|${numeric}|${koreanOrPlainNumber})`;
+            // An amount cannot start at each whitespace in a long gap. Together
+            // with trimming trailing context below, this avoids overlapping
+            // whitespace quantifiers blocking the page during a failed match.
+            return `${NUMERIC_TOKEN_START_BOUNDARY_SOURCE}(?=\\S)(?:${numericWithMagnitude}|${numeric}|${koreanOrPlainNumber})`;
         },
         _isStrictCurrencyAmountText: function(amountText) {
             if (Utils.isInvalidString(amountText)) return false;
@@ -2742,8 +2745,8 @@ async function lunaToolsWriteTextToClipboard(text) {
             const optionalSymbolPrefix = allowLeadingCurrencySymbol
                 ? `(?:(?:${TextExtractor._getOptionalCurrencySymbolAmountPrefixSource()})\\s*)?`
                 : '';
-            const trailingRegex = new RegExp(`(${optionalSymbolPrefix}(${source}))\\s*$`, 'iu');
-            const match = trailingRegex.exec(text);
+            const trailingRegex = new RegExp(`(${optionalSymbolPrefix}(${source}))$`, 'iu');
+            const match = trailingRegex.exec(text.trimEnd());
             if (!match) return null;
 
             const candidate = TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], match.index, match[2]);
@@ -2830,7 +2833,46 @@ async function lunaToolsWriteTextToClipboard(text) {
                     followingText,
                     { allowLeadingCurrencySymbol, currencyToken: matchedCurrencyText }
                 );
-            if (leadingAmountCandidate) {
+            const precedingText = originalText.slice(0, currencyStart);
+            const currentLineStart = 1 + Math.max(...['\r', '\n', '\u2028', '\u2029']
+                .map(separator => precedingText.lastIndexOf(separator)));
+            let trailingAmountCandidate = TextExtractor._extractTrailingAmountCandidate(
+                precedingText.slice(currentLineStart), { allowLeadingCurrencySymbol }
+            );
+            if (trailingAmountCandidate) {
+                trailingAmountCandidate.startOffset += currentLineStart;
+                trailingAmountCandidate.endOffset += currentLineStart;
+            } else if (currentLineStart > 0) {
+                trailingAmountCandidate = TextExtractor._extractTrailingAmountCandidate(
+                    precedingText, { allowLeadingCurrencySymbol }
+                );
+            }
+            const parsedTrailing = trailingAmountCandidate
+                ? TextExtractor._parseAmountCandidateText(trailingAmountCandidate.amountText)
+                : null;
+            const precedingCurrencyContext = parsedTrailing && leadingAmountCandidate
+                ? originalText.slice(0, trailingAmountCandidate.startOffset).trimEnd()
+                : '';
+            const trailingAmountAlreadyPrefixed = precedingCurrencyContext &&
+                Config.CURRENCY_PATTERNS.some(pattern => {
+                    // Use a separate regex so the caller's global lastIndex is untouched.
+                    const prefixRegex = new RegExp(`(?:${pattern.regex.source})$`, pattern.regex.flags.replace('g', ''));
+                    const prefixMatch = prefixRegex.exec(precedingCurrencyContext);
+                    return prefixMatch && TextExtractor._isValidCurrencyTokenMatch(
+                        precedingCurrencyContext, pattern.code, prefixMatch
+                    );
+                });
+            const followingAmountOnNextLine = leadingAmountCandidate &&
+                /[\r\n\u2028\u2029]/u.test(followingText.slice(0, leadingAmountCandidate.endOffset));
+            // Bind "100 USD 20 kg" to 100, including when the weight is on the
+            // next line. A preceding prefix ("USD 100 EUR 200") owns its amount,
+            // so EUR still binds to 200. Keep wrapped "USD\n100" and reject
+            // same-line signed expressions such as "5만원-10" as before.
+            const preferSameLineTrailingAmount = parsedTrailing && leadingAmountCandidate &&
+                !trailingAmountAlreadyPrefixed &&
+                !/[\r\n\u2028\u2029]/u.test(originalText.slice(trailingAmountCandidate.startOffset, currencyStart)) &&
+                (followingAmountOnNextLine || !LEADING_NUMERIC_SIGN_REGEX.test(leadingAmountCandidate.amountText));
+            if (leadingAmountCandidate && !preferSameLineTrailingAmount) {
                 const parsedLeading = TextExtractor._parseAmountCandidateText(leadingAmountCandidate.amountText);
                 if (parsedLeading) {
                     // If a complete amount already appears immediately before
@@ -2838,14 +2880,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                     // the right-hand operand of an expression (5만원-10), not
                     // a currency-prefixed amount. Do not silently convert it.
                     if (LEADING_NUMERIC_SIGN_REGEX.test(leadingAmountCandidate.amountText)) {
-                        const precedingAmountCandidate = TextExtractor._extractTrailingAmountCandidate(
-                            originalText.slice(0, currencyStart),
-                            { allowLeadingCurrencySymbol }
-                        );
-                        if (
-                            precedingAmountCandidate &&
-                            TextExtractor._parseAmountCandidateText(precedingAmountCandidate.amountText)
-                        ) {
+                        if (parsedTrailing) {
                             return null;
                         }
                     }
@@ -2882,12 +2917,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                 }
             }
 
-            const trailingAmountCandidate = TextExtractor._extractTrailingAmountCandidate(
-                originalText.slice(0, currencyStart),
-                { allowLeadingCurrencySymbol }
-            );
             if (trailingAmountCandidate) {
-                const parsedTrailing = TextExtractor._parseAmountCandidateText(trailingAmountCandidate.amountText);
                 if (parsedTrailing) {
                     const expressionStart = trailingAmountCandidate.startOffset;
                     const expressionEnd = currencyEnd;
