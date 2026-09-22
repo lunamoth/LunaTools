@@ -121,6 +121,7 @@
         #boundHandleFocusChange = this.#handleFocusChange.bind(this);
         #boundHandleEditableFocus = this.#handleEditableFocus.bind(this);
         #boundHandleWheel = this.#handleWheel.bind(this);
+        #boundHandleViewportChange = this.#handleViewportChange.bind(this);
         #boundHandlePointerCapture = this.#handlePointerCapture.bind(this);
         #boundHandleMouseOut = this.#handleMouseOut.bind(this);
         #boundHandleMouseOver = this.#handleMouseOver.bind(this);
@@ -180,6 +181,8 @@
             window.addEventListener('dragstart', this.#boundHandleInteractionAbort, true);
             window.addEventListener('dragend', this.#boundHandleInteractionAbort, true);
             window.addEventListener('wheel', this.#boundHandleWheel, { capture: true, passive: true });
+            window.addEventListener('scroll', this.#boundHandleViewportChange, { capture: true, passive: true });
+            window.addEventListener('resize', this.#boundHandleViewportChange, { passive: true });
             document.addEventListener('visibilitychange', this.#boundHandleVisibilityChange, true);
         }
 
@@ -207,6 +210,8 @@
             window.removeEventListener('dragstart', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('dragend', this.#boundHandleInteractionAbort, true);
             window.removeEventListener('wheel', this.#boundHandleWheel, true);
+            window.removeEventListener('scroll', this.#boundHandleViewportChange, true);
+            window.removeEventListener('resize', this.#boundHandleViewportChange);
             document.removeEventListener('visibilitychange', this.#boundHandleVisibilityChange, true);
         }
 
@@ -348,10 +353,14 @@
         }
 
         #isLinkScanTaskUsable(task) {
+            const viewport = task?.selectionViewport;
             return Boolean(task) && !task.cancelled && !task.error &&
                 task.body === document.body && Boolean(task.body?.isConnected) &&
                 task.href === window.location.href && document.visibilityState !== 'hidden' &&
-                document.hasFocus();
+                document.hasFocus() && (!viewport || (
+                    viewport.scrollX === window.scrollX && viewport.scrollY === window.scrollY &&
+                    viewport.width === window.innerWidth && viewport.height === window.innerHeight
+                ));
         }
 
         #yieldLinkScanTask(task) {
@@ -466,6 +475,7 @@
                 if (!this.#isLinkScanTaskUsable(task)) return;
                 const finalLinks = await this.#getLinksInRectIncrementally(task.links, selectionRect, task);
                 if (finalLinks && this.#isLinkScanTaskUsable(task)) {
+                    task.actionStarted = true;
                     await this.#performAction(finalLinks, modifier);
                 }
             } catch (_) {
@@ -1045,6 +1055,15 @@
                     // mousemove 이후 다음 프레임 전에 놓아도 실제 해제 좌표를 사용합니다.
                     this.#lastMouseEvent = e;
                     finalSelectionRect = this.#getSelectionRect();
+                    if (linkScanTask) {
+                        // getClientRects() uses viewport coordinates. A later
+                        // scroll/resize must not reuse this released rectangle
+                        // against links that have moved into a different place.
+                        linkScanTask.selectionViewport = {
+                            scrollX: window.scrollX, scrollY: window.scrollY,
+                            width: window.innerWidth, height: window.innerHeight
+                        };
+                    }
                 }
             } catch (_) {
                 finalSelectionRect = null;
@@ -1107,8 +1126,19 @@
             });
         }
 
+        #handleViewportChange() {
+            // Capture also sees scrolling inside ordinary page containers.
+            // Only unfinished hit testing is cancelled: scrolling during a
+            // live drag or an already-confirmed delayed-open queue stays valid.
+            if (this.#pendingActionTask && !this.#pendingActionTask.actionStarted) {
+                this.#resetState();
+            }
+        }
+
         #handleWheel(e) {
-            if (!e.isTrusted || !this.#isTrustedSequence) return;
+            if (!e.isTrusted) return;
+            this.#handleViewportChange();
+            if (!this.#isTrustedSequence) return;
             if ((e.buttons & 1) === 0 || !this.#hasOriginalModifier(e) || !this.#hasLiveDragContext()) {
                 this.#resetState();
             }

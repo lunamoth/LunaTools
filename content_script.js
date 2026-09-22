@@ -4023,7 +4023,15 @@ async function lunaToolsWriteTextToClipboard(text) {
             document.addEventListener('visibilitychange', () => {
                 if (document.visibilityState === 'hidden') PopupUI.close();
             }, true);
-            window.addEventListener('scroll', () => { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) PopupUI.close(); }, true);
+            window.addEventListener('scroll', (event) => {
+                const popup = AppState.currentPopupElement;
+                if (!popup || popup.style.display === 'none' || !popup.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) return;
+                // The capture listener also receives the popup's own result
+                // scrolling. Keep long results readable and close only when
+                // the surrounding page moves away from the selection.
+                if (event.target instanceof Node && popup.contains(event.target)) return;
+                PopupUI.close();
+            }, true);
             window.addEventListener('resize', Utils.debounce(() => { if (AppState.currentPopupElement && AppState.currentPopupElement.style.display !== 'none' && AppState.currentPopupElement.classList.contains(UI_STRINGS.POPUP_VISIBLE_CLASS)) { const { top, left } = PopupUI.calculatePosition(AppState.currentPopupElement); AppState.currentPopupElement.style.top = `${top}px`; AppState.currentPopupElement.style.left = `${left}px`; } }, 250));
         }
     };
