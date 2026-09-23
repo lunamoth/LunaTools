@@ -1,12 +1,13 @@
 // manifest에서 가장 먼저 동기 선언됩니다. 같은 확장의 isolated world에서만
 // 공유하며, 페이지 전체를 감시하지 않고 실제 입력 이벤트의 경로만 확인합니다.
-function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includeActiveElement = true } = {}) {
+function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includeActiveElement = true, allowNonEditableControls = false } = {}) {
   if (String(document.designMode).toLowerCase() === 'on') return true;
   const candidates = typeof event.composedPath === 'function' ? event.composedPath().slice() : [];
   candidates.push(event.target);
   if (includeActiveElement) candidates.push(document.activeElement);
   const visited = new Set();
-  const inputRoles = new Set(['textbox', 'searchbox', 'combobox', 'application']);
+  const inputRoles = new Set(['textbox', 'searchbox', 'combobox']);
+  if (!allowNonEditableControls) inputRoles.add('application');
   const controlRoles = new Set([
     'button', 'checkbox', 'switch', 'slider', 'spinbutton', 'grid', 'gridcell',
     'listbox', 'option', 'menu', 'menubar', 'menuitem', 'menuitemcheckbox',
@@ -16,11 +17,13 @@ function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includ
     const element = candidates.pop();
     if (!(element instanceof Element) || visited.has(element)) continue;
     visited.add(element);
-    if (element.isContentEditable || element.matches('input, textarea, select, .CodeMirror, .codemirror, .monaco-editor, .ace_editor')) return true;
-    // Keyboard shortcuts must never steal input from a site-owned focusable widget.
-    // Pointer gestures pass includeActiveElement:false, so links/custom widgets remain
-    // available as drag starting points while focused keyboard controls are protected.
-    if (includeActiveElement && element instanceof HTMLElement && element.tabIndex >= 0 && (element === document.activeElement || element.matches(':focus'))) return true;
+    const isButtonOrSlider = allowNonEditableControls && element.matches('input[type="button"], input[type="submit"], input[type="reset"], input[type="range"]');
+    const isProtectedInput = element.matches('input') && !isButtonOrSlider;
+    if (element.isContentEditable || isProtectedInput || element.matches('textarea, select, .CodeMirror, .codemirror, .monaco-editor, .ace_editor')) return true;
+    // Preserve focused-widget protection by default. Video rotation opts out while
+    // retaining editable-input checks, including the real focus inside Shadow DOM.
+    // Pointer gestures still use includeActiveElement:false for drag starting points.
+    if (!allowNonEditableControls && includeActiveElement && element instanceof HTMLElement && element.tabIndex >= 0 && (element === document.activeElement || element.matches(':focus'))) return true;
     const editableValue = element.getAttribute('contenteditable');
     if (editableValue !== null && editableValue.toLowerCase() !== 'false') return true;
     const roles = String(element.getAttribute('role') || '').toLowerCase().split(/\s+/);
@@ -4215,7 +4218,7 @@ async function lunaToolsWriteTextToClipboard(text) {
         }
 
         #handleKeyDown(event) {
-            if (!event.isTrusted || event.repeat || event.defaultPrevented || event.isComposing || event.metaKey || !this.#isShortcutPressed(event) || lunaToolsIsProtectedInputEvent(event)) {
+            if (!event.isTrusted || event.repeat || event.defaultPrevented || event.isComposing || event.metaKey || !this.#isShortcutPressed(event) || lunaToolsIsProtectedInputEvent(event, { allowNonEditableControls: true })) {
                 return;
             }
             const targetVideo = this.#findPrioritizedVideo();
