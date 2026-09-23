@@ -2437,13 +2437,13 @@ document.addEventListener('DOMContentLoaded', function() {
             let latestTab = initialTab;
 
             if (getNormalizedTabNavigationUrls(latestTab).includes(expectedUrl)) {
-                return latestTab;
+                return { tab: latestTab, observedExpectedUrl: true };
             }
 
             while (Date.now() < deadline) {
                 latestTab = await chrome.tabs.get(tabId);
                 if (getNormalizedTabNavigationUrls(latestTab).includes(expectedUrl)) {
-                    return latestTab;
+                    return { tab: latestTab, observedExpectedUrl: true };
                 }
                 await wait(100);
             }
@@ -2453,13 +2453,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error('새 탭에 대상 URL이 할당되지 않았습니다.');
             }
 
-            // The target can redirect before the polling loop observes it. A
-            // supported web URL is safe to keep, but a blank/New Tab state is
-            // not a successful delayed-load result.
-            return latestTab;
+            // The target can redirect before the polling loop observes it. Keep
+            // that tab loaded unless we first observed our exact requested URL;
+            // this avoids discarding a tab that might have been repurposed.
+            return { tab: latestTab, observedExpectedUrl: false };
         }
 
-        const isUntouchedRunTab = (currentTab, createdTab, expectedUrl, interactionTracker = null) => {
+        const isUntouchedRunTab = (
+            currentTab,
+            createdTab,
+            expectedUrl,
+            interactionTracker = null,
+            { allowRedirectedUrl = false } = {}
+        ) => {
             if (!Number.isInteger(createdTab?.id) || currentTab?.id !== createdTab.id) return false;
 
             const currentUrl = normalizeUrlForOpening(currentTab.pendingUrl || currentTab.url || '');
@@ -2469,6 +2475,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const wasAccessedAfterCreation = Number.isFinite(createdTab.lastAccessed) &&
                 Number.isFinite(currentTab.lastAccessed) &&
                 currentTab.lastAccessed > createdTab.lastAccessed;
+            const hasSafeNavigationState = currentUrl === expectedUrl ||
+                (allowRedirectedUrl && Boolean(currentUrl));
 
             // A tab that has been used or repurposed must keep both its contents
             // and its place in the user's layout, even after it becomes inactive.
@@ -2480,7 +2488,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentTab.index === createdTab.index &&
                 Boolean(currentTab.pinned) === Boolean(createdTab.pinned) &&
                 currentGroupId === createdGroupId && currentGroupId < 0 &&
-                currentUrl === expectedUrl;
+                hasSafeNavigationState;
         };
 
         async function createAndDiscardTab(url, interactionTracker = null) {
@@ -2500,10 +2508,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 const tabId = newTab.id;
                 interactionTracker?.watch(tabId);
 
-                await waitForTabUrlAssignment(tabId, normalizedUrl, newTab);
+                const assignment = await waitForTabUrlAssignment(tabId, normalizedUrl, newTab);
 
                 const currentTab = await chrome.tabs.get(tabId);
-                if (!isUntouchedRunTab(currentTab, createdTab, normalizedUrl, interactionTracker)) {
+                if (!isUntouchedRunTab(
+                    currentTab,
+                    createdTab,
+                    normalizedUrl,
+                    interactionTracker,
+                    { allowRedirectedUrl: assignment.observedExpectedUrl }
+                )) {
                     return createdTab;
                 }
 

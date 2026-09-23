@@ -187,6 +187,7 @@
         #trackedMediaRefs = new Set();
         #volumeUpdateGeneration = 0;
         #warnedUnsafeMedia = new WeakSet();
+        #warnedRoutingFallbackMedia = new WeakSet();
         #disconnectedMediaRefs = new Set();
         #disconnectedMediaRefByElement = new WeakMap();
         #disconnectedMediaPlayHandlerByElement = new WeakMap();
@@ -421,11 +422,10 @@
 
             this.#cancelPendingDetachedCleanup(mediaElement);
             const { source, gainNode } = audioComponents;
-            try {
-                source.disconnect();
-                gainNode.disconnect();
-            } catch {}
+            try { source.disconnect(); } catch {}
+            try { gainNode.disconnect(); } catch {}
             audioComponents.connected = false;
+            audioComponents.bypassConnected = false;
             this.#trackDisconnectedMedia(mediaElement);
         }
 
@@ -522,18 +522,58 @@
             );
         }
 
+        #warnRoutingFallbackOnce(mediaElement) {
+            if (this.#warnedRoutingFallbackMedia.has(mediaElement)) return;
+            this.#warnedRoutingFallbackMedia.add(mediaElement);
+            console.warn(
+                'LunaTools: 볼륨 부스터 오디오 그래프 연결에 실패하여 원본 음량 우회 경로로 복구했습니다.'
+            );
+        }
+
+        #connectAudioComponents(mediaElement, audioComponents) {
+            const { source, gainNode } = audioComponents;
+
+            // Rebuilding an existing route must be transactional. Once an
+            // HTMLMediaElement is wrapped by createMediaElementSource(), leaving
+            // its source node disconnected can make that element silent until a
+            // page reload. Always restore a direct destination route on failure.
+            try { source.disconnect(); } catch {}
+            try { gainNode.disconnect(); } catch {}
+
+            try {
+                source.connect(gainNode);
+                gainNode.connect(this.#audioContext.destination);
+                audioComponents.connected = true;
+                audioComponents.bypassConnected = false;
+                this.#forgetDisconnectedMedia(mediaElement);
+                return true;
+            } catch {}
+
+            try { source.disconnect(); } catch {}
+            try { gainNode.disconnect(); } catch {}
+
+            try {
+                source.connect(this.#audioContext.destination);
+                audioComponents.connected = true;
+                audioComponents.bypassConnected = true;
+                this.#forgetDisconnectedMedia(mediaElement);
+                this.#warnRoutingFallbackOnce(mediaElement);
+                return true;
+            } catch {
+                audioComponents.connected = false;
+                audioComponents.bypassConnected = false;
+                this.#trackDisconnectedMedia(mediaElement);
+                return false;
+            }
+        }
+
         #setup(mediaElement, allowNewSetup) {
             if (!this.#audioContext) return null;
 
             const existingComponents = this.#sourceNodeMap.get(mediaElement);
             if (existingComponents) {
-                if (!existingComponents.connected) {
-                    try {
-                        existingComponents.source.connect(existingComponents.gainNode);
-                        existingComponents.gainNode.connect(this.#audioContext.destination);
-                        existingComponents.connected = true;
-                        this.#forgetDisconnectedMedia(mediaElement);
-                    } catch {}
+                if (!existingComponents.connected || (allowNewSetup && existingComponents.bypassConnected)) {
+                    this.#connectAudioComponents(mediaElement, existingComponents);
                 }
                 return existingComponents;
             }
@@ -545,18 +585,36 @@
                 return null;
             }
 
+            // Create the gain node first. If that allocation fails, the media is
+            // still untouched. createMediaElementSource() is the irreversible
+            // step because a successful call reroutes the element through Web Audio.
+            let gainNode;
             try {
-                const source = this.#audioContext.createMediaElementSource(mediaElement);
-                const gainNode = this.#audioContext.createGain();
-                source.connect(gainNode).connect(this.#audioContext.destination);
-                const audioComponents = { source, gainNode, connected: true };
-                this.#hasSetupMedia = true;
-                this.#sourceNodeMap.set(mediaElement, audioComponents);
-                this.#trackedMediaRefs.add(new WeakRef(mediaElement));
-                return audioComponents;
+                gainNode = this.#audioContext.createGain();
             } catch {
                 return null;
             }
+
+            let source;
+            try {
+                source = this.#audioContext.createMediaElementSource(mediaElement);
+            } catch {
+                return null;
+            }
+
+            const audioComponents = {
+                source,
+                gainNode,
+                connected: false,
+                bypassConnected: false
+            };
+            // Store the source immediately after creation so later retries never
+            // call createMediaElementSource() twice for the same media element.
+            this.#hasSetupMedia = true;
+            this.#sourceNodeMap.set(mediaElement, audioComponents);
+            this.#trackedMediaRefs.add(new WeakRef(mediaElement));
+            this.#connectAudioComponents(mediaElement, audioComponents);
+            return audioComponents;
         }
 
     }
