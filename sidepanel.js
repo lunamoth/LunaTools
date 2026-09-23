@@ -186,6 +186,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // supported Chrome versions and must not be the sole deletion safeguard.
     const createTabInteractionTracker = () => {
         const watchedTabIds = new Set();
+        const movementWatchedTabIds = new Set();
+        const watchedGroupTabIds = new Map();
         const interactedTabIds = new Set();
         let stopped = false;
 
@@ -193,6 +195,17 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!stopped && Number.isInteger(tabId) && watchedTabIds.has(tabId)) {
                 interactedTabIds.add(tabId);
             }
+        };
+        const handleTabMoved = (tabId) => {
+            if (!stopped && Number.isInteger(tabId) && movementWatchedTabIds.has(tabId)) {
+                interactedTabIds.add(tabId);
+            }
+        };
+        const handleTabGroupUpdated = (group) => {
+            if (stopped || !Number.isInteger(group?.id)) return;
+            const protectedTabIds = watchedGroupTabIds.get(group.id);
+            if (!protectedTabIds) return;
+            for (const tabId of protectedTabIds) markIfWatched(tabId);
         };
         const handleTabActivated = async ({ tabId, windowId } = {}) => {
             if (stopped || !Number.isInteger(tabId) || !Number.isInteger(windowId)) return;
@@ -230,12 +243,31 @@ document.addEventListener('DOMContentLoaded', function() {
 
         chrome.tabs.onActivated.addListener(handleTabActivated);
         if (chrome.tabs.onHighlighted) chrome.tabs.onHighlighted.addListener(handleTabsHighlighted);
+        if (chrome.tabs.onMoved) chrome.tabs.onMoved.addListener(handleTabMoved);
+        if (chrome.tabGroups?.onUpdated) chrome.tabGroups.onUpdated.addListener(handleTabGroupUpdated);
         chrome.windows.onFocusChanged.addListener(handleWindowFocusChanged);
 
         return {
             watch(tabOrId) {
                 const tabId = Number.isInteger(tabOrId) ? tabOrId : tabOrId?.id;
                 if (!stopped && Number.isInteger(tabId)) watchedTabIds.add(tabId);
+            },
+            // Movement tracking is opt-in because session restore itself pins and
+            // groups neutral tabs before navigation, which can legitimately move
+            // them. Call this only after extension-initiated layout work is done.
+            watchMovement(tabOrId) {
+                const tabId = Number.isInteger(tabOrId) ? tabOrId : tabOrId?.id;
+                if (!stopped && Number.isInteger(tabId)) {
+                    watchedTabIds.add(tabId);
+                    movementWatchedTabIds.add(tabId);
+                }
+            },
+            watchGroup(tabOrId, groupId) {
+                const tabId = Number.isInteger(tabOrId) ? tabOrId : tabOrId?.id;
+                if (stopped || !Number.isInteger(tabId) || !Number.isInteger(groupId) || groupId < 0) return;
+                watchedTabIds.add(tabId);
+                if (!watchedGroupTabIds.has(groupId)) watchedGroupTabIds.set(groupId, new Set());
+                watchedGroupTabIds.get(groupId).add(tabId);
             },
             hasInteracted(tabId) {
                 return interactedTabIds.has(tabId);
@@ -245,8 +277,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 stopped = true;
                 chrome.tabs.onActivated.removeListener(handleTabActivated);
                 if (chrome.tabs.onHighlighted) chrome.tabs.onHighlighted.removeListener(handleTabsHighlighted);
+                if (chrome.tabs.onMoved) chrome.tabs.onMoved.removeListener(handleTabMoved);
+                if (chrome.tabGroups?.onUpdated) chrome.tabGroups.onUpdated.removeListener(handleTabGroupUpdated);
                 chrome.windows.onFocusChanged.removeListener(handleWindowFocusChanged);
                 watchedTabIds.clear();
+                movementWatchedTabIds.clear();
+                watchedGroupTabIds.clear();
             }
         };
     };
@@ -3423,17 +3459,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const expectedGroupSignature = getSessionGroupInfoSignature(candidate?.groupInfo);
         if (!expectedGroupSignature) return false;
 
+        const isExpectedGroupState = (liveGroup) =>
+          Number.isInteger(liveGroup?.windowId) &&
+          liveGroup.windowId === candidate.windowId &&
+          getSessionGroupInfoSignature(liveGroup) === expectedGroupSignature &&
+          Boolean(liveGroup.shared) === getSessionTabGroupShared(candidate);
+
         try {
           const liveGroup = await chrome.tabGroups.get(groupId);
-          if (!Number.isInteger(liveGroup?.windowId) || liveGroup.windowId !== candidate.windowId) {
-            return false;
-          }
-          if (getSessionGroupInfoSignature(liveGroup) !== expectedGroupSignature) {
-            return false;
-          }
-          if (Boolean(liveGroup.shared) !== getSessionTabGroupShared(candidate)) {
-            return false;
-          }
+          if (!isExpectedGroupState(liveGroup)) return false;
         } catch (_) {
           return false;
         }
@@ -3442,7 +3476,17 @@ document.addEventListener('DOMContentLoaded', function() {
         // 삭제 직전 판단에는 그룹 조회 뒤 다시 읽은 최신 탭 상태를 사용합니다.
         // tabs.get() 실패는 호출자가 이미 닫힌 탭과 실제 오류를 구분하도록 전달합니다.
         const latestLiveTab = await chrome.tabs.get(candidate.id);
-        return isStableSessionClosingCandidate(latestLiveTab, candidate, options);
+        if (!isStableSessionClosingCandidate(latestLiveTab, candidate, options)) return false;
+
+        // 위 tabs.get()을 기다리는 동안에도 사용자가 그룹 제목·색상·접힘 상태를
+        // 바꿀 수 있습니다. 파괴적 삭제 직전에 그룹을 한 번 더 확인하여 저장된
+        // 스냅샷 이후의 그룹 편집을 오래된 상태로 덮어쓰지 않습니다.
+        try {
+          const latestLiveGroup = await chrome.tabGroups.get(groupId);
+          return isExpectedGroupState(latestLiveGroup);
+        } catch (_) {
+          return false;
+        }
       };
 
       const getSessionClosingCandidateSignature = (snapshot) => JSON.stringify(
@@ -3885,7 +3929,12 @@ document.addEventListener('DOMContentLoaded', function() {
         return false;
       };
       
-      const restoreTabGroupsForWindow = async (createdTabs, windowId, onGroupCreated = null) => {
+      const restoreTabGroupsForWindow = async (
+        createdTabs,
+        windowId,
+        onGroupCreated = null,
+        onGroupConfigured = null
+      ) => {
         const groupsToRestore = new Map();
         createdTabs.forEach(({ savedTab, createdTabId }) => {
           if (!Number.isInteger(createdTabId) || savedTab.pinned || typeof savedTab.groupId !== 'number' || savedTab.groupId < 0) return;
@@ -3918,6 +3967,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (groupInfo && typeof groupInfo.collapsed === 'boolean') updateProperties.collapsed = groupInfo.collapsed;
             if (Object.keys(updateProperties).length > 0) {
               await chrome.tabGroups.update(newGroupId, updateProperties);
+            }
+            if (typeof onGroupConfigured === 'function') {
+              const expectedGroupSignature = getSessionGroupInfoSignature(groupInfo);
+              tabIds.forEach(tabId => onGroupConfigured(tabId, newGroupId, expectedGroupSignature));
             }
           } catch (groupError) {
             console.warn('Failed to restore tab group:', groupError);
@@ -3960,6 +4013,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const createdWindowIds = [];
         const createdRestoreTabs = [];
         const tabInteractionTracker = createTabInteractionTracker();
+        // Track only tabs that this restore actually created. Chrome can replace
+        // a tab ID (for example after prerender activation). Rollback must then
+        // follow the new ID, while a duplicate-cleaner survivor that belonged to
+        // the user must never become owned by this restore.
+        const restoreOwnedTabsById = new Map();
         // Only completed common-cleaner operations (or Chrome's own tab
         // replacement event) may replace a missing restoration reference.
         // These short-lived result links never exempt any tab from cleanup.
@@ -3976,10 +4034,29 @@ document.addEventListener('DOMContentLoaded', function() {
           return false;
         };
         const handleRestoreTabReplaced = (addedTabId, removedTabId) => {
-          const isTrackedTab = createdRestoreTabs.some(tab => tab.tabId === removedTabId) ||
+          const ownedRestoreTab = restoreOwnedTabsById.get(removedTabId);
+          const isTrackedTab = Boolean(ownedRestoreTab) ||
+            createdRestoreTabs.some(tab => tab.tabId === removedTabId) ||
             [...tabReplacements.values()].includes(removedTabId);
           if (isTrackedTab && Number.isInteger(addedTabId) && Number.isInteger(removedTabId) && addedTabId !== removedTabId) {
             tabReplacements.set(removedTabId, addedTabId);
+
+            if (ownedRestoreTab) {
+              ownedRestoreTab.interactedBeforeReplacement =
+                ownedRestoreTab.interactedBeforeReplacement === true ||
+                tabInteractionTracker.hasInteracted(removedTabId);
+              // A replacement tab may receive a fresh lastAccessed timestamp as
+              // part of Chrome's internal swap. Do not treat that system change
+              // itself as user interaction; subsequent real interaction is
+              // tracked on the replacement ID below.
+              ownedRestoreTab.initialLastAccessed = null;
+              restoreOwnedTabsById.delete(removedTabId);
+              restoreOwnedTabsById.set(addedTabId, ownedRestoreTab);
+              tabInteractionTracker.watch(addedTabId);
+              if (ownedRestoreTab.movementTrackingStarted === true) {
+                tabInteractionTracker.watchMovement(addedTabId);
+              }
+            }
           }
         };
         chrome.runtime.onMessage.addListener(handleDuplicateTabRemoved);
@@ -4020,12 +4097,14 @@ document.addEventListener('DOMContentLoaded', function() {
               expectedUrl: firstTab.url,
               expectedPinned: Boolean(createdFirstTab.pinned),
               expectedGroupId: -1,
+              expectedGroupSignature: null,
               initialLastAccessed: Number.isFinite(createdFirstTab.lastAccessed)
                 ? createdFirstTab.lastAccessed
                 : null
             };
             createdRestoreTabs.push(firstRestoreTab);
             windowRestoreTabs.push(firstRestoreTab);
+            restoreOwnedTabsById.set(createdFirstTab.id, firstRestoreTab);
             tabInteractionTracker.watch(createdFirstTab.id);
             if (firstTab.pinned) {
               const pinnedFirstTab = await chrome.tabs.update(createdFirstTab.id, { pinned: true });
@@ -4052,19 +4131,44 @@ document.addEventListener('DOMContentLoaded', function() {
                 expectedUrl: savedTab.url,
                 expectedPinned: Boolean(createdTab.pinned),
                 expectedGroupId: -1,
+                expectedGroupSignature: null,
                 initialLastAccessed: Number.isFinite(createdTab.lastAccessed)
                   ? createdTab.lastAccessed
                   : null
               };
               createdRestoreTabs.push(createdRestoreTab);
               windowRestoreTabs.push(createdRestoreTab);
+              restoreOwnedTabsById.set(createdTab.id, createdRestoreTab);
               tabInteractionTracker.watch(createdTab.id);
             }
 
-            await restoreTabGroupsForWindow(createdTabs, createdWindowId, (tabId, groupId) => {
-              const restoreTab = createdRestoreTabs.find(item => item.tabId === tabId);
-              if (restoreTab) restoreTab.expectedGroupId = groupId;
-            });
+            await restoreTabGroupsForWindow(
+              createdTabs,
+              createdWindowId,
+              (tabId, groupId) => {
+                const restoreTab = restoreOwnedTabsById.get(tabId) ||
+                  createdRestoreTabs.find(item => item.tabId === tabId);
+                if (restoreTab) restoreTab.expectedGroupId = groupId;
+              },
+              (tabId, groupId, expectedGroupSignature) => {
+                const restoreTab = restoreOwnedTabsById.get(tabId) ||
+                  createdRestoreTabs.find(item => item.tabId === tabId);
+                if (restoreTab) {
+                  restoreTab.expectedGroupId = groupId;
+                  restoreTab.expectedGroupSignature = expectedGroupSignature;
+                }
+              }
+            );
+
+            // Pinning/grouping can legitimately move tabs, so movement tracking
+            // starts only after all extension-initiated layout work is complete.
+            // From this point on, a same-window drag is explicit user interaction
+            // and must prevent delayed URL overwrite or rollback deletion.
+            for (const [ownedTabId, restoreTab] of restoreOwnedTabsById.entries()) {
+              if (restoreTab.windowId !== createdWindowId) continue;
+              restoreTab.movementTrackingStarted = true;
+              tabInteractionTracker.watchMovement(ownedTabId);
+            }
 
             // With the structural layout in place, assign the real URLs. Verify
             // every placeholder immediately beforehand so a tab that the user
@@ -4157,38 +4261,103 @@ document.addEventListener('DOMContentLoaded', function() {
           // 함께 사라질 수 있습니다. 이번 복원에서 만든 탭만, 사용 흔적과 구조가 그대로일 때만 정리합니다.
           // URL 일치는 소유권 판단에 사용하지 않습니다. 복원된 페이지가 자동 리디렉션된 뒤
           // 후속 단계가 실패해도, 사용자 조작이 없는 복원 탭은 롤백되어야 합니다.
-          for (const restoreTab of [...createdRestoreTabs].reverse()) {
-            try {
-              const liveTab = await chrome.tabs.get(restoreTab.tabId);
-              const isStillInRestoreWindow = liveTab.windowId === restoreTab.windowId;
-              const isSelectedInFocusedWindow = liveTab.windowId === focusedWindowId &&
-                (liveTab.active === true || liveTab.highlighted === true);
-              const wasAccessedAfterCreation = Number.isFinite(restoreTab.initialLastAccessed) &&
-                Number.isFinite(liveTab.lastAccessed) &&
-                liveTab.lastAccessed > restoreTab.initialLastAccessed;
-              const hasPinnedStateChanged = Boolean(liveTab.pinned) !== restoreTab.expectedPinned;
-              const hasGroupMembershipChanged = getSessionTabGroupId(liveTab) !==
-                (Number.isInteger(restoreTab.expectedGroupId) ? restoreTab.expectedGroupId : -1);
+          const processedRollbackTabIds = new Set();
+          while (true) {
+            // onReplaced can fire while an awaited rollback API call is pending.
+            // Re-read the ownership map after every pass so a newly assigned tab
+            // ID cannot escape cleanup merely because the first pass snapshotted
+            // the old ID.
+            const rollbackCandidates = [...restoreOwnedTabsById.entries()]
+              .filter(([tabId]) => !processedRollbackTabIds.has(tabId))
+              .reverse();
+            if (rollbackCandidates.length === 0) break;
 
-              if (!isStillInRestoreWindow ||
-                  isSelectedInFocusedWindow ||
-                  tabInteractionTracker.hasInteracted(restoreTab.tabId) ||
-                  wasAccessedAfterCreation ||
-                  hasPinnedStateChanged ||
-                  hasGroupMembershipChanged) {
-                preservedChangedTabCount += 1;
-                continue;
-              }
+            for (const [ownedTabId, restoreTab] of rollbackCandidates) {
+              processedRollbackTabIds.add(ownedTabId);
+              try {
+                const liveTab = await chrome.tabs.get(ownedTabId);
+                const isStillInRestoreWindow = liveTab.windowId === restoreTab.windowId;
+                const isSelectedInFocusedWindow = liveTab.windowId === focusedWindowId &&
+                  (liveTab.active === true || liveTab.highlighted === true);
+                const wasAccessedAfterCreation = Number.isFinite(restoreTab.initialLastAccessed) &&
+                  Number.isFinite(liveTab.lastAccessed) &&
+                  liveTab.lastAccessed > restoreTab.initialLastAccessed;
+                const hasPinnedStateChanged = Boolean(liveTab.pinned) !== restoreTab.expectedPinned;
+                const currentGroupId = getSessionTabGroupId(liveTab);
+                const expectedGroupId = Number.isInteger(restoreTab.expectedGroupId)
+                  ? restoreTab.expectedGroupId
+                  : -1;
+                const hasGroupMembershipChanged = currentGroupId !== expectedGroupId;
+                let hasGroupMetadataChanged = false;
+                if (!hasGroupMembershipChanged && expectedGroupId >= 0 &&
+                    restoreTab.expectedGroupSignature) {
+                  try {
+                    const liveGroup = await chrome.tabGroups.get(expectedGroupId);
+                    hasGroupMetadataChanged = liveGroup?.windowId !== restoreTab.windowId ||
+                      getSessionGroupInfoSignature(liveGroup) !== restoreTab.expectedGroupSignature;
+                  } catch (_) {
+                    hasGroupMetadataChanged = true;
+                  }
+                }
+                const hasUserInteraction = restoreTab.preserveFromRollback === true ||
+                  restoreTab.interactedBeforeReplacement === true ||
+                  tabInteractionTracker.hasInteracted(ownedTabId);
 
-              await chrome.tabs.remove(restoreTab.tabId);
-            } catch (rollbackError) {
-              const rollbackErrorMessage = String(rollbackError?.message || '').toLowerCase();
-              const tabAlreadyGone = rollbackErrorMessage.includes('no tab with id') ||
-                rollbackErrorMessage.includes('invalid tab id') ||
-                rollbackErrorMessage.includes('tab id not found');
-              if (!tabAlreadyGone) {
-                rollbackFailureCount += 1;
-                console.error(`Failed to roll back restored tab ${restoreTab.tabId}.`, rollbackError);
+                if (!isStillInRestoreWindow ||
+                    isSelectedInFocusedWindow ||
+                    hasUserInteraction ||
+                    wasAccessedAfterCreation ||
+                    hasPinnedStateChanged ||
+                    hasGroupMembershipChanged ||
+                    hasGroupMetadataChanged) {
+                  if (restoreTab.preserveFromRollback !== true) {
+                    preservedChangedTabCount += 1;
+                  }
+                  restoreTab.preserveFromRollback = true;
+                  continue;
+                }
+
+                // The group query above is asynchronous. Re-read the tab as
+                // the final state check so a move/pin/regroup/selection that happened
+                // while waiting cannot be erased by this rollback.
+                const finalLiveTab = await chrome.tabs.get(ownedTabId);
+                const finalStateIsSafe =
+                  finalLiveTab.windowId === restoreTab.windowId &&
+                  Boolean(finalLiveTab.pinned) === restoreTab.expectedPinned &&
+                  getSessionTabGroupId(finalLiveTab) === expectedGroupId &&
+                  !(finalLiveTab.windowId === focusedWindowId &&
+                    (finalLiveTab.active === true || finalLiveTab.highlighted === true)) &&
+                  !tabInteractionTracker.hasInteracted(ownedTabId) &&
+                  !(Number.isFinite(restoreTab.initialLastAccessed) &&
+                    Number.isFinite(finalLiveTab.lastAccessed) &&
+                    finalLiveTab.lastAccessed > restoreTab.initialLastAccessed);
+                if (!finalStateIsSafe) {
+                  if (restoreTab.preserveFromRollback !== true) preservedChangedTabCount += 1;
+                  restoreTab.preserveFromRollback = true;
+                  continue;
+                }
+
+                await chrome.tabs.remove(ownedTabId);
+                if (restoreOwnedTabsById.get(ownedTabId) === restoreTab) {
+                  restoreOwnedTabsById.delete(ownedTabId);
+                }
+              } catch (rollbackError) {
+                const rollbackErrorMessage = String(rollbackError?.message || '').toLowerCase();
+                const tabAlreadyGone = rollbackErrorMessage.includes('no tab with id') ||
+                  rollbackErrorMessage.includes('invalid tab id') ||
+                  rollbackErrorMessage.includes('tab id not found');
+                if (tabAlreadyGone) {
+                  // Duplicate cleanup removes a restore-owned ID without making
+                  // its survivor restore-owned. Drop only that stale ownership.
+                  // If onReplaced already transferred ownership, the old key is
+                  // absent and the new key remains for the next pass.
+                  if (restoreOwnedTabsById.get(ownedTabId) === restoreTab) {
+                    restoreOwnedTabsById.delete(ownedTabId);
+                  }
+                } else {
+                  rollbackFailureCount += 1;
+                  console.error(`Failed to roll back restored tab ${ownedTabId}.`, rollbackError);
+                }
               }
             }
           }
@@ -4321,7 +4490,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
           }
           if (!canSaveTabCount(snapshot.tabs.length) || !canSaveWindowCount(snapshot.tabs)) return;
-          snapshot.closingCandidates.forEach(candidate => tabInteractionTracker.watch(candidate.id));
+          snapshot.closingCandidates.forEach(candidate => {
+            tabInteractionTracker.watch(candidate.id);
+            tabInteractionTracker.watchMovement(candidate.id);
+            tabInteractionTracker.watchGroup(candidate.id, getSessionTabGroupId(candidate));
+          });
 
           const requestedName = sessionInput.value.trim();
           let savedSession;
