@@ -46,6 +46,55 @@ function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includ
   return false;
 }
 
+// Web Components가 미디어를 open/closed Shadow DOM 안에 숨겨도 PiP/영상 회전과
+// 후속 미디어 기능이 같은 기준으로 실제 요소를 찾을 수 있게 합니다.
+function lunaToolsGetAccessibleShadowRoot(element) {
+  if (!(element instanceof HTMLElement)) return null;
+  if (element.shadowRoot) return element.shadowRoot;
+
+  // Closed roots are most commonly hosted by Web Components. Avoid a costly
+  // extension-API bridge call for every ordinary element on very large pages.
+  const localName = String(element.localName || '');
+  if (!localName.includes('-') && !element.hasAttribute('is')) return null;
+
+  try {
+    return chrome.dom?.openOrClosedShadowRoot(element) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function lunaToolsFindElementsAcrossShadowRoots(selector) {
+  const matches = [];
+  const roots = [document];
+  const visitedRoots = new WeakSet();
+  const visitedElements = new WeakSet();
+
+  for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
+    const root = roots[rootIndex];
+    if (!root || visitedRoots.has(root)) continue;
+    visitedRoots.add(root);
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let element = root.nodeType === Node.ELEMENT_NODE ? root : walker.nextNode();
+    while (element) {
+      if (!visitedElements.has(element)) {
+        visitedElements.add(element);
+        try {
+          if (element.matches(selector)) matches.push(element);
+        } catch (_) {
+        }
+
+        const shadowRoot = lunaToolsGetAccessibleShadowRoot(element);
+        if (shadowRoot && !visitedRoots.has(shadowRoot)) roots.push(shadowRoot);
+      }
+      element = walker.nextNode();
+    }
+  }
+
+  return matches;
+}
+
 // 클립보드 권한 실패가 늦게 돌아와도 사용자가 새로 선택한 입력란이나
 // 복귀한 탭의 포커스를 숨은 textarea로 빼앗지 않도록 두 복사 기능이 공유합니다.
 async function lunaToolsWriteTextToClipboard(text) {
@@ -1244,7 +1293,7 @@ async function lunaToolsWriteTextToClipboard(text) {
     }
 
     _findBestVideoCandidate() {
-      const videos = Array.from(document.querySelectorAll('video'));
+      const videos = lunaToolsFindElementsAcrossShadowRoots('video');
       if (videos.length === 0) return null;
 
       // Camera, screen-share, and WebRTC videos can play through srcObject
@@ -4139,7 +4188,7 @@ async function lunaToolsWriteTextToClipboard(text) {
         }
 
         #findPrioritizedVideo() {
-            const videos = Array.from(document.querySelectorAll('video'))
+            const videos = lunaToolsFindElementsAcrossShadowRoots('video')
                 .filter(video => this.#isVideoVisible(video));
             if (videos.length === 0) return null;
 

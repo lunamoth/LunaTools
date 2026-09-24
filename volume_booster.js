@@ -30,7 +30,8 @@
         let sliceElements = 0;
         const collect = element => {
             visit(element);
-            if (element.shadowRoot) roots.push(element.shadowRoot);
+            const shadowRoot = lunaToolsGetAccessibleShadowRoot(element);
+            if (shadowRoot) roots.push(shadowRoot);
         };
         for (let index = 0; index < roots.length; index += 1) {
             if (isCancelled()) return false;
@@ -715,9 +716,10 @@
             }
         }
 
-        async #observeOpenShadowRoots(rootNodes) {
+        async #observeAccessibleShadowRoots(rootNodes) {
             return visitElementsOnce(rootNodes, element => {
-                if (element.shadowRoot) this.#observeMutationRoot(element.shadowRoot);
+                const shadowRoot = lunaToolsGetAccessibleShadowRoot(element);
+                if (shadowRoot) this.#observeMutationRoot(shadowRoot);
             }, () => !this.#requestedActivation);
         }
 
@@ -754,13 +756,13 @@
                 if (this.#needsFullDocumentScan) {
                     this.#pendingAddedNodes.clear();
                     this.#needsFullDocumentScan = false;
-                    await this.#observeOpenShadowRoots([document.documentElement]);
+                    await this.#observeAccessibleShadowRoots([document.documentElement]);
                     if (!this.#requestedActivation) return;
                     await this.#audioProcessor.updateAllVolumes(this.#isActivated, CONFIG.VOLUME_MULTIPLIER);
                 } else {
                     const nodes = Array.from(this.#pendingAddedNodes);
                     this.#pendingAddedNodes.clear();
-                    await this.#observeOpenShadowRoots(nodes);
+                    await this.#observeAccessibleShadowRoots(nodes);
                     if (!this.#requestedActivation) return;
                     await this.#audioProcessor.processNewNodes(nodes);
                 }
@@ -805,7 +807,7 @@
                         if (!this.#domObserver) {
                             this.#setupDOMObserver();
                         }
-                        await this.#observeOpenShadowRoots([document.documentElement]);
+                        await this.#observeAccessibleShadowRoots([document.documentElement]);
                     }
                     if (targetActivation !== this.#requestedActivation) continue;
 
@@ -869,7 +871,7 @@
 
                 // OFF 상태에서는 새 DOM의 ShadowRoot/하위 요소를 매번 전수
                 // 순회하지 않습니다. 기존에 처리했던 미디어 재삽입만 추적하고,
-                // 다음 ON 전환 때 문서의 열린 ShadowRoot를 한 번 재동기화합니다.
+                // 다음 ON 전환 때 문서의 접근 가능한 ShadowRoot를 한 번 재동기화합니다.
                 if (removedNodes.length > 0) {
                     this.#audioProcessor.cleanupRemovedNodes(removedNodes);
                     this.#pruneDetachedMutationRoots();
@@ -883,7 +885,7 @@
             });
 
             // Observe the stable Document node so replacing documentElement cannot
-            // strand the observer on a detached root. Open ShadowRoots are added
+            // strand the observer on a detached root. Accessible ShadowRoots are added
             // separately as they are discovered.
             this.#observeMutationRoot(document);
         }
