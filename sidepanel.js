@@ -2432,31 +2432,32 @@ document.addEventListener('DOMContentLoaded', function() {
             .map(url => normalizeUrlForOpening(url || ''))
             .filter(Boolean);
 
+        const hasCommittedTabNavigation = (tab) => !tab?.pendingUrl &&
+            Boolean(normalizeUrlForOpening(tab?.url || ''));
+
         async function waitForTabUrlAssignment(tabId, expectedUrl, initialTab = null) {
             const deadline = Date.now() + CONFIG.DELAY_LOADING_NAVIGATION_WAIT_MS;
             let latestTab = initialTab;
+            let observedExpectedUrl = false;
 
-            if (getNormalizedTabNavigationUrls(latestTab).includes(expectedUrl)) {
-                return { tab: latestTab, observedExpectedUrl: true };
-            }
-
-            while (Date.now() < deadline) {
-                latestTab = await chrome.tabs.get(tabId);
-                if (getNormalizedTabNavigationUrls(latestTab).includes(expectedUrl)) {
-                    return { tab: latestTab, observedExpectedUrl: true };
-                }
+            // A pending URL proves which navigation we started, but it is not
+            // committed history that the browser can safely preserve on discard.
+            // Keep that proof across redirects while waiting for a committed URL.
+            while (true) {
+                observedExpectedUrl = observedExpectedUrl ||
+                    getNormalizedTabNavigationUrls(latestTab).includes(expectedUrl);
+                if (hasCommittedTabNavigation(latestTab) || Date.now() >= deadline) break;
                 await wait(100);
+                latestTab = await chrome.tabs.get(tabId);
             }
 
-            latestTab = await chrome.tabs.get(tabId);
             if (getNormalizedTabNavigationUrls(latestTab).length === 0) {
                 throw new Error('새 탭에 대상 URL이 할당되지 않았습니다.');
             }
 
-            // The target can redirect before the polling loop observes it. Keep
-            // that tab loaded unless we first observed our exact requested URL;
-            // this avoids discarding a tab that might have been repurposed.
-            return { tab: latestTab, observedExpectedUrl: false };
+            // On timeout, keep a pending tab loaded. A redirected URL without
+            // observed ownership also stays loaded under the live-state guard.
+            return { tab: latestTab, observedExpectedUrl };
         }
 
         const isUntouchedRunTab = (
@@ -2511,7 +2512,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 const assignment = await waitForTabUrlAssignment(tabId, normalizedUrl, newTab);
 
                 const currentTab = await chrome.tabs.get(tabId);
-                if (!isUntouchedRunTab(
+                // Recheck commitment immediately before discard: a redirect may
+                // have started since the waiting loop last inspected the tab.
+                if (!hasCommittedTabNavigation(currentTab) || !isUntouchedRunTab(
                     currentTab,
                     createdTab,
                     normalizedUrl,
