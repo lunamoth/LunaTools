@@ -2514,14 +2514,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 const currentTab = await chrome.tabs.get(tabId);
                 // Recheck commitment immediately before discard: a redirect may
                 // have started since the waiting loop last inspected the tab.
+                const allowRedirectedCleanup = assignment.observedExpectedUrl;
                 if (!hasCommittedTabNavigation(currentTab) || !isUntouchedRunTab(
                     currentTab,
                     createdTab,
                     normalizedUrl,
                     interactionTracker,
-                    { allowRedirectedUrl: assignment.observedExpectedUrl }
+                    { allowRedirectedUrl: allowRedirectedCleanup }
                 )) {
-                    return createdTab;
+                    return { tab: createdTab, allowRedirectedCleanup };
                 }
 
                 try {
@@ -2536,10 +2537,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
                     // Cancellation must compare against the original creation
                     // snapshot, not a later result that already includes user changes.
-                    return createdTab;
+                    return { tab: createdTab, allowRedirectedCleanup };
                 } catch (discardError) {
                     console.warn(`Discard failed for tab ${tabId}. Keeping the inactive tab instead:`, discardError);
-                    return createdTab;
+                    return { tab: createdTab, allowRedirectedCleanup };
                 }
             } catch (error) {
                 console.error(`Error creating delay-loaded tab for ${normalizedUrl}:`, error);
@@ -2550,14 +2551,27 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        async function removeCancelledRunTabIfUnchanged(createdTab, expectedUrl, interactionTracker = null) {
+        async function removeCancelledRunTabIfUnchanged(
+            createdTab,
+            expectedUrl,
+            interactionTracker = null,
+            { allowRedirectedUrl = false } = {}
+        ) {
             if (!Number.isInteger(createdTab?.id)) return;
 
             try {
                 const currentTab = await chrome.tabs.get(createdTab.id);
                 // Once the user has interacted with the tab, it no longer belongs
-                // exclusively to the cancelled run and must not be removed.
-                if (!isUntouchedRunTab(currentTab, createdTab, expectedUrl, interactionTracker)) return;
+                // exclusively to the cancelled run and must not be removed. For
+                // delay-loaded tabs, a redirect is safe only when the creation phase
+                // already observed the originally requested URL and passed that proof.
+                if (!isUntouchedRunTab(
+                    currentTab,
+                    createdTab,
+                    expectedUrl,
+                    interactionTracker,
+                    { allowRedirectedUrl }
+                )) return;
 
                 await chrome.tabs.remove(createdTab.id);
             } catch (error) {
@@ -2617,16 +2631,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 const urlToOpen = normalizeUrlForOpening(url);
                 if (!urlToOpen) throw new Error('지원하지 않는 URL 형식입니다.');
                 let createdTab;
+                let allowRedirectedCleanup = false;
 
                 if (UI.delayLoadingCheckbox && UI.delayLoadingCheckbox.checked) {
-                    createdTab = await createAndDiscardTab(urlToOpen, tabInteractionTracker);
+                    const creationResult = await createAndDiscardTab(urlToOpen, tabInteractionTracker);
+                    createdTab = creationResult.tab;
+                    allowRedirectedCleanup = creationResult.allowRedirectedCleanup === true;
                 } else {
                     createdTab = await chrome.tabs.create({ url: urlToOpen, active: (UI.focusLockCheckbox ? !UI.focusLockCheckbox.checked : true) });
                     tabInteractionTracker.watch(createdTab);
                 }
 
                 if (runId !== state.currentRunId) {
-                    await removeCancelledRunTabIfUnchanged(createdTab, urlToOpen, tabInteractionTracker);
+                    await removeCancelledRunTabIfUnchanged(
+                        createdTab,
+                        urlToOpen,
+                        tabInteractionTracker,
+                        { allowRedirectedUrl: allowRedirectedCleanup }
+                    );
                     return;
                 }
             } catch (e) {
@@ -3126,7 +3148,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- "세션 매니저" App Logic (Scoped IIFE from TabHaiku) ---
     const tabHaikuApp = (function(pane) {
       const CONSTANTS = {
-        UI: { TOAST_DURATION: 4000, SESSION_NAME_MAX_LENGTH: 200, SEARCH_DEBOUNCE_TIME: 200 },
+        UI: { TOAST_DURATION: 4000, SESSION_NAME_MAX_LENGTH: 200, SEARCH_DEBOUNCE_TIME: 200, SESSION_RENDER_LIMIT: 500 },
         DEFAULTS: { SESSION_PREFIX: '' },
         PROTOCOLS: { SAFE: ['http:', 'https:'] },
         RESTORE: { PLACEHOLDER_URL: 'about:blank' },
@@ -3693,20 +3715,89 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       };
 
+      const compareSessionRenderEntries = (a, b) => {
+        if (a.session.isPinned !== b.session.isPinned) {
+          return a.session.isPinned ? -1 : 1;
+        }
+        const timestampCompare = b.timestamp - a.timestamp;
+        return timestampCompare || a.index - b.index;
+      };
+
+      const selectSessionsForRender = (searchTerm) => {
+        const limit = CONSTANTS.UI.SESSION_RENDER_LIMIT;
+        const heap = [];
+        let matchCount = 0;
+
+        // Keep only the best `limit` entries in a worst-first binary heap. This
+        // avoids sorting/copying as many as 250,000 imported sessions merely to
+        // render the first screenful. compareSessionRenderEntries() follows the
+        // previous pinned-first/newest-first/stable-storage-order semantics.
+        const isWorse = (a, b) => compareSessionRenderEntries(a, b) > 0;
+        const bubbleUpWorst = (startIndex) => {
+          let index = startIndex;
+          while (index > 0) {
+            const parent = Math.floor((index - 1) / 2);
+            if (!isWorse(heap[index], heap[parent])) break;
+            [heap[parent], heap[index]] = [heap[index], heap[parent]];
+            index = parent;
+          }
+        };
+        const sinkDownWorst = (startIndex) => {
+          let index = startIndex;
+          while (true) {
+            const left = index * 2 + 1;
+            const right = left + 1;
+            let worst = index;
+            if (left < heap.length && isWorse(heap[left], heap[worst])) worst = left;
+            if (right < heap.length && isWorse(heap[right], heap[worst])) worst = right;
+            if (worst === index) break;
+            [heap[index], heap[worst]] = [heap[worst], heap[index]];
+            index = worst;
+          }
+        };
+
+        const matchesSearch = (session) => {
+          if (!searchTerm) return true;
+          if (session.name.toLowerCase().includes(searchTerm)) return true;
+          return session.tabs.some(tab =>
+            tab.url.toLowerCase().includes(searchTerm) ||
+            (tab.title && tab.title.toLowerCase().includes(searchTerm))
+          );
+        };
+
+        for (let index = 0; index < allSessions.length; index += 1) {
+          const session = allSessions[index];
+          if (!matchesSearch(session)) continue;
+          matchCount += 1;
+
+          const entry = { session, index, timestamp: getSessionTimestamp(session) };
+          if (heap.length < limit) {
+            heap.push(entry);
+            bubbleUpWorst(heap.length - 1);
+          } else if (compareSessionRenderEntries(entry, heap[0]) < 0) {
+            heap[0] = entry;
+            sinkDownWorst(0);
+          }
+        }
+
+        heap.sort(compareSessionRenderEntries);
+        return { sessions: heap.map(entry => entry.session), matchCount };
+      };
+
+      const createSessionRenderLimitNotice = (matchCount) => {
+        const notice = document.createElement('li');
+        notice.className = 'session-render-limit-notice';
+        notice.style.cssText = 'padding:8px;text-align:center;line-height:1.45;';
+        notice.textContent = `성능 보호를 위해 ${matchCount.toLocaleString()}개 중 ${CONSTANTS.UI.SESSION_RENDER_LIMIT.toLocaleString()}개만 표시합니다. 검색하면 표시되지 않은 세션도 찾을 수 있습니다.`;
+        return notice;
+      };
+
       const renderSessions = () => {
         const fragment = document.createDocumentFragment();
         const searchTerm = sessionInput.value.trim().toLowerCase();
-        const filteredSessions = searchTerm 
-            ? allSessions.filter(s => 
-                s.name.toLowerCase().includes(searchTerm) || 
-                s.tabs.some(t => 
-                    t.url.toLowerCase().includes(searchTerm) ||
-                    (t.title && t.title.toLowerCase().includes(searchTerm))
-                )
-              ) 
-            : allSessions;
+        const { sessions: sessionsToRender, matchCount } = selectSessionsForRender(searchTerm);
 
-        if (filteredSessions.length === 0) {
+        if (matchCount === 0) {
           const p = document.createElement('p');
           p.style.textAlign = 'center';
           p.style.padding = '20px 0';
@@ -3715,14 +3806,10 @@ document.addEventListener('DOMContentLoaded', function() {
           return;
         }
 
-        const sortedSessions = [...filteredSessions].sort((a, b) => {
-          if (a.isPinned !== b.isPinned) {
-            return a.isPinned ? -1 : 1;
-          }
-          return getSessionTimestamp(b) - getSessionTimestamp(a);
-        });
-
-        sortedSessions.forEach(session => fragment.appendChild(createSessionListItem(session)));
+        if (matchCount > CONSTANTS.UI.SESSION_RENDER_LIMIT) {
+          fragment.appendChild(createSessionRenderLimitNotice(matchCount));
+        }
+        sessionsToRender.forEach(session => fragment.appendChild(createSessionListItem(session)));
         sessionListEl.replaceChildren(fragment);
       };
       
@@ -3752,16 +3839,24 @@ document.addEventListener('DOMContentLoaded', function() {
           sessionActions.appendChild(createActionButton(action, title, icon));
         });
         const detailsList = item.querySelector('.session-details-list');
-        session.tabs.forEach(tab => {
-          const tabItem = document.createElement('li');
-          tabItem.textContent = tab.url;
-          detailsList.appendChild(tabItem);
-        });
+        const populateSessionDetails = () => {
+          if (detailsList.dataset.loaded === 'true') return;
+          const detailsFragment = document.createDocumentFragment();
+          session.tabs.forEach(tab => {
+            const tabItem = document.createElement('li');
+            tabItem.textContent = tab.url;
+            detailsFragment.appendChild(tabItem);
+          });
+          detailsList.replaceChildren(detailsFragment);
+          detailsList.dataset.loaded = 'true';
+        };
         const sessionHeader = item.querySelector('.session-header');
         const sessionDetails = item.querySelector('.session-details');
         sessionHeader.addEventListener('click', (e) => {
           if (!e.target.closest('.beos-icon-button')) {
-            sessionDetails.style.display = sessionDetails.style.display === 'block' ? 'none' : 'block';
+            const willOpen = sessionDetails.style.display !== 'block';
+            if (willOpen) populateSessionDetails();
+            sessionDetails.style.display = willOpen ? 'block' : 'none';
           }
         });
         return item;
@@ -3780,7 +3875,12 @@ document.addEventListener('DOMContentLoaded', function() {
           const persistedSessions = parseSessionsForMutation(
             await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, [])
           );
-          const workingSessions = JSON.parse(JSON.stringify(persistedSessions));
+          // Mutations only need a private array container. Deep-cloning the entire
+          // session database here duplicated up to the full imported data set before
+          // every rename/pin/delete/save operation, causing avoidable main-thread and
+          // memory spikes on large databases. Existing session objects stay shared and
+          // individual mutators use copy-on-write before changing an existing record.
+          const workingSessions = persistedSessions.slice();
 
           try {
             const result = await mutator(workingSessions);
@@ -4788,7 +4888,7 @@ document.addEventListener('DOMContentLoaded', function() {
               showToast(CONSTANTS.MESSAGES.createNameAlreadyExistsMessage(trimmedNewName));
               return null;
             }
-            sessions[sessionIndex].name = trimmedNewName;
+            sessions[sessionIndex] = { ...sessions[sessionIndex], name: trimmedNewName };
             return CONSTANTS.MESSAGES.createNameChangedMessage(trimmedNewName);
           },
           { errorMessagePrefix: CONSTANTS.MESSAGES.RENAME_FAILED }
@@ -4811,9 +4911,9 @@ document.addEventListener('DOMContentLoaded', function() {
               showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
               return null;
             }
-            const session = sessions[sessionIndex];
-            session.isPinned = !session.isPinned;
-            return session.isPinned ? CONSTANTS.MESSAGES.SESSION_PINNED : CONSTANTS.MESSAGES.SESSION_UNPINNED;
+            const isPinned = !sessions[sessionIndex].isPinned;
+            sessions[sessionIndex] = { ...sessions[sessionIndex], isPinned };
+            return isPinned ? CONSTANTS.MESSAGES.SESSION_PINNED : CONSTANTS.MESSAGES.SESSION_UNPINNED;
           },
           { errorMessagePrefix: CONSTANTS.MESSAGES.PIN_FAILED }
         );
