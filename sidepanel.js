@@ -673,6 +673,22 @@ document.addEventListener('DOMContentLoaded', function() {
             return safeMap;
         };
 
+        const countStoredUrlLines = (urlsText) => {
+            if (typeof urlsText !== 'string' || urlsText.length === 0) return 0;
+
+            // split/filter는 저장 한도에 가까운 큰 목록에서 수십만~수백만 개의
+            // 임시 문자열/배열 원소를 만들 수 있습니다. 드롭다운의 개수 표시는
+            // 원문을 변경할 필요가 없으므로 LF 경계만 한 번 순회해 같은 결과를 냅니다.
+            let count = 0;
+            let lineStart = 0;
+            for (let index = 0; index <= urlsText.length; index += 1) {
+                if (index !== urlsText.length && urlsText.charCodeAt(index) !== 10) continue;
+                if (index > lineStart) count += 1;
+                lineStart = index + 1;
+            }
+            return count;
+        };
+
         const parseStoredListMap = (value) => {
             const safeMap = Object.create(null);
             if (value === undefined) return safeMap;
@@ -1676,7 +1692,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (UI.savedListsDropdown) {
                 UI.savedListsDropdown.replaceChildren(new Option(CONFIG.TEXT.SELECT_LIST_PLACEHOLDER, ''));
                 listNames.sort().forEach(name => {
-                    const urlCount = (lists[name] && lists[name].urls) ? lists[name].urls.split('\n').filter(Boolean).length : 0;
+                    const urlCount = countStoredUrlLines(lists[name]?.urls);
                     const option = document.createElement('option');
                     option.value = name;
                     option.textContent = `${name} (${urlCount}개)`;
@@ -3606,12 +3622,18 @@ document.addEventListener('DOMContentLoaded', function() {
             session.name.length > CONSTANTS.UI.SESSION_NAME_MAX_LENGTH ||
             (hasOwn(session, 'isPinned') && typeof session.isPinned !== 'boolean') ||
             !Array.isArray(session.tabs) ||
-            session.tabs.length === 0) {
+            session.tabs.length === 0 ||
+            session.tabs.length > CONSTANTS.LIMITS.MAX_TABS_PER_IMPORTED_SESSION) {
           return false;
         }
 
+        // 저장/가져오기/복원에서 이미 사용하는 동일한 안전 상한을 기존
+        // chrome.storage.local 데이터에도 적용합니다. 먼저 개수를 거른 뒤
+        // 최대 300개만 정규화하므로 손상된 대용량 세션이 UI를 멈추게 하지 않습니다.
         const normalizedTabs = session.tabs.map(normalizeSessionTab);
-        return normalizedTabs.every(Boolean) && hasConsistentSessionGroupMetadata(normalizedTabs);
+        return normalizedTabs.every(Boolean) &&
+          hasConsistentSessionGroupMetadata(normalizedTabs) &&
+          getSessionRestoreWindowCount(normalizedTabs) <= CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS;
       };
 
       const inspectStoredSessions = (value) => {
@@ -3624,9 +3646,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const sessions = [];
         const seenSessionIds = new Set();
-        let hasInvalidData = false;
+        let hasInvalidData = value.length > CONSTANTS.LIMITS.MAX_IMPORT_SESSIONS;
+        let totalTabCount = 0;
+        const inspectionCount = Math.min(value.length, CONSTANTS.LIMITS.MAX_IMPORT_SESSIONS);
 
-        for (const session of value) {
+        for (let index = 0; index < inspectionCount; index += 1) {
+          const session = value[index];
           if (!isValidSession(session)) {
             hasInvalidData = true;
             continue;
@@ -3638,6 +3663,15 @@ document.addEventListener('DOMContentLoaded', function() {
             continue;
           }
 
+          // 가져오기와 전체 백업 복원은 전체 55만 탭에서 중단하지만, 과거
+          // 버전/손상 데이터는 이 경로를 우회할 수 있었습니다. 유효한 앞부분만
+          // 표시하고 이후 데이터는 읽지 않아 패널 가용성과 원본 데이터를 모두 보호합니다.
+          if (totalTabCount + session.tabs.length > CONSTANTS.LIMITS.MAX_IMPORT_TOTAL_TABS) {
+            hasInvalidData = true;
+            break;
+          }
+
+          totalTabCount += session.tabs.length;
           seenSessionIds.add(sessionIdKey);
           sessions.push(session);
         }
