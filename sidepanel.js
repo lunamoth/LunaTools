@@ -186,11 +186,33 @@ document.addEventListener('DOMContentLoaded', function() {
     // supported Chrome versions and must not be the sole deletion safeguard.
     const createTabInteractionTracker = () => {
         const watchedTabIds = new Set();
+        const watchedTabWindowIds = new Map();
         const movementWatchedTabIds = new Set();
         const watchedGroupTabIds = new Map();
         const interactedTabIds = new Set();
+        const pendingInteractionCounts = new Map();
+        let focusGeneration = 0;
         let stopped = false;
 
+        const beginPendingInteraction = (tabId) => {
+            if (stopped || !Number.isInteger(tabId)) return false;
+            pendingInteractionCounts.set(tabId, (pendingInteractionCounts.get(tabId) || 0) + 1);
+            return true;
+        };
+        const finishPendingInteraction = (tabId) => {
+            const count = pendingInteractionCounts.get(tabId) || 0;
+            if (count <= 1) pendingInteractionCounts.delete(tabId);
+            else pendingInteractionCounts.set(tabId, count - 1);
+        };
+        const rememberWatchedTab = (tabOrId) => {
+            const tabId = Number.isInteger(tabOrId) ? tabOrId : tabOrId?.id;
+            if (stopped || !Number.isInteger(tabId)) return null;
+            watchedTabIds.add(tabId);
+            if (Number.isInteger(tabOrId?.windowId)) {
+                watchedTabWindowIds.set(tabId, tabOrId.windowId);
+            }
+            return tabId;
+        };
         const markIfWatched = (tabId) => {
             if (!stopped && Number.isInteger(tabId) && watchedTabIds.has(tabId)) {
                 interactedTabIds.add(tabId);
@@ -209,35 +231,64 @@ document.addEventListener('DOMContentLoaded', function() {
         };
         const handleTabActivated = async ({ tabId, windowId } = {}) => {
             if (stopped || !Number.isInteger(tabId) || !Number.isInteger(windowId)) return;
+            const focusGenerationAtEvent = focusGeneration;
+            beginPendingInteraction(tabId);
             try {
                 // Programmatic work in an unfocused restore window can activate
-                // one of its tabs (for example while collapsing a group). Only
-                // a tab activation in the focused window represents an explicit
-                // user interaction that must protect the tab from later changes.
+                // one of its tabs (for example while collapsing a group). A
+                // stable, confirmed unfocused window does not count as a user
+                // interaction; uncertainty keeps the tab protected.
                 const windowInfo = await chrome.windows.get(windowId, { populate: false });
-                if (windowInfo?.focused) markIfWatched(tabId);
+                // If focus changed during the lookup, an activation in the
+                // previously focused window must not disappear from the record.
+                if (windowInfo?.focused !== false || focusGeneration !== focusGenerationAtEvent) {
+                    markIfWatched(tabId);
+                }
             } catch (_) {
+                // A failed focus lookup cannot prove this was an automatic
+                // background activation. Preserve the tab conservatively.
+                markIfWatched(tabId);
+            } finally {
+                finishPendingInteraction(tabId);
             }
         };
         const handleWindowFocusChanged = async (windowId) => {
-            if (stopped || !Number.isInteger(windowId) ||
+            if (stopped) return;
+            focusGeneration += 1;
+            if (!Number.isInteger(windowId) ||
                 windowId === chrome.windows.WINDOW_ID_NONE) return;
+            const pendingTabIds = [];
+            for (const [tabId, watchedWindowId] of watchedTabWindowIds) {
+                if (watchedWindowId === windowId && beginPendingInteraction(tabId)) {
+                    pendingTabIds.push(tabId);
+                }
+            }
             try {
                 const [activeTab] = await chrome.tabs.query({ active: true, windowId });
                 markIfWatched(activeTab?.id);
             } catch (_) {
+                // If the active tab cannot be identified, keep the watched tabs
+                // in this window instead of treating a focus change as absent.
+                for (const tabId of pendingTabIds) markIfWatched(tabId);
+            } finally {
+                for (const tabId of pendingTabIds) finishPendingInteraction(tabId);
             }
         };
         const handleTabsHighlighted = async ({ tabIds, windowId } = {}) => {
             if (stopped || !Array.isArray(tabIds) || !Number.isInteger(windowId)) return;
+            const focusGenerationAtEvent = focusGeneration;
+            const pendingTabIds = tabIds.filter(beginPendingInteraction);
             try {
                 // Ctrl/Shift 다중 선택은 active 탭을 바꾸지 않을 수 있습니다.
                 // 비동기 삭제/복원 중 사용자가 선택한 탭은 이후 다시 선택 해제되더라도
                 // 이번 작업의 소유물로 간주하지 않도록 명시적 상호작용으로 기록합니다.
                 const windowInfo = await chrome.windows.get(windowId, { populate: false });
-                if (!windowInfo?.focused) return;
+                if (windowInfo?.focused === false && focusGeneration === focusGenerationAtEvent) return;
                 for (const tabId of tabIds) markIfWatched(tabId);
             } catch (_) {
+                for (const tabId of tabIds) markIfWatched(tabId);
+            } finally {
+                for (const tabId of pendingTabIds) finishPendingInteraction(tabId);
             }
         };
 
@@ -249,28 +300,26 @@ document.addEventListener('DOMContentLoaded', function() {
 
         return {
             watch(tabOrId) {
-                const tabId = Number.isInteger(tabOrId) ? tabOrId : tabOrId?.id;
-                if (!stopped && Number.isInteger(tabId)) watchedTabIds.add(tabId);
+                rememberWatchedTab(tabOrId);
             },
             // Movement tracking is opt-in because session restore itself pins and
             // groups neutral tabs before navigation, which can legitimately move
             // them. Call this only after extension-initiated layout work is done.
             watchMovement(tabOrId) {
-                const tabId = Number.isInteger(tabOrId) ? tabOrId : tabOrId?.id;
-                if (!stopped && Number.isInteger(tabId)) {
-                    watchedTabIds.add(tabId);
-                    movementWatchedTabIds.add(tabId);
-                }
+                const tabId = rememberWatchedTab(tabOrId);
+                if (tabId !== null) movementWatchedTabIds.add(tabId);
             },
             watchGroup(tabOrId, groupId) {
-                const tabId = Number.isInteger(tabOrId) ? tabOrId : tabOrId?.id;
-                if (stopped || !Number.isInteger(tabId) || !Number.isInteger(groupId) || groupId < 0) return;
-                watchedTabIds.add(tabId);
+                if (!Number.isInteger(groupId) || groupId < 0) return;
+                const tabId = rememberWatchedTab(tabOrId);
+                if (tabId === null) return;
                 if (!watchedGroupTabIds.has(groupId)) watchedGroupTabIds.set(groupId, new Set());
                 watchedGroupTabIds.get(groupId).add(tabId);
             },
             hasInteracted(tabId) {
-                return interactedTabIds.has(tabId);
+                // Window focus checks are asynchronous. A destructive operation
+                // must keep a tab while its highlight/activation is being checked.
+                return interactedTabIds.has(tabId) || pendingInteractionCounts.has(tabId);
             },
             stop() {
                 if (stopped) return;
@@ -281,8 +330,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (chrome.tabGroups?.onUpdated) chrome.tabGroups.onUpdated.removeListener(handleTabGroupUpdated);
                 chrome.windows.onFocusChanged.removeListener(handleWindowFocusChanged);
                 watchedTabIds.clear();
+                watchedTabWindowIds.clear();
                 movementWatchedTabIds.clear();
                 watchedGroupTabIds.clear();
+                pendingInteractionCounts.clear();
             }
         };
     };
@@ -557,8 +608,13 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const prepareUrlsForRun = (rawUrls) => {
-            const prepared = [];
+            const urls = [];
             const stats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
+            const shouldSort = Boolean(UI.sortUrlsBeforeRunCheckbox?.checked);
+            const seenUrls = UI.removeDuplicatesCheckbox?.checked ? new Set() : null;
+            const collator = shouldSort ? new Intl.Collator(undefined, { sensitivity: 'base' }) : null;
+            const compareEntries = (a, b) => collator.compare(a.url, b.url) || a.order - b.order;
+            let acceptedCount = 0;
 
             for (const rawUrl of rawUrls) {
                 if (typeof rawUrl !== 'string') {
@@ -578,34 +634,76 @@ document.addEventListener('DOMContentLoaded', function() {
                     stats.invalid += 1;
                     continue;
                 }
-                prepared.push(normalizedUrl);
-            }
-
-            let urls = prepared;
-            if (UI.sortUrlsBeforeRunCheckbox && UI.sortUrlsBeforeRunCheckbox.checked) {
-                urls = [...urls].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-            }
-
-            if (UI.removeDuplicatesCheckbox && UI.removeDuplicatesCheckbox.checked) {
-                const deduplicated = [];
-                const seenUrls = new Set();
-                for (const url of urls) {
-                    if (seenUrls.has(url)) {
+                if (seenUrls) {
+                    if (seenUrls.has(normalizedUrl)) {
                         stats.duplicate += 1;
                         continue;
                     }
-                    seenUrls.add(url);
-                    deduplicated.push(url);
+                    seenUrls.add(normalizedUrl);
                 }
-                urls = deduplicated;
+
+                const order = acceptedCount++;
+                if (!shouldSort) {
+                    if (urls.length < CONFIG.MAX_URLS_PER_RUN) urls.push(normalizedUrl);
+                    continue;
+                }
+
+                // A worst-first heap retains the same first 300 entries as a
+                // stable full sort, including URLs equal under base collation.
+                const entry = { url: normalizedUrl, order };
+                if (urls.length < CONFIG.MAX_URLS_PER_RUN) {
+                    urls.push(entry);
+                    let index = urls.length - 1;
+                    while (index > 0) {
+                        const parent = Math.floor((index - 1) / 2);
+                        if (compareEntries(urls[index], urls[parent]) <= 0) break;
+                        [urls[index], urls[parent]] = [urls[parent], urls[index]];
+                        index = parent;
+                    }
+                } else if (compareEntries(entry, urls[0]) < 0) {
+                    urls[0] = entry;
+                    let index = 0;
+                    while (true) {
+                        const left = index * 2 + 1;
+                        const right = left + 1;
+                        let worst = index;
+                        if (left < urls.length && compareEntries(urls[left], urls[worst]) > 0) worst = left;
+                        if (right < urls.length && compareEntries(urls[right], urls[worst]) > 0) worst = right;
+                        if (worst === index) break;
+                        [urls[index], urls[worst]] = [urls[worst], urls[index]];
+                        index = worst;
+                    }
+                }
             }
 
-            if (urls.length > CONFIG.MAX_URLS_PER_RUN) {
-                stats.overLimit = urls.length - CONFIG.MAX_URLS_PER_RUN;
-                urls = urls.slice(0, CONFIG.MAX_URLS_PER_RUN);
-            }
+            stats.overLimit = Math.max(0, acceptedCount - CONFIG.MAX_URLS_PER_RUN);
+            return {
+                urls: shouldSort ? urls.sort(compareEntries).map(entry => entry.url) : urls,
+                ...stats
+            };
+        };
 
-            return { urls, ...stats };
+        const countRunnableUrlsForDisplay = (text) => {
+            const seenUrls = UI.removeDuplicatesCheckbox?.checked ? new Set() : null;
+            let count = 0;
+            let hasText = false;
+            let start = 0;
+            while (start <= text.length) {
+                const end = text.indexOf('\n', start);
+                const trimmed = text.slice(start, end < 0 ? text.length : end).trim();
+                if (trimmed) {
+                    hasText = true;
+                    const normalizedUrl = normalizeUrlForOpening(trimmed);
+                    if (normalizedUrl && (!seenUrls || !seenUrls.has(normalizedUrl))) {
+                        seenUrls?.add(normalizedUrl);
+                        count += 1;
+                        if (count === CONFIG.MAX_URLS_PER_RUN) break;
+                    }
+                }
+                if (end < 0) break;
+                start = end + 1;
+            }
+            return { count, hasText };
         };
 
         const showSkippedUrlNotice = ({ invalid = 0, tooLong = 0, duplicate = 0, overLimit = 0 }) => {
@@ -1561,9 +1659,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const updateButtonState = () => {
             const viewState = state.currentView;
-            const rawUrlsForDisplay = UI.urlInput ? UI.urlInput.value.split('\n') : [];
-            const hasText = rawUrlsForDisplay.some(url => url.trim().length > 0);
-            const displayCount = hasText ? prepareUrlsForRun(rawUrlsForDisplay).urls.length : 0;
+            const { count: displayCount, hasText } = countRunnableUrlsForDisplay(UI.urlInput?.value || '');
 
             if (UI.startRunButton) {
                 UI.startRunButton.classList.remove(CONFIG.CSS.SUCCESS_BTN_CLASS);
