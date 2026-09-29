@@ -258,8 +258,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!Number.isInteger(windowId) ||
                 windowId === chrome.windows.WINDOW_ID_NONE) return;
             const pendingTabIds = [];
-            for (const [tabId, watchedWindowId] of watchedTabWindowIds) {
-                if (watchedWindowId === windowId && beginPendingInteraction(tabId)) {
+            for (const tabId of watchedTabIds) {
+                const watchedWindowId = watchedTabWindowIds.get(tabId);
+                // An ID-only registration has no window metadata. Until the
+                // active-tab lookup settles, it cannot safely be excluded from
+                // this focus event (including the failed-lookup fallback).
+                if ((watchedWindowId === undefined || watchedWindowId === windowId) &&
+                    beginPendingInteraction(tabId)) {
                     pendingTabIds.push(tabId);
                 }
             }
@@ -2619,7 +2624,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 createdTab = newTab;
                 const tabId = newTab.id;
-                interactionTracker?.watch(tabId);
+                interactionTracker?.watch(newTab);
 
                 const assignment = await waitForTabUrlAssignment(tabId, normalizedUrl, newTab);
 
@@ -4299,9 +4304,11 @@ document.addEventListener('DOMContentLoaded', function() {
               ownedRestoreTab.initialLastAccessed = null;
               restoreOwnedTabsById.delete(removedTabId);
               restoreOwnedTabsById.set(addedTabId, ownedRestoreTab);
-              tabInteractionTracker.watch(addedTabId);
+              const replacementTab = { id: addedTabId, windowId: ownedRestoreTab.windowId };
+              tabInteractionTracker.watch(replacementTab);
               if (ownedRestoreTab.movementTrackingStarted === true) {
-                tabInteractionTracker.watchMovement(addedTabId);
+                tabInteractionTracker.watchMovement(replacementTab);
+                tabInteractionTracker.watchGroup(replacementTab, ownedRestoreTab.expectedGroupId);
               }
             }
           }
@@ -4352,7 +4359,7 @@ document.addEventListener('DOMContentLoaded', function() {
             createdRestoreTabs.push(firstRestoreTab);
             windowRestoreTabs.push(firstRestoreTab);
             restoreOwnedTabsById.set(createdFirstTab.id, firstRestoreTab);
-            tabInteractionTracker.watch(createdFirstTab.id);
+            tabInteractionTracker.watch(createdFirstTab);
             if (firstTab.pinned) {
               const pinnedFirstTab = await chrome.tabs.update(createdFirstTab.id, { pinned: true });
               firstRestoreTab.expectedPinned = true;
@@ -4386,7 +4393,7 @@ document.addEventListener('DOMContentLoaded', function() {
               createdRestoreTabs.push(createdRestoreTab);
               windowRestoreTabs.push(createdRestoreTab);
               restoreOwnedTabsById.set(createdTab.id, createdRestoreTab);
-              tabInteractionTracker.watch(createdTab.id);
+              tabInteractionTracker.watch(createdTab);
             }
 
             await restoreTabGroupsForWindow(
@@ -4414,7 +4421,12 @@ document.addEventListener('DOMContentLoaded', function() {
             for (const [ownedTabId, restoreTab] of restoreOwnedTabsById.entries()) {
               if (restoreTab.windowId !== createdWindowId) continue;
               restoreTab.movementTrackingStarted = true;
-              tabInteractionTracker.watchMovement(ownedTabId);
+              const trackedTab = { id: ownedTabId, windowId: restoreTab.windowId };
+              tabInteractionTracker.watchMovement(trackedTab);
+              // Start after our own group configuration. Later metadata edits
+              // must invalidate URL assignment/rollback even if they happen
+              // during the final asynchronous tab lookup or are reverted.
+              tabInteractionTracker.watchGroup(trackedTab, restoreTab.expectedGroupId);
             }
 
             // With the structural layout in place, assign the real URLs. Verify
@@ -4716,7 +4728,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!canSaveTabCount(initialSnapshot.tabs.length) || !canSaveWindowCount(initialSnapshot.tabs)) return;
 
         const tabInteractionTracker = createTabInteractionTracker();
-        initialSnapshot.closingCandidates.forEach(candidate => tabInteractionTracker.watch(candidate.id));
+        initialSnapshot.closingCandidates.forEach(candidate => tabInteractionTracker.watch(candidate));
         try {
           if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(initialSnapshot.tabs.length))) return;
 
@@ -4738,9 +4750,9 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           if (!canSaveTabCount(snapshot.tabs.length) || !canSaveWindowCount(snapshot.tabs)) return;
           snapshot.closingCandidates.forEach(candidate => {
-            tabInteractionTracker.watch(candidate.id);
-            tabInteractionTracker.watchMovement(candidate.id);
-            tabInteractionTracker.watchGroup(candidate.id, getSessionTabGroupId(candidate));
+            tabInteractionTracker.watch(candidate);
+            tabInteractionTracker.watchMovement(candidate);
+            tabInteractionTracker.watchGroup(candidate, getSessionTabGroupId(candidate));
           });
 
           const requestedName = sessionInput.value.trim();
