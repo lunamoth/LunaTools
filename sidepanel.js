@@ -2420,8 +2420,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (choice === 'overwrite_all_conflicts') {
                         for (const key in validImportedLists) currentLists[key] = validImportedLists[key];
                     } else if (choice === 'skip_all_conflicts') {
+                        // Index the original conflicts once. Repeated array scans
+                        // become quadratic for large backups and block the panel
+                        // even when every imported list is simply being skipped.
+                        const conflictNames = new Set(conflicts);
                         for (const key in validImportedLists) {
-                            if (!conflicts.includes(key)) currentLists[key] = validImportedLists[key];
+                            if (!conflictNames.has(key)) currentLists[key] = validImportedLists[key];
                         }
                     } else {
                         return { skipSave: true, cancelled: true };
