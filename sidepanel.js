@@ -1019,8 +1019,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     document.removeEventListener('keydown', this._keydownListener);
                 }
                 this._keydownListener = (e) => {
-                    if (!UI.modalOverlay.classList.contains('visible') || e.isComposing) return;
+                    if (!pane.classList.contains('active') || !UI.modalOverlay.classList.contains('visible') ||
+                        e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
                     if (e.key === 'Enter') {
+                        if (!(e.target instanceof Element) || !pane.contains(e.target)) return;
+                        // Keep native Enter activation for the focused button,
+                        // especially Cancel and explicit import-conflict choices.
+                        const focusedButton = e.target.closest('button');
+                        if (focusedButton && UI.modalOverlay.contains(focusedButton)) return;
                         e.preventDefault();
                         const customButtonWrapper = UI.modalFooter.querySelector('.custom-buttons');
                         const confirmButton = UI.modalConfirmBtn.style.display !== 'none'

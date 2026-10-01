@@ -20,7 +20,7 @@ function lunaToolsIsProtectedInputEvent(event, { includeControls = false, includ
     const isButtonOrSlider = allowNonEditableControls && element.matches('input[type="button"], input[type="submit"], input[type="reset"], input[type="range"]');
     const isProtectedInput = element.matches('input') && !isButtonOrSlider;
     if (element.isContentEditable || isProtectedInput || element.matches('textarea, select, .CodeMirror, .codemirror, .monaco-editor, .ace_editor')) return true;
-    // Preserve focused-widget protection by default. Video rotation opts out while
+    // Preserve focused-widget protection by default. Media shortcuts opt out while
     // retaining editable-input checks, including the real focus inside Shadow DOM.
     // Pointer gestures still use includeActiveElement:false for drag starting points.
     if (!allowNonEditableControls && includeActiveElement && element instanceof HTMLElement && element.tabIndex >= 0 && (element === document.activeElement || element.matches(':focus'))) return true;
@@ -1576,7 +1576,7 @@ async function lunaToolsWriteTextToClipboard(text) {
       if (!(event.ctrlKey && event.shiftKey && event.key.toUpperCase() === PictureInPictureHandler.PIP_KEY)) {
         return;
       }
-      if (lunaToolsIsProtectedInputEvent(event)) {
+      if (lunaToolsIsProtectedInputEvent(event, { allowNonEditableControls: true })) {
         return;
       }
       event.preventDefault();
@@ -4227,11 +4227,54 @@ async function lunaToolsWriteTextToClipboard(text) {
                 originalTransform: video.style.getPropertyValue('transform'),
                 originalTransformPriority: video.style.getPropertyPriority('transform'),
                 originalWillChange: video.style.getPropertyValue('will-change'),
-                originalWillChangePriority: video.style.getPropertyPriority('will-change')
+                originalWillChangePriority: video.style.getPropertyPriority('will-change'),
+                activeTransform: '',
+                styleObserver: null,
+                reapplyFrame: null
             };
         }
 
+        #writeRotationStyle(video, state) {
+            // X and other dynamic players may replace the complete style attribute.
+            // Only write when necessary so observing our own changes cannot loop.
+            if (video.style.getPropertyValue('transform') !== state.activeTransform ||
+                video.style.getPropertyPriority('transform') !== 'important') {
+                video.style.setProperty('transform', state.activeTransform, 'important');
+            }
+            if (video.style.getPropertyValue('will-change') !== state.activeWillChange ||
+                video.style.getPropertyPriority('will-change') !== 'important') {
+                video.style.setProperty('will-change', state.activeWillChange, 'important');
+            }
+        }
+
+        #observeRotationStyle(video, state) {
+            if (state.styleObserver) return;
+            state.styleObserver = new MutationObserver(() => {
+                if (this.#rotationState.get(video) !== state || !video.isConnected ||
+                    state.reapplyFrame !== null) return;
+                const hasRotationStyle = video.style.getPropertyValue('transform') === state.activeTransform &&
+                    video.style.getPropertyPriority('transform') === 'important' &&
+                    video.style.getPropertyValue('will-change') === state.activeWillChange &&
+                    video.style.getPropertyPriority('will-change') === 'important';
+                if (hasRotationStyle) return;
+                // Coalesce player updates; never fight an opposing style writer
+                // in an unbounded MutationObserver microtask loop.
+                state.reapplyFrame = window.requestAnimationFrame(() => {
+                    state.reapplyFrame = null;
+                    if (this.#rotationState.get(video) === state && video.isConnected) {
+                        this.#writeRotationStyle(video, state);
+                    }
+                });
+            });
+            state.styleObserver.observe(video, { attributes: true, attributeFilter: ['style'] });
+        }
+
         #restoreOriginalStyle(video, state) {
+            state.styleObserver?.disconnect();
+            if (state.reapplyFrame !== null) {
+                window.cancelAnimationFrame(state.reapplyFrame);
+                state.reapplyFrame = null;
+            }
             if (state.originalTransform) {
                 video.style.setProperty('transform', state.originalTransform, state.originalTransformPriority);
             } else {
@@ -4260,10 +4303,11 @@ async function lunaToolsWriteTextToClipboard(text) {
 
             // Use a temporary important declaration so author styles cannot suppress the requested rotation.
             // The exact pre-existing inline declarations and priorities are restored after the fourth step.
-            video.style.setProperty('transform', transformStyle, 'important');
-            video.style.setProperty('will-change', state.activeWillChange, 'important');
+            state.activeTransform = transformStyle;
             state.step = nextStep;
             this.#rotationState.set(video, state);
+            this.#writeRotationStyle(video, state);
+            this.#observeRotationStyle(video, state);
         }
 
         #handleKeyDown(event) {

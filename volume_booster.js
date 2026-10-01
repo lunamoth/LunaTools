@@ -844,7 +844,7 @@
 
         #handleKeyDown(e) {
             if (!e.isTrusted || e.repeat || e.defaultPrevented || e.isComposing || e.ctrlKey || e.shiftKey || e.metaKey) return;
-            if (!e.altKey || e.key.toLowerCase() !== CONFIG.ACTIVATION_KEY || lunaToolsIsProtectedInputEvent(e)) return;
+            if (!e.altKey || e.key.toLowerCase() !== CONFIG.ACTIVATION_KEY || lunaToolsIsProtectedInputEvent(e, { allowNonEditableControls: true })) return;
 
             e.preventDefault();
             e.stopPropagation();
