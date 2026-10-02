@@ -2798,10 +2798,30 @@ async function lunaToolsWriteTextToClipboard(text) {
                 ? `(?:(?:${TextExtractor._getOptionalCurrencySymbolAmountPrefixSource()})\\s*)?`
                 : '';
             const trailingRegex = new RegExp(`(${optionalSymbolPrefix}(${source}))$`, 'iu');
-            const match = trailingRegex.exec(text.trimEnd());
+            const trimmedText = text.trimEnd();
+            // A non-anchored suffix search can retry a long Korean-number run
+            // from every character for every later currency token. Narrow it
+            // to the only suffix that can contain an amount before matching.
+            // Keep magnitude words, scientific notation and an optional symbol
+            // prefix; offsets and context checks still refer to the full text.
+            const magnitudeSuffix = /(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT])$/iu.exec(trimmedText);
+            let searchStart = magnitudeSuffix ? magnitudeSuffix.index : trimmedText.length;
+            const amountCharacter = /[\d.,\s천백십경조억만일이삼사오육칠팔구영eE+\-\u2212\uFE63\uFF0D]/u;
+            while (searchStart > 0 && amountCharacter.test(trimmedText[searchStart - 1])) {
+                searchStart -= 1;
+            }
+            if (!magnitudeSuffix && searchStart === trimmedText.length) return null;
+            if (allowLeadingCurrencySymbol && searchStart > 0) {
+                const prefixRegex = new RegExp(`(?:${TextExtractor._getOptionalCurrencySymbolAmountPrefixSource()})\\s*$`, 'iu');
+                const prefixMatch = prefixRegex.exec(trimmedText.slice(0, searchStart));
+                if (prefixMatch) searchStart = prefixMatch.index;
+            }
+            // Preserve the original one-character numeric start boundary.
+            searchStart = Math.max(0, searchStart - 1);
+            const match = trailingRegex.exec(trimmedText.slice(searchStart));
             if (!match) return null;
 
-            const candidate = TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], match.index, match[2]);
+            const candidate = TextExtractor._normalizeCapturedAmountSpan(match[0], match[1], searchStart + match.index, match[2]);
             const contextTrimmedCandidate = TextExtractor._trimEmbeddedKoreanContextPrefix(text, candidate);
             return TextExtractor._finalizeAmountCandidate(text, contextTrimmedCandidate);
         },
