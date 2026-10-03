@@ -1830,12 +1830,15 @@ async function lunaToolsWriteTextToClipboard(text) {
             '(?!\\s)' +
             '(?<![\\p{L}\\p{M}\\p{N}\\p{Pc}])' +
             '(?<!\\d:)' +
-            '(?:' +
-                '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,\\s*(\\d{4}|\\d{2}))?)' +
+            '(?:(?:' +
+                '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:(?:,\\s*|\\s+)(\\d{4}|\\d{2}))?)' +
                 '|' +
                 '(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})' +
                 '|' +
                 '(\\d{1,2})[-./](\\d{1,2})[-./](\\d{4}|\\d{2})' +
+                // Keep a date followed by a comma attached to its time. Otherwise
+                // the search can skip the date and silently use today's date.
+                ')\\s*,?' +
             ')?\\s*' +
             '(?:at\\s+)?' +
             '(\\d{1,2})(?::(\\d{2}))?(?::(\\d{2}))?' +
@@ -2618,9 +2621,15 @@ async function lunaToolsWriteTextToClipboard(text) {
                 NUMERIC_VALUE_BEFORE_SIGN_REGEX.test(beforeCandidate);
         },
         _finalizeAmountCandidate: function(text, candidate) {
-            return candidate && !TextExtractor._isCompoundNumericCandidate(text, candidate)
-                ? candidate
-                : null;
+            if (!candidate || TextExtractor._isCompoundNumericCandidate(text, candidate)) return null;
+
+            // Decimal/grouping separators followed by another digit
+            // belongs to the same number. Never turn "$1,23" into "$1" or
+            // "USD 1.000,50" into "USD 1.000" by accepting only its prefix.
+            // Trailing punctuation, including an ellipsis, remains a valid boundary.
+            const afterCandidate = text.slice(candidate.endOffset);
+            if (/^[.,]+\d/u.test(afterCandidate)) return null;
+            return candidate;
         },
         _getPhysicalUnitExtractionRegex: function(unit) {
             if (!unit?.regex) return null;
