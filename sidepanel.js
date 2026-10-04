@@ -191,6 +191,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const watchedGroupTabIds = new Map();
         const interactedTabIds = new Set();
         const pendingInteractionCounts = new Map();
+        const pendingWindowFocusChecks = new Set();
         let focusGeneration = 0;
         let stopped = false;
 
@@ -211,10 +212,24 @@ document.addEventListener('DOMContentLoaded', function() {
             if (Number.isInteger(tabOrId?.windowId)) {
                 watchedTabWindowIds.set(tabId, tabOrId.windowId);
             }
+            // A focus lookup may already be in flight when create() exposes
+            // this ID. Join that pending check so deletion/navigation cannot
+            // proceed before the user's selected tab has been identified.
+            const watchedWindowId = watchedTabWindowIds.get(tabId);
+            for (const check of pendingWindowFocusChecks) {
+                if ((watchedWindowId === undefined || watchedWindowId === check.windowId) &&
+                    !check.tabIds.has(tabId) && beginPendingInteraction(tabId)) {
+                    check.tabIds.add(tabId);
+                }
+            }
             return tabId;
         };
-        const markIfWatched = (tabId) => {
-            if (!stopped && Number.isInteger(tabId) && watchedTabIds.has(tabId)) {
+        const rememberTabInteraction = (tabId) => {
+            // Focus/activation can arrive before tabs.create()/windows.create()
+            // resolves and lets the caller register the new ID. Retain these
+            // user interactions for later watch() calls as well. Automatic
+            // background activations are still filtered by the window checks.
+            if (!stopped && Number.isInteger(tabId)) {
                 interactedTabIds.add(tabId);
             }
         };
@@ -227,7 +242,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (stopped || !Number.isInteger(group?.id)) return;
             const protectedTabIds = watchedGroupTabIds.get(group.id);
             if (!protectedTabIds) return;
-            for (const tabId of protectedTabIds) markIfWatched(tabId);
+            for (const tabId of protectedTabIds) rememberTabInteraction(tabId);
         };
         const handleTabActivated = async ({ tabId, windowId } = {}) => {
             if (stopped || !Number.isInteger(tabId) || !Number.isInteger(windowId)) return;
@@ -242,12 +257,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 // If focus changed during the lookup, an activation in the
                 // previously focused window must not disappear from the record.
                 if (windowInfo?.focused !== false || focusGeneration !== focusGenerationAtEvent) {
-                    markIfWatched(tabId);
+                    rememberTabInteraction(tabId);
                 }
             } catch (_) {
                 // A failed focus lookup cannot prove this was an automatic
                 // background activation. Preserve the tab conservatively.
-                markIfWatched(tabId);
+                rememberTabInteraction(tabId);
             } finally {
                 finishPendingInteraction(tabId);
             }
@@ -257,7 +272,9 @@ document.addEventListener('DOMContentLoaded', function() {
             focusGeneration += 1;
             if (!Number.isInteger(windowId) ||
                 windowId === chrome.windows.WINDOW_ID_NONE) return;
-            const pendingTabIds = [];
+            const pendingTabIds = new Set();
+            const pendingCheck = { windowId, tabIds: pendingTabIds };
+            pendingWindowFocusChecks.add(pendingCheck);
             for (const tabId of watchedTabIds) {
                 const watchedWindowId = watchedTabWindowIds.get(tabId);
                 // An ID-only registration has no window metadata. Until the
@@ -265,17 +282,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 // this focus event (including the failed-lookup fallback).
                 if ((watchedWindowId === undefined || watchedWindowId === windowId) &&
                     beginPendingInteraction(tabId)) {
-                    pendingTabIds.push(tabId);
+                    pendingTabIds.add(tabId);
                 }
             }
             try {
                 const [activeTab] = await chrome.tabs.query({ active: true, windowId });
-                markIfWatched(activeTab?.id);
+                rememberTabInteraction(activeTab?.id);
             } catch (_) {
                 // If the active tab cannot be identified, keep the watched tabs
                 // in this window instead of treating a focus change as absent.
-                for (const tabId of pendingTabIds) markIfWatched(tabId);
+                for (const tabId of pendingTabIds) rememberTabInteraction(tabId);
             } finally {
+                pendingWindowFocusChecks.delete(pendingCheck);
                 for (const tabId of pendingTabIds) finishPendingInteraction(tabId);
             }
         };
@@ -289,9 +307,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 이번 작업의 소유물로 간주하지 않도록 명시적 상호작용으로 기록합니다.
                 const windowInfo = await chrome.windows.get(windowId, { populate: false });
                 if (windowInfo?.focused === false && focusGeneration === focusGenerationAtEvent) return;
-                for (const tabId of tabIds) markIfWatched(tabId);
+                for (const tabId of tabIds) rememberTabInteraction(tabId);
             } catch (_) {
-                for (const tabId of tabIds) markIfWatched(tabId);
+                for (const tabId of tabIds) rememberTabInteraction(tabId);
             } finally {
                 for (const tabId of pendingTabIds) finishPendingInteraction(tabId);
             }
@@ -338,7 +356,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 watchedTabWindowIds.clear();
                 movementWatchedTabIds.clear();
                 watchedGroupTabIds.clear();
+                interactedTabIds.clear();
                 pendingInteractionCounts.clear();
+                pendingWindowFocusChecks.clear();
             }
         };
     };

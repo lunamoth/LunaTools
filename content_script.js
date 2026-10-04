@@ -264,20 +264,22 @@ async function lunaToolsWriteTextToClipboard(text) {
 
     for (const key of new Set(expectedParams.keys())) {
       const unmatchedCurrentValues = currentParams.getAll(key);
+      let wildcardCount = 0;
       for (const expectedValue of expectedParams.getAll(key)) {
         // A rule such as "?v=" is commonly used as a URL-prefix rule and
         // means that the parameter must exist, regardless of its value.
-        // Consume one occurrence so duplicate-key rules still retain their
-        // multiplicity semantics.
+        // Match specific values first: consuming a wildcard immediately can
+        // steal the only occurrence needed by a later specific condition.
+        // Count wildcards separately to retain duplicate-key multiplicity.
         if (expectedValue === '') {
-          if (unmatchedCurrentValues.length === 0) return false;
-          unmatchedCurrentValues.shift();
+          wildcardCount += 1;
           continue;
         }
         const matchingIndex = unmatchedCurrentValues.indexOf(expectedValue);
         if (matchingIndex === -1) return false;
         unmatchedCurrentValues.splice(matchingIndex, 1);
       }
+      if (unmatchedCurrentValues.length < wildcardCount) return false;
     }
     return true;
   }
