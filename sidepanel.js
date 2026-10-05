@@ -2487,7 +2487,21 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        const isFileImportEditorAvailable = () => state.currentView === 'input';
+
+        const showFileImportCancelledNotice = () => Toast.show(
+            '파일 가져오기를 취소했습니다. 입력 화면으로 돌아와 현재 목록을 확인한 뒤 다시 가져와 주세요.',
+            'info',
+            5000
+        );
+
         async function processTextImport(textContent) {
+            if (!isFileImportEditorAvailable()) {
+                showFileImportCancelledNotice();
+                return;
+            }
+            const importEditorSnapshot = captureListEditorState();
+            const importRunId = state.currentRunId;
             const normalizedImport = normalizeImportedUrlListText(textContent);
             const urlString = normalizedImport.urls.trimEnd();
             const importedCount = normalizedImport.count;
@@ -2510,6 +2524,14 @@ document.addEventListener('DOMContentLoaded', function() {
                         { text: '덮어쓰기', value: 'overwrite', isDanger: true },
                     ]
                 });
+
+                // A modal can wait while an earlier asynchronous editor action
+                // completes. Apply its choice only to the editor/run it described.
+                if (!isFileImportEditorAvailable() || state.currentRunId !== importRunId ||
+                    !isListEditorUnchanged(importEditorSnapshot)) {
+                    showFileImportCancelledNotice();
+                    return;
+                }
 
                 if (choice === 'overwrite') {
                     if (UI.urlInput) UI.urlInput.value = urlString + '\n';
@@ -2540,13 +2562,27 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const processImportedFile = (file) => {
             if (!file) return;
+            // Running/complete hide and disable the editor. A drop must obey the
+            // same restriction as the import button, especially after a completed
+            // ad-hoc run whose restart may clear the already-processed input.
+            if (!isFileImportEditorAvailable()) {
+                showFileImportCancelledNotice();
+                return;
+            }
             if (file.size > CONFIG.MAX_IMPORT_FILE_SIZE_BYTES) {
                 Toast.show('가져오기 파일은 32MiB를 초과할 수 없습니다.', 'error', 5000);
                 return;
             }
+            const importRunId = state.currentRunId;
             const reader = new FileReader();
 
             reader.onload = async (e) => {
+                // Reading is asynchronous: the user may start and even stop a
+                // run before it finishes. Do not add unprocessed URLs to that run.
+                if (!isFileImportEditorAvailable() || state.currentRunId !== importRunId) {
+                    showFileImportCancelledNotice();
+                    return;
+                }
                 const fileContent = e.target.result;
                 const fileName = file.name.toLowerCase();
                 const fileType = file.type;
