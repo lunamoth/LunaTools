@@ -563,19 +563,44 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
-    const getRestoreKeyScope = (rawBackupData, rawArea, knownKeys) => {
-        const isFullKnownKeysSnapshot = Number(rawBackupData.formatVersion) >= BACKUP_FORMAT_VERSION &&
-            rawBackupData.snapshotMode === BACKUP_SNAPSHOT_MODE;
+    const getBackupEnvelopeMode = (rawBackupData) => {
+        const hasFormatVersion = hasOwn(rawBackupData, 'formatVersion');
 
-        if (isFullKnownKeysSnapshot) return [...knownKeys];
+        // Backups created before the v2 envelope are restored with the original
+        // partial-key semantics. Keep that compatibility, but never guess the
+        // semantics of a declared current/future format: a wrong guess can
+        // silently delete or retain unrelated user data.
+        if (!hasFormatVersion) return 'legacy-partial';
+
+        const formatVersion = Number(rawBackupData.formatVersion);
+        if (!Number.isSafeInteger(formatVersion) || formatVersion < 1) {
+            throw new Error('유효하지 않은 백업 파일 버전입니다.');
+        }
+        if (formatVersion > BACKUP_FORMAT_VERSION) {
+            throw new Error(`이 백업은 더 새로운 형식(v${formatVersion})입니다. LunaTools를 업데이트한 뒤 다시 복원해주세요.`);
+        }
+
+        if (formatVersion === BACKUP_FORMAT_VERSION) {
+            if (rawBackupData.snapshotMode !== BACKUP_SNAPSHOT_MODE) {
+                throw new Error('현재 백업 형식의 스냅샷 정보가 올바르지 않습니다.');
+            }
+            return 'full-known-keys';
+        }
+
+        return 'legacy-partial';
+    };
+
+    const getRestoreKeyScope = (backupEnvelopeMode, rawArea, knownKeys) => {
+        if (backupEnvelopeMode === 'full-known-keys') return [...knownKeys];
         return knownKeys.filter(key => hasOwn(rawArea, key));
     };
 
     const normalizeBackupData = (rawBackupData) => {
-        if (!rawBackupData || typeof rawBackupData !== 'object') {
+        if (!rawBackupData || typeof rawBackupData !== 'object' || Array.isArray(rawBackupData)) {
             throw new Error('유효하지 않은 백업 파일 형식입니다.');
         }
 
+        const backupEnvelopeMode = getBackupEnvelopeMode(rawBackupData);
         const syncRaw = rawBackupData.sync;
         const localRaw = rawBackupData.local;
 
@@ -586,8 +611,8 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error('유효하지 않은 백업 파일 형식입니다.');
         }
 
-        const syncKeysToReplace = getRestoreKeyScope(rawBackupData, syncRaw, SYNC_KEYS);
-        const localKeysToReplace = getRestoreKeyScope(rawBackupData, localRaw, LOCAL_KEYS);
+        const syncKeysToReplace = getRestoreKeyScope(backupEnvelopeMode, syncRaw, SYNC_KEYS);
+        const localKeysToReplace = getRestoreKeyScope(backupEnvelopeMode, localRaw, LOCAL_KEYS);
 
         const normalizedSync = {};
         if (hasOwn(syncRaw, STORAGE_KEYS.LOCKED)) {
