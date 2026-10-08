@@ -2227,13 +2227,32 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
+        const showTabImportCancelledNotice = () => Toast.show(
+            '탭을 가져오는 동안 실행 상태 또는 편집 대상이 변경되어 현재 목록을 유지했습니다. 입력 화면에서 다시 가져와 주세요.',
+            'info',
+            5000
+        );
+
         const fetchAndApplyTabs = async (mode, queryOptions) => {
-            const inputValueAtStart = UI.urlInput ? UI.urlInput.value : '';
-            const loadedListNameAtStart = state.loadedListName;
+            if (state.currentView !== 'input') {
+                showTabImportCancelledNotice();
+                return;
+            }
+            const editorSnapshot = captureListEditorState();
+            const importRunId = state.currentRunId;
             const isDirtyAtStart = state.isDirty;
 
             try {
                 const tabs = await chrome.tabs.query(queryOptions);
+                // A run can start, finish, or stop while the query is pending.
+                // Never add unprocessed URLs to its hidden editor: a successful
+                // ad-hoc run may clear that input on restart without a warning.
+                // The generation also rejects a different editor with identical text.
+                if (state.currentView !== 'input' || state.currentRunId !== importRunId ||
+                    !isListEditorUnchanged(editorSnapshot) || state.isDirty !== isDirtyAtStart) {
+                    showTabImportCancelledNotice();
+                    return;
+                }
                 let skippedTabs = 0;
                 let newUrls = tabs.reduce((urls, tab) => {
                     const effectiveUrl = getTabNavigationUrlForImport(tab);
@@ -2248,15 +2267,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 if (newUrls.length === 0) {
                     Toast.show('가져올 수 있는 탭이 없습니다. (http, https 프로토콜만 지원)', 'info');
-                    return;
-                }
-
-                const inputChangedWhileFetching =
-                    (UI.urlInput ? UI.urlInput.value : '') !== inputValueAtStart ||
-                    state.loadedListName !== loadedListNameAtStart ||
-                    state.isDirty !== isDirtyAtStart;
-                if (inputChangedWhileFetching) {
-                    Toast.show('탭 정보를 불러오는 동안 URL 목록이 변경되어 기존 입력을 보호하기 위해 적용하지 않았습니다. 다시 시도해주세요.', 'info', 5000);
                     return;
                 }
 
@@ -2286,11 +2296,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const createTabFetchHandler = (queryOptions, modalTitle) => {
             return async () => {
-                if (UI.urlInput && UI.urlInput.value.trim() === '' && !state.loadedListName && !state.isDirty) {
-                    fetchAndApplyTabs('overwrite', queryOptions);
+                if (state.currentView !== 'input') {
+                    showTabImportCancelledNotice();
                     return;
                 }
+                if (UI.urlInput && UI.urlInput.value.trim() === '' && !state.loadedListName && !state.isDirty) {
+                    return fetchAndApplyTabs('overwrite', queryOptions);
+                }
 
+                const editorSnapshot = captureListEditorState();
+                const importRunId = state.currentRunId;
                 const choice = await Modal.show({
                     title: modalTitle,
                     body: '기존 목록을 지우고 새로 가져오거나, 현재 목록의 끝에 추가할 수 있습니다.',
@@ -2301,8 +2316,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     ]
                 });
 
-                if (choice === 'append') fetchAndApplyTabs('append', queryOptions);
-                else if (choice === 'overwrite') fetchAndApplyTabs('overwrite', queryOptions);
+                if (choice !== 'append' && choice !== 'overwrite') return;
+                // Apply the dialog choice only to the editor it described, even
+                // if another pending action completed while the dialog was open.
+                if (state.currentView !== 'input' || state.currentRunId !== importRunId ||
+                    !isListEditorUnchanged(editorSnapshot)) {
+                    showTabImportCancelledNotice();
+                    return;
+                }
+                return fetchAndApplyTabs(choice, queryOptions);
             };
         };
 
@@ -3705,10 +3727,17 @@ document.addEventListener('DOMContentLoaded', function() {
         // 스냅샷 이후의 그룹 편집을 오래된 상태로 덮어쓰지 않습니다.
         try {
           const latestLiveGroup = await chrome.tabGroups.get(groupId);
-          return isExpectedGroupState(latestLiveGroup);
+          if (!isExpectedGroupState(latestLiveGroup)) return false;
         } catch (_) {
           return false;
         }
+
+        // The second group read can also outlive a navigation or a new pending
+        // destination. Keep the tab read last so an address absent from the
+        // saved session is not closed using the earlier tab snapshot. The
+        // caller's group/interaction tracker protects edits during this read.
+        const finalLiveTab = await chrome.tabs.get(candidate.id);
+        return isStableSessionClosingCandidate(finalLiveTab, candidate, options);
       };
 
       const getSessionClosingCandidateSignature = (snapshot) => JSON.stringify(
