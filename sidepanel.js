@@ -452,6 +452,7 @@ document.addEventListener('DOMContentLoaded', function() {
             isTransitioning: false,
             isInitialLoad: true,
             currentRunId: 0,
+            isPreparingRun: false,
             processingRunId: null,
             completionRunId: null,
             unprocessedInputCount: 0
@@ -632,7 +633,32 @@ document.addEventListener('DOMContentLoaded', function() {
             return pendingUrl || committedUrl;
         };
 
-        const prepareUrlsForRun = (rawUrls) => {
+        // Process large URL lists without creating a second array containing every
+        // line. Yield between batches so a maximum-size TXT file or pasted list
+        // cannot monopolize the side panel's main thread for the entire scan.
+        const visitUrlTextLines = async (inputText, visitLine, isCancelled = () => false) => {
+            const text = String(inputText ?? '');
+            let start = 0;
+            let lineCount = 0;
+            let lastYieldAt = performance.now();
+
+            while (start <= text.length) {
+                if ((lineCount & 255) === 0 && isCancelled()) return false;
+                const end = text.indexOf('\n', start);
+                visitLine(text.slice(start, end < 0 ? text.length : end));
+                if (end < 0) break;
+                start = end + 1;
+                lineCount++;
+
+                if ((lineCount & 255) === 0 && performance.now() - lastYieldAt >= 12) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                    lastYieldAt = performance.now();
+                }
+            }
+            return !isCancelled();
+        };
+
+        const prepareUrlsForRun = async (rawText, isCancelled = () => false) => {
             const urls = [];
             const stats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
             const shouldSort = Boolean(UI.sortUrlsBeforeRunCheckbox?.checked);
@@ -641,28 +667,28 @@ document.addEventListener('DOMContentLoaded', function() {
             const compareEntries = (a, b) => collator.compare(a.url, b.url) || a.order - b.order;
             let acceptedCount = 0;
 
-            for (const rawUrl of rawUrls) {
+            const completed = await visitUrlTextLines(rawText, (rawUrl) => {
                 if (typeof rawUrl !== 'string') {
                     stats.invalid += 1;
-                    continue;
+                    return;
                 }
 
                 const trimmed = rawUrl.trim();
-                if (!trimmed) continue;
+                if (!trimmed) return;
                 if (trimmed.length > CONFIG.MAX_URL_LENGTH) {
                     stats.tooLong += 1;
-                    continue;
+                    return;
                 }
 
                 const normalizedUrl = normalizeUrlForOpening(trimmed);
                 if (!normalizedUrl) {
                     stats.invalid += 1;
-                    continue;
+                    return;
                 }
                 if (seenUrls) {
                     if (seenUrls.has(normalizedUrl)) {
                         stats.duplicate += 1;
-                        continue;
+                        return;
                     }
                     seenUrls.add(normalizedUrl);
                 }
@@ -670,7 +696,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const order = acceptedCount++;
                 if (!shouldSort) {
                     if (urls.length < CONFIG.MAX_URLS_PER_RUN) urls.push(normalizedUrl);
-                    continue;
+                    return;
                 }
 
                 // A worst-first heap retains the same first 300 entries as a
@@ -699,7 +725,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         index = worst;
                     }
                 }
-            }
+            }, isCancelled);
+            if (!completed) return null;
 
             stats.overLimit = Math.max(0, acceptedCount - CONFIG.MAX_URLS_PER_RUN);
             return {
@@ -1696,7 +1723,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 UI.startRunButton.classList.remove(CONFIG.CSS.SUCCESS_BTN_CLASS);
                 if (viewState === 'input') {
                     UI.startRunButton.textContent = displayCount > 0 ? CONFIG.TEXT.RUN_COUNT(displayCount) : CONFIG.TEXT.RUN;
-                    UI.startRunButton.disabled = displayCount === 0;
+                    UI.startRunButton.disabled = state.isPreparingRun || displayCount === 0;
                 } else if (viewState === 'complete') {
                      UI.startRunButton.textContent = CONFIG.TEXT.RESTART;
                      UI.startRunButton.classList.add(CONFIG.CSS.SUCCESS_BTN_CLASS);
@@ -2355,36 +2382,37 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
-        const normalizeImportedUrlListText = (urlsText) => {
+        const normalizeImportedUrlListText = async (urlsText, isCancelled = () => false) => {
             const normalizedUrls = [];
             const seenUrls = new Set();
             const stats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
 
-            for (const rawLine of String(urlsText ?? '').split(/\r?\n/)) {
+            const completed = await visitUrlTextLines(urlsText, (rawLine) => {
                 const trimmed = rawLine.trim();
-                if (!trimmed) continue;
+                if (!trimmed) return;
                 if (trimmed.length > CONFIG.MAX_URL_LENGTH) {
                     stats.tooLong += 1;
-                    continue;
+                    return;
                 }
 
                 const normalizedUrl = normalizeUrlForOpening(trimmed);
                 if (!normalizedUrl) {
                     stats.invalid += 1;
-                    continue;
+                    return;
                 }
                 if (seenUrls.has(normalizedUrl)) {
                     stats.duplicate += 1;
-                    continue;
+                    return;
                 }
                 if (normalizedUrls.length >= CONFIG.MAX_URLS_PER_RUN) {
                     stats.overLimit += 1;
-                    continue;
+                    return;
                 }
 
                 seenUrls.add(normalizedUrl);
                 normalizedUrls.push(normalizedUrl);
-            }
+            }, isCancelled);
+            if (!completed) return null;
 
             return {
                 urls: normalizedUrls.length > 0 ? `${normalizedUrls.join('\n')}\n` : '',
@@ -2524,7 +2552,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             const importEditorSnapshot = captureListEditorState();
             const importRunId = state.currentRunId;
-            const normalizedImport = normalizeImportedUrlListText(textContent);
+            const importCancelled = () => !isFileImportEditorAvailable() ||
+                state.currentRunId !== importRunId || !isListEditorUnchanged(importEditorSnapshot);
+            const normalizedImport = await normalizeImportedUrlListText(textContent, importCancelled);
+            if (!normalizedImport || importCancelled()) {
+                showFileImportCancelledNotice();
+                return;
+            }
             const urlString = normalizedImport.urls.trimEnd();
             const importedCount = normalizedImport.count;
 
@@ -2895,52 +2929,70 @@ document.addEventListener('DOMContentLoaded', function() {
             }, intervalSeconds * 1000);
         };
 
-        const startProcess = () => {
-            if (!UI.urlInput) return;
-            const rawUrls = UI.urlInput.value.split('\n');
-            const prepared = prepareUrlsForRun(rawUrls);
-
-            state.urlsToProcess = prepared.urls;
-            // Duplicates are deliberately excluded when that option is enabled.
-            // Invalid, overlong, or over-limit entries were not processed and
-            // must keep the unsaved-change warning active after completion.
-            state.unprocessedInputCount = prepared.invalid + prepared.tooLong + prepared.overLimit;
-            if (state.urlsToProcess.length === 0) {
-                if (UI.progressStats) {
-                    UI.progressStats.textContent = CONFIG.TEXT.EMPTY_INPUT;
-                    UI.progressStats.className = CONFIG.CSS.ERROR_CLASS;
+        const startProcess = async () => {
+            if (!UI.urlInput || state.isPreparingRun || state.currentView !== 'input') return;
+            const editorSnapshot = captureListEditorState();
+            const initialRunId = state.currentRunId;
+            const sortAtStart = Boolean(UI.sortUrlsBeforeRunCheckbox?.checked);
+            const deduplicateAtStart = Boolean(UI.removeDuplicatesCheckbox?.checked);
+            const preparationCancelled = () => state.currentView !== 'input' ||
+                state.currentRunId !== initialRunId || !isListEditorUnchanged(editorSnapshot) ||
+                Boolean(UI.sortUrlsBeforeRunCheckbox?.checked) !== sortAtStart ||
+                Boolean(UI.removeDuplicatesCheckbox?.checked) !== deduplicateAtStart;
+            state.isPreparingRun = true;
+            if (UI.startRunButton) UI.startRunButton.disabled = true;
+            try {
+                const prepared = await prepareUrlsForRun(editorSnapshot.urls, preparationCancelled);
+                if (!prepared || preparationCancelled()) {
+                    Toast.show('입력 목록이 변경되어 실행 준비를 취소했습니다. 다시 실행해 주세요.', 'info');
+                    return;
                 }
-                if (UI.progressBar) UI.progressBar.value = 0;
-                updateButtonState();
+
+                state.urlsToProcess = prepared.urls;
+                // Duplicates are deliberately excluded when that option is enabled.
+                // Invalid, overlong, or over-limit entries were not processed and
+                // must keep the unsaved-change warning active after completion.
+                state.unprocessedInputCount = prepared.invalid + prepared.tooLong + prepared.overLimit;
+                if (state.urlsToProcess.length === 0) {
+                    if (UI.progressStats) {
+                        UI.progressStats.textContent = CONFIG.TEXT.EMPTY_INPUT;
+                        UI.progressStats.className = CONFIG.CSS.ERROR_CLASS;
+                    }
+                    if (UI.progressBar) UI.progressBar.value = 0;
+                    updateButtonState();
+                    showSkippedUrlNotice(prepared);
+                    return;
+                }
+
                 showSkippedUrlNotice(prepared);
-                return;
-            }
 
-            showSkippedUrlNotice(prepared);
-
-            clearTimeout(state.intervalId);
-            state.intervalId = null;
-            Object.assign(state, {
-                currentUrlIndex: 0, isPaused: false, errorCount: 0,
-                processingRunId: null, completionRunId: null
-            });
-            state.currentRunId += 1;
-            const runId = state.currentRunId;
-
-            if (UI.urlQueue) {
-                const fragment = document.createDocumentFragment();
-                state.urlsToProcess.forEach(url => {
-                    const span = document.createElement('span');
-                    span.textContent = url;
-                    fragment.appendChild(span);
+                clearTimeout(state.intervalId);
+                state.intervalId = null;
+                Object.assign(state, {
+                    currentUrlIndex: 0, isPaused: false, errorCount: 0,
+                    processingRunId: null, completionRunId: null
                 });
-                UI.urlQueue.replaceChildren(fragment);
-            }
+                state.currentRunId += 1;
+                const runId = state.currentRunId;
 
-            setView('running');
-            setControlsEnabled(false);
-            updateProgress();
-            processNextUrl(runId);
+                if (UI.urlQueue) {
+                    const fragment = document.createDocumentFragment();
+                    state.urlsToProcess.forEach(url => {
+                        const span = document.createElement('span');
+                        span.textContent = url;
+                        fragment.appendChild(span);
+                    });
+                    UI.urlQueue.replaceChildren(fragment);
+                }
+
+                setView('running');
+                setControlsEnabled(false);
+                updateProgress();
+                processNextUrl(runId);
+            } finally {
+                state.isPreparingRun = false;
+                if (state.currentView === 'input') updateButtonState();
+            }
         };
 
         const togglePause = () => {
@@ -2981,7 +3033,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const handleStartRunButtonClick = async () => {
             const viewState = state.currentView;
             if (viewState === 'input') {
-                startProcess();
+                await startProcess();
             } else if (viewState === 'complete') {
                 await resetToIdle();
             }
@@ -3316,8 +3368,24 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Expose a public method for TabHaiku integration
             window.lunaToolsURLOpener = {
-                openUrls: (urls) => {
-                    const prepared = prepareUrlsForRun(Array.isArray(urls) ? urls : []);
+                openUrls: async (urls) => {
+                    if (state.currentView !== 'input' || state.isPreparingRun) return;
+                    const editorSnapshot = captureListEditorState();
+                    const initialRunId = state.currentRunId;
+                    const importCancelled = () => state.currentView !== 'input' ||
+                        state.currentRunId !== initialRunId || !isListEditorUnchanged(editorSnapshot);
+                    const inputUrls = Array.isArray(urls) ? urls : [];
+                    // A programmatic entry must remain one URL: embedded line breaks
+                    // were invalid before this async scanner and must not create extra tabs.
+                    const validInputLines = inputUrls.filter(url =>
+                        typeof url === 'string' && !/[\r\n]/.test(url)
+                    );
+                    const invalidEntries = inputUrls.length - validInputLines.length;
+                    const prepared = await prepareUrlsForRun(
+                        validInputLines.join('\n'), importCancelled
+                    );
+                    if (!prepared || importCancelled()) return;
+                    prepared.invalid += invalidEntries;
                     if (prepared.urls.length === 0) {
                         showSkippedUrlNotice(prepared);
                         Toast.show('열 수 있는 유효한 URL이 없습니다.', 'error');
@@ -3327,16 +3395,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     showSkippedUrlNotice(prepared);
                     if (UI.urlInput) {
                         UI.urlInput.value = prepared.urls.join('\n');
-                        // BUG FIX: Manually dispatch input event to update the state of the app
                         UI.urlInput.dispatchEvent(new Event('input', { bubbles: true }));
                     }
 
+                    const importedEditor = captureListEditorState();
                     const multiUrlTabButton = document.querySelector('.tab-button[data-tab="multi-url-opener"]');
                     if (multiUrlTabButton) multiUrlTabButton.click();
-                    
-                    // Allow UI to update before clicking
+
                     setTimeout(() => {
-                        if (UI.startRunButton && !UI.startRunButton.disabled) {
+                        if (state.currentView === 'input' && state.currentRunId === initialRunId &&
+                            isListEditorUnchanged(importedEditor) &&
+                            UI.startRunButton && !UI.startRunButton.disabled) {
                             UI.startRunButton.click();
                         }
                     }, 100);
