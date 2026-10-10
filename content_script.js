@@ -2056,6 +2056,9 @@ async function lunaToolsWriteTextToClipboard(text) {
         parseSegmentWithSubUnitsAndTens: function(inputSegment) {
             if (Utils.isInvalidString(inputSegment)) return 0;
             const segment = inputSegment.trim();
+            // Major-unit separators must already have been consumed. Stripping
+            // leftovers would turn malformed values such as 1만1만 into 10001.
+            if (/[^0-9.\s천백십]/u.test(segment)) return null;
             let textForUnitProcessing = segment.replace(REGEXES.KOREAN_NUMERIC_CLEANUP_REGEX_GI, '').replace(/\s+/g, '').trim();
 
             if (textForUnitProcessing === "" && segment !== "") return NumberParser.parseNumberWithTens(segment);
@@ -2083,7 +2086,7 @@ async function lunaToolsWriteTextToClipboard(text) {
 
             if (remainingTextAfterUnits.length > 0) {
                 const tailValue = NumberParser.parseNumberWithTens(remainingTextAfterUnits);
-                if (tailValue === null) return segmentContainedMajorSubUnit ? amount : null;
+                if (tailValue === null) return null;
                 amount += tailValue;
             } else if (!segmentContainedMajorSubUnit && amount === 0 && segment.length > 0) {
                 return NumberParser.parseNumberWithTens(segment);
@@ -2148,7 +2151,7 @@ async function lunaToolsWriteTextToClipboard(text) {
             if (remainingTextToParse.length > 0) {
                 const remainingValue = NumberParser.parseSegmentWithSubUnitsAndTens(remainingTextToParse);
                 if (remainingValue === null) {
-                    return parsedSomethingSignificant ? applyLeadingSign(totalAmount) : null;
+                    return null;
                 }
                 totalAmount += remainingValue;
                 parsedSomethingSignificant = true;
@@ -2856,7 +2859,8 @@ async function lunaToolsWriteTextToClipboard(text) {
                 ? originalText[signedExpressionStart - 1]
                 : '';
             const signIsAttachedToWord = /[\p{L}\p{M}\p{N}\p{Pc}]/u.test(immediatelyPrecedingCharacter);
-            const isCompound = signIsAttachedToWord || NUMERIC_VALUE_BEFORE_SIGN_REGEX.test(beforeSign);
+            const isCompound = signIsAttachedToWord || NUMERIC_VALUE_BEFORE_SIGN_REGEX.test(beforeSign) ||
+                /[+\-\u2212\uFE63\uFF0D]\s*$/u.test(beforeSign);
             const multiplier = /[\-\u2212\uFE63\uFF0D]/u.test(signMatch[1]) ? -1 : 1;
 
             return {
@@ -2985,6 +2989,11 @@ async function lunaToolsWriteTextToClipboard(text) {
                     }
                     const expressionStart = prefixSignContext.expressionStart;
                     const expressionEnd = currencyEnd + leadingAmountCandidate.endOffset;
+                    if (TextExtractor._isCompoundNumericCandidate(originalText, {
+                        startOffset: expressionStart,
+                        endOffset: expressionEnd,
+                        amountText: leadingAmountCandidate.amountText
+                    })) return null;
                     return {
                         amount: parsedLeading.amount * prefixSignContext.multiplier,
                         currencyCode,
@@ -3002,10 +3011,28 @@ async function lunaToolsWriteTextToClipboard(text) {
 
             if (trailingAmountCandidate) {
                 if (parsedTrailing) {
-                    const expressionStart = trailingAmountCandidate.startOffset;
+                    // A trailing currency code may capture a leading symbol
+                    // ($5 USD). Preserve a sign before that symbol just as in
+                    // the currency-prefix path, including compound rejection.
+                    const prefixSignContext = TextExtractor._getCurrencyPrefixSignContext(
+                        originalText,
+                        trailingAmountCandidate.startOffset
+                    );
+                    if (
+                        prefixSignContext.isCompound ||
+                        (prefixSignContext.hasSign && LEADING_NUMERIC_SIGN_REGEX.test(trailingAmountCandidate.amountText))
+                    ) {
+                        return null;
+                    }
+                    const expressionStart = prefixSignContext.expressionStart;
                     const expressionEnd = currencyEnd;
+                    if (TextExtractor._isCompoundNumericCandidate(originalText, {
+                        startOffset: expressionStart,
+                        endOffset: expressionEnd,
+                        amountText: trailingAmountCandidate.amountText
+                    })) return null;
                     return {
-                        amount: parsedTrailing.amount,
+                        amount: parsedTrailing.amount * prefixSignContext.multiplier,
                         currencyCode,
                         originalText: originalText.slice(expressionStart, expressionEnd).trim(),
                         matchedCurrencyText,

@@ -461,6 +461,7 @@ document.addEventListener('DOMContentLoaded', function() {
         let savedListLoadGeneration = 0;
         let listEditorGeneration = 0;
         let listLoadGeneration = 0;
+        let listSortGeneration = 0;
 
         const captureListEditorState = () => ({
             generation: listEditorGeneration,
@@ -656,6 +657,65 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             return !isCancelled();
+        };
+
+        const sortUrlEditor = async () => {
+            if (!UI.urlInput || state.currentView !== 'input' || state.isPreparingRun) return;
+            const generation = ++listSortGeneration;
+            const snapshot = captureListEditorState();
+            const runId = state.currentRunId;
+            const isCancelled = () => generation !== listSortGeneration ||
+                state.currentView !== 'input' || state.isPreparingRun ||
+                state.currentRunId !== runId || !isListEditorUnchanged(snapshot);
+
+            try {
+                let urls = [];
+                const completed = await visitUrlTextLines(snapshot.urls, line => {
+                    const url = line.trim();
+                    if (url) urls.push(url);
+                }, isCancelled);
+                if (!completed || urls.length === 0) return;
+
+                // Reuse one collator and yield during a stable merge sort.
+                // Per-comparison localeCompare options and one synchronous
+                // full sort can otherwise block this panel for many seconds.
+                const collator = new Intl.Collator(undefined, { sensitivity: 'base' });
+                let buffer = new Array(urls.length);
+                let operations = 0;
+                let lastYieldAt = performance.now();
+                for (let width = 1; width < urls.length; width *= 2) {
+                    for (let start = 0; start < urls.length; start += width * 2) {
+                        const middle = Math.min(start + width, urls.length);
+                        const end = Math.min(start + width * 2, urls.length);
+                        let left = start;
+                        let right = middle;
+                        for (let output = start; output < end; output++) {
+                            buffer[output] = right >= end ||
+                                (left < middle && collator.compare(urls[left], urls[right]) <= 0)
+                                ? urls[left++] : urls[right++];
+                            if ((++operations & 2047) === 0 && performance.now() - lastYieldAt >= 12) {
+                                await new Promise(resolve => setTimeout(resolve, 0));
+                                if (isCancelled()) return;
+                                lastYieldAt = performance.now();
+                            }
+                        }
+                    }
+                    [urls, buffer] = [buffer, urls];
+                }
+
+                if (isCancelled()) return;
+                const newValue = urls.join('\n') + '\n';
+                if (UI.urlInput.value !== newValue) {
+                    UI.urlInput.value = newValue;
+                    state.isDirty = true;
+                    if (!state.loadedListName) state.originalLoadedListUrls = null;
+                    updateButtonState();
+                    scheduleSetCardHeight();
+                }
+            } catch (error) {
+                console.error('Failed to sort URL list:', error);
+                Toast.show('목록 정렬에 실패했습니다. 입력 내용은 유지됩니다.', 'error', 5000);
+            }
         };
 
         const prepareUrlsForRun = async (rawText, isCancelled = () => false) => {
@@ -3202,22 +3262,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             }
             if (UI.sortUrlsButton) {
-                UI.sortUrlsButton.addEventListener('click', () => {
-                    if (!UI.urlInput) return;
-                    const urls = UI.urlInput.value.split('\n').map(url => url.trim()).filter(Boolean);
-                    if (urls.length === 0) return;
-                    urls.sort((a, b) => a.localeCompare(b, undefined, {sensitivity: 'base'}));
-                    const newValue = urls.join('\n') + '\n';
-                    if (UI.urlInput.value !== newValue) {
-                        UI.urlInput.value = newValue;
-                        state.isDirty = true; if (!state.loadedListName) state.originalLoadedListUrls = null;
-                        updateButtonState();
-                        if (state.currentView === 'input') scheduleSetCardHeight();
-                    }
-                });
+                UI.sortUrlsButton.addEventListener('click', sortUrlEditor);
             }
             if (UI.deduplicateUrlsButton) {
                 UI.deduplicateUrlsButton.addEventListener('click', () => {
+                    listSortGeneration++;
                     if (!UI.urlInput) return;
                     const urls = UI.urlInput.value.split('\n').map(url => url.trim()).filter(Boolean);
                     if (urls.length === 0) return;
