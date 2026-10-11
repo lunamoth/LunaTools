@@ -722,11 +722,11 @@ async function lunaToolsWriteTextToClipboard(text) {
         };
         return throttled;
       },
-      normalizeNavigationUrl(candidateUrl) {
+      normalizeNavigationUrl(candidateUrl, baseUrl = window.location.href) {
         if (!candidateUrl) return null;
 
         try {
-          const parsed = new URL(String(candidateUrl), window.location.href);
+          const parsed = new URL(String(candidateUrl), baseUrl);
           if (!KB_NAV_CONFIG.navigation.ALLOWED_PROTOCOLS.has(parsed.protocol) || !parsed.hostname) return null;
           if (parsed.username || parsed.password) return null;
           return parsed.href;
@@ -1088,7 +1088,12 @@ async function lunaToolsWriteTextToClipboard(text) {
         };
 
         for (const link of links) {
-          const safeHref = KB_NAV_Utils.normalizeNavigationUrl(link.getAttribute('href') || link.href);
+          // Resolve relative pagination links exactly as the document does,
+          // including <base href> and an element-specific base URI.
+          const safeHref = KB_NAV_Utils.normalizeNavigationUrl(
+            link.getAttribute('href') || link.href,
+            link.baseURI || document.baseURI || window.location.href
+          );
           if (!safeHref || safeHref === window.location.href || !isUsableRelElement(link)) continue;
 
           const relTokens = new Set(String(link.rel || link.getAttribute('rel') || '')

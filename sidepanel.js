@@ -795,27 +795,53 @@ document.addEventListener('DOMContentLoaded', function() {
             };
         };
 
+        let urlDisplayCountCache = null;
         const countRunnableUrlsForDisplay = (text) => {
-            const seenUrls = UI.removeDuplicatesCheckbox?.checked ? new Set() : null;
-            let count = 0;
-            let hasText = false;
-            let start = 0;
-            while (start <= text.length) {
-                const end = text.indexOf('\n', start);
-                const trimmed = text.slice(start, end < 0 ? text.length : end).trim();
-                if (trimmed) {
-                    hasText = true;
-                    const normalizedUrl = normalizeUrlForOpening(trimmed);
-                    if (normalizedUrl && (!seenUrls || !seenUrls.has(normalizedUrl))) {
-                        seenUrls?.add(normalizedUrl);
-                        count += 1;
-                        if (count === CONFIG.MAX_URLS_PER_RUN) break;
-                    }
-                }
-                if (end < 0) break;
-                start = end + 1;
+            const removeDuplicates = Boolean(UI.removeDuplicatesCheckbox?.checked);
+            if (urlDisplayCountCache?.text === text &&
+                urlDisplayCountCache.removeDuplicates === removeDuplicates) {
+                return urlDisplayCountCache;
             }
-            return { count, hasText };
+
+            clearTimeout(urlDisplayCountCache?.timerId);
+            const scan = { text, removeDuplicates, count: 0, hasText: false, pending: true, timerId: null };
+            urlDisplayCountCache = scan;
+            const seenUrls = removeDuplicates ? new Set() : null;
+            let start = 0;
+            const processChunk = () => {
+                if (urlDisplayCountCache !== scan) return;
+                scan.timerId = null;
+                const startedAt = performance.now();
+                let lines = 0;
+                while (start <= text.length) {
+                    const end = text.indexOf('\n', start);
+                    const trimmed = text.slice(start, end < 0 ? text.length : end).trim();
+                    if (trimmed) {
+                        scan.hasText = true;
+                        const normalizedUrl = normalizeUrlForOpening(trimmed);
+                        if (normalizedUrl && (!seenUrls || !seenUrls.has(normalizedUrl))) {
+                            seenUrls?.add(normalizedUrl);
+                            scan.count += 1;
+                        }
+                    }
+
+                    if (end < 0 || scan.count === CONFIG.MAX_URLS_PER_RUN) {
+                        scan.pending = false;
+                        return;
+                    }
+                    start = end + 1;
+                    // The 300-URL cap does not bound duplicate/invalid lines.
+                    // Yield while counting those too, and abandon obsolete scans.
+                    if ((++lines & 63) === 0 && performance.now() - startedAt >= 8) break;
+                }
+                scan.timerId = setTimeout(() => {
+                    if (urlDisplayCountCache !== scan) return;
+                    processChunk();
+                    if (!scan.pending) updateButtonState();
+                }, 0);
+            };
+            processChunk();
+            return scan;
         };
 
         const showSkippedUrlNotice = ({ invalid = 0, tooLong = 0, duplicate = 0, overLimit = 0 }) => {
@@ -1777,13 +1803,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const updateButtonState = () => {
             const viewState = state.currentView;
-            const { count: displayCount, hasText } = countRunnableUrlsForDisplay(UI.urlInput?.value || '');
+            const { count: displayCount, hasText, pending: isCounting } = countRunnableUrlsForDisplay(UI.urlInput?.value || '');
 
             if (UI.startRunButton) {
                 UI.startRunButton.classList.remove(CONFIG.CSS.SUCCESS_BTN_CLASS);
                 if (viewState === 'input') {
-                    UI.startRunButton.textContent = displayCount > 0 ? CONFIG.TEXT.RUN_COUNT(displayCount) : CONFIG.TEXT.RUN;
-                    UI.startRunButton.disabled = state.isPreparingRun || displayCount === 0;
+                    UI.startRunButton.textContent = isCounting ? `${CONFIG.TEXT.RUN} (집계 중…)` :
+                        (displayCount > 0 ? CONFIG.TEXT.RUN_COUNT(displayCount) : CONFIG.TEXT.RUN);
+                    UI.startRunButton.disabled = state.isPreparingRun || isCounting || displayCount === 0;
                 } else if (viewState === 'complete') {
                      UI.startRunButton.textContent = CONFIG.TEXT.RESTART;
                      UI.startRunButton.classList.add(CONFIG.CSS.SUCCESS_BTN_CLASS);
