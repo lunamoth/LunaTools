@@ -2064,6 +2064,9 @@ async function lunaToolsWriteTextToClipboard(text) {
             // Major-unit separators must already have been consumed. Stripping
             // leftovers would turn malformed values such as 1만1만 into 10001.
             if (/[^0-9.\s천백십]/u.test(segment)) return null;
+            // Whitespace may separate Korean units, but must not join separate
+            // numeric tokens ("100 200" -> 100200 or "1.5 2" -> 1.52).
+            if (/[\d.]\s+[\d.]/u.test(segment)) return null;
             let textForUnitProcessing = segment.replace(REGEXES.KOREAN_NUMERIC_CLEANUP_REGEX_GI, '').replace(/\s+/g, '').trim();
 
             if (textForUnitProcessing === "" && segment !== "") return NumberParser.parseNumberWithTens(segment);
@@ -2373,12 +2376,9 @@ async function lunaToolsWriteTextToClipboard(text) {
                 if (Config.TIMEZONE_FIXED_OFFSETS[upperTzStr]) {
                     resolvedTzOffsetString = Config.TIMEZONE_FIXED_OFFSETS[upperTzStr];
                 } else if (Config.TIMEZONE_LOOKUP[upperTzStr]) {
-                    const ianaZone = Config.TIMEZONE_LOOKUP[upperTzStr];
-                    resolvedIanaTimeZone = ianaZone;
-                    resolvedTzOffsetString = this._getOffsetStringForIANA(ianaZone, year, monthIndex, day, hour, minute);
+                    resolvedIanaTimeZone = Config.TIMEZONE_LOOKUP[upperTzStr];
                 } else if (upperTzStr === 'CENTRAL EUROPEAN TIME') {
                     resolvedIanaTimeZone = 'Europe/Berlin';
-                    resolvedTzOffsetString = this._getOffsetStringForIANA(resolvedIanaTimeZone, year, monthIndex, day, hour, minute);
                 } else {
                     const offsetMatch = REGEXES.TZ_OFFSET_REGEX.exec(upperTzStr);
                     if (offsetMatch) {
@@ -2433,13 +2433,15 @@ async function lunaToolsWriteTextToClipboard(text) {
                             );
                             if (matchedFullTimeZone) {
                                 resolvedIanaTimeZone = matchedFullTimeZone[1];
-                                resolvedTzOffsetString = this._getOffsetStringForIANA(resolvedIanaTimeZone, year, monthIndex, day, hour, minute);
                             }
                         }
                     }
                 }
 
-                if (!resolvedTzOffsetString) continue;
+                // Resolve dynamic offsets only after the source date and 24:00
+                // rollover are known; the browser's day may have a DST gap even
+                // when the requested time on the source region's day is valid.
+                if (!resolvedTzOffsetString && !resolvedIanaTimeZone) continue;
 
                 // A time without a date belongs to "today" in its source timezone,
                 // not necessarily to the browser's local calendar day.
