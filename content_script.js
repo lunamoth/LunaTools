@@ -4022,11 +4022,14 @@ async function lunaToolsWriteTextToClipboard(text) {
                 !AppState.popupContentContainer?.isConnected ||
                 !AppState.currentPopupElement?.contains(AppState.popupContentContainer);
             if (popupDisconnected) {
-                // SPA가 body를 통째로 교체하면 이전 popup 참조는 살아 있어도
-                // 실제 문서에서는 분리됩니다. 오래된 참조를 버리고 현재 body에 재생성합니다.
+                // 내부 DOM만 교체되거나 같은 ID의 복제본이 남아 있으면
+                // create()가 재생성을 건너뛰므로 기존 팝업 흔적도 함께 정리합니다.
                 AppState.popupDisplayGeneration += 1;
                 clearTimeout(AppState.closePopupTimeout);
                 AppState.closePopupTimeout = null;
+                AppState.popupContentContainer?.remove();
+                AppState.currentPopupElement?.remove();
+                document.getElementById(UI_STRINGS.POPUP_LAYER_ID)?.remove();
                 AppState.currentPopupElement = null;
                 AppState.popupContentContainer = null;
             }
