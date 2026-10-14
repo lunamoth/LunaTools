@@ -921,6 +921,13 @@ class TabManager {
   async _sortAndMoveTabsInWindow(windowId) {
     try {
       const allTabsInWindow = await chrome.tabs.query({ windowId });
+      // Chrome Split View의 두 탭은 하나의 레이아웃입니다. 개별 tabs.move()
+      // 정렬은 쌍을 분리하여 Split View를 해제할 수 있으므로 원형을 보존합니다.
+      // Split View API가 없는 이전 Chrome에서는 splitViewId가 undefined입니다.
+      if (allTabsInWindow.some(tab => Number.isInteger(tab.splitViewId) && tab.splitViewId >= 0)) {
+        console.warn('LunaTools: 분할 보기(Split View)를 유지하기 위해 이 창의 탭 정렬을 건너뜁니다.');
+        return;
+      }
       const pinnedTabs = allTabsInWindow.filter(tab => tab.pinned);
       const unpinnedTabs = allTabsInWindow.filter(tab => !tab.pinned);
 
@@ -1354,6 +1361,18 @@ class TabManager {
 
       const targetWindowId = await this._resolveTargetWindowId(preferredTargetWindowId);
       if (targetWindowId == null) {
+        return;
+      }
+
+      // 다른 창으로 분할 보기의 탭을 개별 이동하면 원래의 분할 화면이
+      // 해제될 수 있습니다. 단 하나라도 있으면 일부만 합치는 대신 중단합니다.
+      // getAll() 이후 변경된 분할 상태도 이동 전에 다시 조회합니다.
+      const sourceTabsBeforeMove = await chrome.tabs.query({ windowType: 'normal' });
+      if (sourceTabsBeforeMove.some(tab =>
+        tab.windowId !== targetWindowId &&
+        Number.isInteger(tab.splitViewId) && tab.splitViewId >= 0
+      )) {
+        console.warn('LunaTools: 다른 창의 분할 보기(Split View)를 유지하기 위해 창 합치기를 중단합니다.');
         return;
       }
 
