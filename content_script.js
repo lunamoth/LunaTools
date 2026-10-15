@@ -2700,6 +2700,14 @@ async function lunaToolsWriteTextToClipboard(text) {
             // 뒤의 엄격한 아라비아 숫자만 금액으로 사용합니다. "이100달러"를
             // 2,100달러로 합산하는 식의 오변환을 방지합니다.
             if (adjacentArabicAmountMatch) {
+                const koreanPrefixLength = candidateText.length - adjacentArabicAmountMatch[1].length;
+                const koreanPrefix = candidateText.slice(0, koreanPrefixLength);
+                // "삼백50", "일억5천만"은 앞의 한글 자릿수 단위까지 금액입니다.
+                // 문장 속 글자가 붙지 않은 유효한 숫자 표현은 일부만 잘라내지 않습니다.
+                if (!hasKoreanContextBeforeCandidate && /[천백십경조억만]/u.test(koreanPrefix) &&
+                    NumberParser.parseKoreanNumericText(candidateText) !== null) {
+                    return candidate;
+                }
                 const actualAmountText = adjacentArabicAmountMatch[1].trim();
                 if (TextExtractor._isStrictCurrencyAmountText(actualAmountText)) {
                     const actualAmountStart = candidateText.indexOf(
@@ -3167,7 +3175,10 @@ async function lunaToolsWriteTextToClipboard(text) {
                             startOffset: match.index + valueOffsetInMatch,
                             endOffset: match.index + valueOffsetInMatch + valueStr.length
                         };
-                        if (TextExtractor._isCompoundNumericCandidate(trimmedText, numericCandidate)) {
+                        // 시각의 분·초를 별도 수량으로 추출하지 않습니다.
+                        // "9:30 PT"의 30 PT는 30파인트가 아닙니다.
+                        if (/\d:\s*$/u.test(trimmedText.slice(0, numericCandidate.startOffset)) ||
+                            TextExtractor._isCompoundNumericCandidate(trimmedText, numericCandidate)) {
                             continue;
                         }
 

@@ -238,6 +238,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 interactedTabIds.add(tabId);
             }
         };
+        const handleTabUpdated = (tabId, changeInfo) => {
+            // Split View는 탭 활성화나 순서 이동 없이도 변경될 수 있습니다.
+            // 다시 해제되더라도 이번 작업 중 사용자가 구성한 탭은 보존합니다.
+            if (Number.isInteger(changeInfo?.splitViewId)) rememberTabInteraction(tabId);
+        };
         const handleTabGroupUpdated = (group) => {
             if (stopped || !Number.isInteger(group?.id)) return;
             const protectedTabIds = watchedGroupTabIds.get(group.id);
@@ -318,6 +323,7 @@ document.addEventListener('DOMContentLoaded', function() {
         chrome.tabs.onActivated.addListener(handleTabActivated);
         if (chrome.tabs.onHighlighted) chrome.tabs.onHighlighted.addListener(handleTabsHighlighted);
         if (chrome.tabs.onMoved) chrome.tabs.onMoved.addListener(handleTabMoved);
+        if (chrome.tabs.onUpdated) chrome.tabs.onUpdated.addListener(handleTabUpdated);
         if (chrome.tabGroups?.onUpdated) chrome.tabGroups.onUpdated.addListener(handleTabGroupUpdated);
         chrome.windows.onFocusChanged.addListener(handleWindowFocusChanged);
 
@@ -350,6 +356,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 chrome.tabs.onActivated.removeListener(handleTabActivated);
                 if (chrome.tabs.onHighlighted) chrome.tabs.onHighlighted.removeListener(handleTabsHighlighted);
                 if (chrome.tabs.onMoved) chrome.tabs.onMoved.removeListener(handleTabMoved);
+                if (chrome.tabs.onUpdated) chrome.tabs.onUpdated.removeListener(handleTabUpdated);
                 if (chrome.tabGroups?.onUpdated) chrome.tabGroups.onUpdated.removeListener(handleTabGroupUpdated);
                 chrome.windows.onFocusChanged.removeListener(handleWindowFocusChanged);
                 watchedTabIds.clear();
@@ -4687,6 +4694,7 @@ document.addEventListener('DOMContentLoaded', function() {
                   livePlaceholderTab.windowId === restoreTab.windowId &&
                   Boolean(livePlaceholderTab.pinned) === restoreTab.expectedPinned &&
                   getSessionTabGroupId(livePlaceholderTab) === restoreTab.expectedGroupId &&
+                  getSessionTabSplitViewId(livePlaceholderTab) < 0 &&
                   effectiveRawUrl === CONSTANTS.RESTORE.PLACEHOLDER_URL &&
                   !tabInteractionTracker.hasInteracted(restoreTab.tabId);
 
@@ -4782,6 +4790,7 @@ document.addEventListener('DOMContentLoaded', function() {
                   Number.isFinite(liveTab.lastAccessed) &&
                   liveTab.lastAccessed > restoreTab.initialLastAccessed;
                 const hasPinnedStateChanged = Boolean(liveTab.pinned) !== restoreTab.expectedPinned;
+                const hasSplitViewStateChanged = getSessionTabSplitViewId(liveTab) >= 0;
                 const currentGroupId = getSessionTabGroupId(liveTab);
                 const expectedGroupId = Number.isInteger(restoreTab.expectedGroupId)
                   ? restoreTab.expectedGroupId
@@ -4807,6 +4816,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     hasUserInteraction ||
                     wasAccessedAfterCreation ||
                     hasPinnedStateChanged ||
+                    hasSplitViewStateChanged ||
                     hasGroupMembershipChanged ||
                     hasGroupMetadataChanged) {
                   if (restoreTab.preserveFromRollback !== true) {
@@ -4824,6 +4834,7 @@ document.addEventListener('DOMContentLoaded', function() {
                   finalLiveTab.windowId === restoreTab.windowId &&
                   Boolean(finalLiveTab.pinned) === restoreTab.expectedPinned &&
                   getSessionTabGroupId(finalLiveTab) === expectedGroupId &&
+                  getSessionTabSplitViewId(finalLiveTab) < 0 &&
                   !(finalLiveTab.windowId === focusedWindowId &&
                     (finalLiveTab.active === true || finalLiveTab.highlighted === true)) &&
                   !tabInteractionTracker.hasInteracted(ownedTabId) &&
@@ -4866,7 +4877,7 @@ document.addEventListener('DOMContentLoaded', function() {
             ? ' 변경되지 않은 복원 탭은 모두 정리했습니다.'
             : ` 복원 탭 중 ${rollbackFailureCount}개를 정리하지 못했습니다.`;
           if (preservedChangedTabCount > 0) {
-            rollbackStatus += ` 사용자가 선택·고정하거나 이동·주소를 변경한 탭 ${preservedChangedTabCount}개는 보존했습니다.`;
+            rollbackStatus += ` 상태 변경·사용자 조작이 확인된 복원 탭 ${preservedChangedTabCount}개는 보존했습니다.`;
           }
           throw new Error(`${reason}${rollbackStatus}`);
         } finally {
