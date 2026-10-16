@@ -2378,7 +2378,9 @@ async function lunaToolsWriteTextToClipboard(text) {
                 } else if (Config.TIMEZONE_LOOKUP[upperTzStr]) {
                     resolvedIanaTimeZone = Config.TIMEZONE_LOOKUP[upperTzStr];
                 } else if (upperTzStr === 'CENTRAL EUROPEAN TIME') {
-                    resolvedIanaTimeZone = 'Europe/Berlin';
+                    // The full name denotes CET (UTC+01:00), just like its
+                    // abbreviation; Berlin's summer offset denotes CEST instead.
+                    resolvedTzOffsetString = Config.TIMEZONE_FIXED_OFFSETS.CET;
                 } else {
                     const offsetMatch = REGEXES.TZ_OFFSET_REGEX.exec(upperTzStr);
                     if (offsetMatch) {
