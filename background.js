@@ -670,13 +670,12 @@ function isWindowAccessError(error) {
 
 async function createTabsForOpenRequest(urls, sender) {
   const preferredWindowId = Number.isInteger(sender?.tab?.windowId) ? sender.tab.windowId : null;
-  let shouldUsePreferredWindow = preferredWindowId !== null;
   let opened = 0;
   let failed = 0;
 
-  for (const url of urls) {
+  for (const [index, url] of urls.entries()) {
     const createProperties = { url, active: false };
-    if (shouldUsePreferredWindow) {
+    if (preferredWindowId !== null) {
       createProperties.windowId = preferredWindowId;
     }
 
@@ -684,15 +683,12 @@ async function createTabsForOpenRequest(urls, sender) {
       await chrome.tabs.create(createProperties);
       opened += 1;
     } catch (error) {
-      if (shouldUsePreferredWindow && isWindowAccessError(error)) {
-        shouldUsePreferredWindow = false;
-        try {
-          await chrome.tabs.create({ url, active: false });
-          opened += 1;
-        } catch (fallbackError) {
-          failed += 1;
-          console.warn('LunaTools: URL 새 탭 열기 실패', fallbackError);
-        }
+      if (preferredWindowId !== null && isWindowAccessError(error)) {
+        // Never move a source-window request into the last active window.
+        // It may belong to another task or have a different incognito mode.
+        failed += urls.length - index;
+        console.warn('LunaTools: 원래 창이 없어 URL 일괄 열기를 중단했습니다.', error);
+        break;
       } else {
         failed += 1;
         console.warn('LunaTools: URL 새 탭 열기 실패', error);

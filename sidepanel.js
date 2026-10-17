@@ -3730,15 +3730,24 @@ document.addEventListener('DOMContentLoaded', function() {
         return !hasOwn(tab, 'groupInfo') || tab.groupInfo === null || tab.groupInfo === undefined;
       };
 
-      const hasConsistentSessionGroupMetadata = (tabs) => {
+      const hasConsistentSessionMetadata = (tabs) => {
         const groupMetadataByKey = new Map();
+        const windowPrivacyByKey = new Map();
 
         for (const tab of tabs) {
-          if (!Number.isSafeInteger(tab.groupId) || tab.groupId < 0) continue;
-
           const windowKey = tab.windowId === undefined || tab.windowId === null
             ? 'single-window'
             : String(tab.windowId);
+          // Older sessions have no incognito field and retain normal-window
+          // semantics. Never merge conflicting privacy modes into one window.
+          const incognito = tab.incognito === true;
+          if (windowPrivacyByKey.has(windowKey) && windowPrivacyByKey.get(windowKey) !== incognito) {
+            return false;
+          }
+          windowPrivacyByKey.set(windowKey, incognito);
+
+          if (!Number.isSafeInteger(tab.groupId) || tab.groupId < 0) continue;
+
           const groupKey = `${windowKey}:${tab.groupId}`;
           const groupInfo = normalizeSessionGroupInfo(tab.groupInfo);
           if (!isValidSessionGroupInfo(groupInfo, { requireComplete: true })) return false;
@@ -3922,6 +3931,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if ((hasOwn(tab, 'title') && typeof tab.title !== 'string') ||
             (hasOwn(tab, 'pinned') && typeof tab.pinned !== 'boolean') ||
+            (hasOwn(tab, 'incognito') && typeof tab.incognito !== 'boolean') ||
             (hasOwn(tab, 'groupId') && (!Number.isSafeInteger(tab.groupId) || tab.groupId < -1)) ||
             (hasOwn(tab, 'windowId') && !Number.isInteger(tab.windowId))) {
           return null;
@@ -3932,6 +3942,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const normalizedTab = { url: normalizedUrl };
         if (hasOwn(tab, 'title')) normalizedTab.title = tab.title;
         if (hasOwn(tab, 'pinned')) normalizedTab.pinned = tab.pinned;
+        if (hasOwn(tab, 'incognito')) normalizedTab.incognito = tab.incognito;
         if (hasOwn(tab, 'groupId')) normalizedTab.groupId = tab.groupId;
         if (hasOwn(tab, 'windowId')) normalizedTab.windowId = tab.windowId;
         if (hasOwn(tab, 'groupInfo')) normalizedTab.groupInfo = normalizeSessionGroupInfo(tab.groupInfo);
@@ -3980,7 +3991,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // 최대 300개만 정규화하므로 손상된 대용량 세션이 UI를 멈추게 하지 않습니다.
         const normalizedTabs = session.tabs.map(normalizeSessionTab);
         return normalizedTabs.every(Boolean) &&
-          hasConsistentSessionGroupMetadata(normalizedTabs) &&
+          hasConsistentSessionMetadata(normalizedTabs) &&
           getSessionRestoreWindowCount(normalizedTabs) <= CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS;
       };
 
@@ -4378,6 +4389,7 @@ document.addEventListener('DOMContentLoaded', function() {
               url: normalizedUrl,
               title: typeof tab.title === 'string' ? tab.title : '',
               pinned: Boolean(tab.pinned),
+              incognito: tab.incognito === true,
               groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
               groupInfo: Number.isInteger(tab.groupId) && tab.groupId > -1
                 ? normalizeSessionGroupInfo(
@@ -4486,8 +4498,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const normalizedTabs = Array.isArray(session?.tabs)
           ? session.tabs.map(normalizeSessionTab)
           : [];
-        if (normalizedTabs.some(tab => !tab) || !hasConsistentSessionGroupMetadata(normalizedTabs)) {
-          throw new Error('세션 데이터의 탭 그룹 정보가 올바르지 않습니다.');
+        if (normalizedTabs.some(tab => !tab) || !hasConsistentSessionMetadata(normalizedTabs)) {
+          throw new Error('세션 데이터의 탭·그룹 또는 창 정보가 올바르지 않습니다.');
         }
         const validTabs = normalizedTabs;
         if (validTabs.length === 0) {
@@ -4570,7 +4582,8 @@ document.addEventListener('DOMContentLoaded', function() {
             // cleaner applies exactly as it does to ordinary browsing.
             const createdWindow = await chrome.windows.create({
               url: CONSTANTS.RESTORE.PLACEHOLDER_URL,
-              focused: false
+              focused: false,
+              incognito: firstTab.incognito === true
             });
             if (!Number.isInteger(createdWindow?.id)) {
               throw new Error('복원된 창의 식별자를 확인할 수 없습니다.');
@@ -5393,7 +5406,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
           const tabs = session.tabs.map(normalizeImportedTab);
           if (tabs.some(tab => !tab)) throw new Error('Invalid format');
-          if (!hasConsistentSessionGroupMetadata(tabs)) throw new Error('Invalid format');
+          if (!hasConsistentSessionMetadata(tabs)) throw new Error('Invalid format');
           if (getSessionRestoreWindowCount(tabs) > CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS) {
             throw new Error(CONSTANTS.MESSAGES.IMPORT_TOO_MANY_WINDOWS_IN_SESSION(CONSTANTS.LIMITS.MAX_RESTORE_WINDOWS));
           }

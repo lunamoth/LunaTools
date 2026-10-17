@@ -439,15 +439,22 @@ document.addEventListener('DOMContentLoaded', () => {
         return windowKeys.size;
     };
 
-    const validateSessionGroupMetadata = (tabs, contextMessage) => {
+    const validateSessionMetadata = (tabs, contextMessage) => {
         const groupMetadataByKey = new Map();
+        const windowPrivacyByKey = new Map();
 
         for (const tab of tabs) {
-            if (!Number.isSafeInteger(tab.groupId) || tab.groupId < 0) continue;
-
             const windowKey = tab.windowId === undefined || tab.windowId === null
                 ? 'single-window'
                 : String(tab.windowId);
+            const incognito = tab.incognito === true;
+            if (windowPrivacyByKey.has(windowKey) && windowPrivacyByKey.get(windowKey) !== incognito) {
+                throw new Error(`${contextMessage}의 같은 창에 서로 다른 시크릿 모드 정보가 들어 있습니다.`);
+            }
+            windowPrivacyByKey.set(windowKey, incognito);
+
+            if (!Number.isSafeInteger(tab.groupId) || tab.groupId < 0) continue;
+
             const groupKey = `${windowKey}:${tab.groupId}`;
             const groupInfo = tab.groupInfo;
             const signature = JSON.stringify([
@@ -511,6 +518,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const validTab = normalizedUrl &&
                     (!hasOwn(tab, 'title') || typeof tab.title === 'string') &&
                     (!hasOwn(tab, 'pinned') || typeof tab.pinned === 'boolean') &&
+                    (!hasOwn(tab, 'incognito') || typeof tab.incognito === 'boolean') &&
                     (!hasOwn(tab, 'groupId') || (Number.isSafeInteger(tab.groupId) && tab.groupId >= -1)) &&
                     (!hasOwn(tab, 'windowId') || Number.isInteger(tab.windowId));
 
@@ -521,6 +529,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const normalizedTab = { url: normalizedUrl };
                 if (hasOwn(tab, 'title')) normalizedTab.title = tab.title;
                 if (hasOwn(tab, 'pinned')) normalizedTab.pinned = tab.pinned;
+                if (hasOwn(tab, 'incognito')) normalizedTab.incognito = tab.incognito;
                 if (hasOwn(tab, 'groupId')) normalizedTab.groupId = tab.groupId;
                 if (hasOwn(tab, 'windowId')) normalizedTab.windowId = tab.windowId;
                 const tabContext = `${sessionIndex + 1}번째 세션의 ${tabIndex + 1}번째 탭`;
@@ -543,7 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return normalizedTab;
             });
 
-            validateSessionGroupMetadata(normalizedTabs, `${sessionIndex + 1}번째 세션`);
+            validateSessionMetadata(normalizedTabs, `${sessionIndex + 1}번째 세션`);
 
             if (getSessionRestoreWindowCount(normalizedTabs) > MAX_BACKUP_WINDOWS_PER_SESSION) {
                 throw new Error(`${sessionIndex + 1}번째 세션의 창 수가 너무 많습니다. 세션당 최대 ${MAX_BACKUP_WINDOWS_PER_SESSION}개까지 복원할 수 있습니다.`);
