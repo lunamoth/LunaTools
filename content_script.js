@@ -3166,6 +3166,16 @@ async function lunaToolsWriteTextToClipboard(text) {
                         const valueStr = match[1];
                         const originalMatchedSegment = match[0].trim();
 
+                        // A supported unit must consume the whole unit expression.
+                        // Otherwise m³ becomes a length, kg/m³ becomes a mass, and
+                        // m/s² becomes a speed. Keep supported complete expressions
+                        // such as m² and m/s, but reject an unconsumed exponent or
+                        // compound-unit operator instead of changing the dimension.
+                        const followingText = trimmedText.slice(match.index + match[0].length);
+                        if (/^\s*(?:[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]|\^\s*[+\-−]?\s*\d|(?:[\/⁄∕·⋅*×]|per\b)\s*(?:[\p{L}µμ°Ω%]|\())/iu.test(followingText)) {
+                            continue;
+                        }
+
                         if (shouldIgnoreCurrencyOverlap(originalMatchedSegment)) {
                             continue;
                         }
