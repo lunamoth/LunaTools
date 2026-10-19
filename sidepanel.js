@@ -725,6 +725,42 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
+        const deduplicateUrlEditor = async () => {
+            if (!UI.urlInput || state.currentView !== 'input' || state.isPreparingRun) return;
+            // Share the generation with sorting so only the latest editor
+            // operation may apply its result after yielding to user input.
+            const generation = ++listSortGeneration;
+            const snapshot = captureListEditorState();
+            const runId = state.currentRunId;
+            const isCancelled = () => generation !== listSortGeneration ||
+                state.currentView !== 'input' || state.isPreparingRun ||
+                state.currentRunId !== runId || !isListEditorUnchanged(snapshot);
+
+            try {
+                // Do not split/map/filter the entire input into several arrays.
+                // Blank and repeated lines need no storage; retain only the
+                // first occurrence of each trimmed line, in its original order.
+                const uniqueUrls = new Set();
+                const completed = await visitUrlTextLines(snapshot.urls, line => {
+                    const url = line.trim();
+                    if (url) uniqueUrls.add(url);
+                }, isCancelled);
+                if (!completed || isCancelled() || uniqueUrls.size === 0) return;
+
+                const newValue = [...uniqueUrls].join('\n') + '\n';
+                if (UI.urlInput.value !== newValue) {
+                    UI.urlInput.value = newValue;
+                    state.isDirty = true;
+                    if (!state.loadedListName) state.originalLoadedListUrls = null;
+                    updateButtonState();
+                    scheduleSetCardHeight();
+                }
+            } catch (error) {
+                console.error('Failed to deduplicate URL list:', error);
+                Toast.show('중복 제거에 실패했습니다. 입력 내용은 유지됩니다.', 'error', 5000);
+            }
+        };
+
         const prepareUrlsForRun = async (rawText, isCancelled = () => false) => {
             const urls = [];
             const stats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
@@ -3299,20 +3335,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 UI.sortUrlsButton.addEventListener('click', sortUrlEditor);
             }
             if (UI.deduplicateUrlsButton) {
-                UI.deduplicateUrlsButton.addEventListener('click', () => {
-                    listSortGeneration++;
-                    if (!UI.urlInput) return;
-                    const urls = UI.urlInput.value.split('\n').map(url => url.trim()).filter(Boolean);
-                    if (urls.length === 0) return;
-                    const uniqueUrls = [...new Set(urls)];
-                    const newValue = uniqueUrls.join('\n') + '\n';
-                    if (UI.urlInput.value !== newValue) {
-                        UI.urlInput.value = newValue;
-                        state.isDirty = true; if (!state.loadedListName) state.originalLoadedListUrls = null;
-                        updateButtonState();
-                        if (state.currentView === 'input') scheduleSetCardHeight();
-                    }
-                });
+                UI.deduplicateUrlsButton.addEventListener('click', deduplicateUrlEditor);
             }
 
             if (UI.newListButton) UI.newListButton.addEventListener('click', handleStartNewList);
