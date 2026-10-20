@@ -1838,7 +1838,7 @@ async function lunaToolsWriteTextToClipboard(text) {
             '(?<![\\p{L}\\p{M}\\p{N}\\p{Pc}])' +
             '(?<!\\d:)' +
             '(?:(?:' +
-                '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:(?:,\\s*|\\s+)(\\d{4}|\\d{2}))?)' +
+                '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + '|sept)\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:(?:,\\s*|\\s+)(\\d{4}|\\d{2}))?)' +
                 '|' +
                 '(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})' +
                 '|' +
@@ -2306,7 +2306,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                     year = yearNameStr ? parseInt(yearNameStr, 10) : today.getFullYear();
                     if (yearNameStr && yearNameStr.length === 2) year += (year < 70 ? 2000 : 1900);
 
-                    monthNameStr = monthNameStr.toLowerCase();
+                    monthNameStr = monthNameStr.toLowerCase().replace(/^sept$/, 'sep');
                     monthIndex = Config.MONTH_NAMES_EN_FULL.indexOf(monthNameStr);
                     if (monthIndex === -1) monthIndex = Config.MONTH_NAMES_EN_SHORT.indexOf(monthNameStr);
 
