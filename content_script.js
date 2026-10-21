@@ -1748,7 +1748,7 @@ async function lunaToolsWriteTextToClipboard(text) {
     const UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE = String.raw`(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+\-\u2212\uFE63\uFF0D]?\d+)?`;
     const NUMERIC_TOKEN_PATTERN_SOURCE = String.raw`[+\-\u2212\uFE63\uFF0D]?${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE}`;
     const NUMERIC_TOKEN_START_BOUNDARY_SOURCE = String.raw`(?<![\d.,eE+\-\u2212\uFE63\uFF0D/×xX\u2010-\u2015~～])`;
-    const COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE = String.raw`(?:[/×xX+]|[\-\u2212\uFE63\uFF0D\u2010-\u2015~～])`;
+    const COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE = String.raw`(?:\*{1,2}|[/⁄∕÷×xX^·⋅+]|[\-\u2212\uFE63\uFF0D\u2010-\u2015~～])`;
     const COMPOUND_NUMERIC_LEFT_CONTEXT_REGEX = new RegExp(
         `(?:${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE})\\s*${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}\\s*$`,
         'iu'
@@ -1852,7 +1852,9 @@ async function lunaToolsWriteTextToClipboard(text) {
             '\\s*(a\\.?m\\.?|p\\.?m\\.?)?' +
             '\\s+((?:P[SDMCE]?T|E[SDC]?T|C[SDMCE]?T|M[SD]?T|A[KDEH]?ST|WET|WEST|CET|CEST|BST|GMT|UTC)(?:[+-]\\d{1,2}(?::?\\d{2})?)?|(?:\\b(?:Pacific|Mountain|Central|Eastern|Atlantic|Alaska|Hawaii|Greenwich Mean|Coordinated Universal)(?: Standard| Daylight| European)? Time\\b)|[A-Z]{3,5})' +
             '(?:\\s+Time)?' +
-            '(?![\\p{L}\\p{M}\\p{N}\\p{Pc}\\/×xX+\\-\\u2212\\uFE63\\uFF0D\\u2010-\\u2015~～]|:\\d)',
+            // Do not truncate unsupported fractional offsets such as UTC+9.5
+            // or GMT+5,5 to whole hours. Sentence punctuation stays valid.
+            '(?![\\p{L}\\p{M}\\p{N}\\p{Pc}\\/×xX+\\-\\u2212\\uFE63\\uFF0D\\u2010-\\u2015~～]|:\\d|[.,]+\\d)',
             'giu'
         ),
         TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i,
@@ -2287,6 +2289,11 @@ async function lunaToolsWriteTextToClipboard(text) {
 
             while ((match = REGEXES.TIME_EXTRACTION_PATTERN.exec(inputText)) !== null) {
                 const originalMatch = match[0];
+                // A numeric operand is not a standalone clock time (10^3 UTC).
+                if (COMPOUND_NUMERIC_LEFT_CONTEXT_REGEX.test(inputText.slice(0, match.index)) ||
+                    COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX.test(inputText.slice(match.index + originalMatch.length))) {
+                    continue;
+                }
                 let [
                     ,
                     monthNameStr, dayNameStr, yearNameStr,
@@ -2622,6 +2629,18 @@ async function lunaToolsWriteTextToClipboard(text) {
             const beforeCandidate = sourceText.slice(0, candidate.startOffset);
             const afterCandidate = sourceText.slice(candidate.endOffset);
             const amountText = String(candidate.amountText || '').trim();
+            const candidateText = sourceText.slice(candidate.startOffset, candidate.endOffset);
+
+            // Space/apostrophe grouping is unsupported: never extract 000 kg
+            // from 1 000 kg or CHF 1 from CHF 1'000. Inspect numeric edges so
+            // separate quantities such as "100 USD 20 kg" keep their meaning.
+            // Line breaks separate entries; NBSP and narrow NBSP do not.
+            if ((/^[+\-\u2212\uFE63\uFF0D]?(?:\d|\.\d)/u.test(candidateText) &&
+                    /\d(?:[^\S\r\n\u2028\u2029]+|['’])$/u.test(beforeCandidate)) ||
+                (/\d$/u.test(candidateText) &&
+                    /^(?:[^\S\r\n\u2028\u2029]+|['’])\d/u.test(afterCandidate))) {
+                return true;
+            }
 
             if (COMPOUND_NUMERIC_LEFT_CONTEXT_REGEX.test(beforeCandidate) ||
                 COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX.test(afterCandidate)) {
