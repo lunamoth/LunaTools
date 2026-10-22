@@ -492,9 +492,7 @@
         #isSafeToRouteThroughWebAudio(mediaElement) {
             if (mediaElement.srcObject) return true;
 
-            const sourceValue = mediaElement.currentSrc ||
-                mediaElement.getAttribute('src') ||
-                mediaElement.querySelector('source[src]')?.getAttribute('src');
+            const sourceValue = mediaElement.currentSrc;
             if (!sourceValue) return false;
 
             let mediaUrl;
@@ -580,6 +578,15 @@
             }
 
             if (!allowNewSetup) return null;
+
+            // Wait for URL-backed resource selection to finish before taking
+            // over the element's audio. A src attribute or the first <source>
+            // can differ from the resource ultimately selected by the browser.
+            // loadedmetadata queues another scan through #handleMediaReady.
+            if (!mediaElement.srcObject &&
+                (!mediaElement.currentSrc || mediaElement.readyState < HTMLMediaElement.HAVE_METADATA)) {
+                return null;
+            }
 
             if (!this.#isSafeToRouteThroughWebAudio(mediaElement)) {
                 this.#warnUnsafeMediaOnce(mediaElement);
