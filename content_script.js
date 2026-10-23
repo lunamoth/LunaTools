@@ -190,12 +190,27 @@ async function lunaToolsWriteTextToClipboard(text) {
   }
 
   function isLikelyHostRule(entry) {
+    let normalizedEntry = entry;
+    const authority = entry.split(/[/?#]/u, 1)[0];
+    // URL.hostname은 국제화 도메인을 ASCII로 반환합니다. 같은 URL 파서로
+    // 호스트 부분을 먼저 정규화하되 기존 ASCII 규칙·키워드 판별은 유지합니다.
+    if (/[^\x00-\x7F]/u.test(authority)) {
+      if (/[\s@\\]/u.test(authority)) return false;
+      try {
+        const parsed = new URL(`https://${authority}`);
+        if (!parsed.hostname || parsed.username || parsed.password) return false;
+        normalizedEntry = parsed.host + entry.slice(authority.length);
+      } catch (_) {
+        return false;
+      }
+    }
+
     return (
-      /^[a-z0-9.-]+(?::\d+)?(?:[/?#].*)?$/i.test(entry) &&
+      /^[a-z0-9.-]+(?::\d+)?(?:[/?#].*)?$/i.test(normalizedEntry) &&
       (
-        entry.includes('.') ||
-        /^localhost(?::|[/?#]|$)/i.test(entry) ||
-        /^\d{1,3}(?:\.\d{1,3}){3}(?::|[/?#]|$)/.test(entry)
+        normalizedEntry.includes('.') ||
+        /^localhost(?::|[/?#]|$)/i.test(normalizedEntry) ||
+        /^\d{1,3}(?:\.\d{1,3}){3}(?::|[/?#]|$)/.test(normalizedEntry)
       )
     );
   }
