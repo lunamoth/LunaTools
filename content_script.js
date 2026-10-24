@@ -2518,7 +2518,9 @@ async function lunaToolsWriteTextToClipboard(text) {
             const numeric = NUMERIC_TOKEN_PATTERN_SOURCE;
             const magnitudeSuffix = String.raw`(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT])`;
             const numericWithMagnitude = `${numeric}\\s*${magnitudeSuffix}`;
-            const koreanOrPlainNumber = String.raw`[+\-\u2212\uFE63\uFF0D]?[\d,\.\s천백십경조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
+            // A list separator cannot become the start of an amount and attach
+            // the next price to the preceding currency token (10 C$, 20 C$).
+            const koreanOrPlainNumber = String.raw`[+\-\u2212\uFE63\uFF0D]?(?=\s*(?:\d|\.\d|[천백십경조억만일이삼사오육칠팔구영]))[\d,\.\s천백십경조억만일이삼사오육칠팔구영]+${lazyKoreanNumber ? '?' : ''}`;
             // An amount cannot start at each whitespace in a long gap. Together
             // with trimming trailing context below, this avoids overlapping
             // whitespace quantifiers blocking the page during a failed match.
@@ -2935,6 +2937,21 @@ async function lunaToolsWriteTextToClipboard(text) {
         _doCurrencyCandidatesOverlap: function(a, b) {
             return a.expressionStart < b.expressionEnd && b.expressionStart < a.expressionEnd;
         },
+        _getPhysicalUnitCurrencyRanges: function(candidates) {
+            // Preserve actual source positions: equal numbers elsewhere in the
+            // selection still describe independent physical quantities. Include
+            // every recognized price, even though only the first is converted.
+            return candidates.filter(candidate => {
+                if (!Number.isFinite(candidate.amount) || !candidate.currencyCode) return false;
+                const token = String(candidate.matchedCurrencyText || '').trim();
+                return candidate.magnitudeAmountText ||
+                    (candidate.currencyCode === 'CAD' && /^C\$$/iu.test(token)) ||
+                    (candidate.currencyCode === 'HUF' && token === 'Ft');
+            }).map(candidate => ({
+                start: candidate.expressionStart,
+                end: candidate.expressionEnd
+            }));
+        },
         _compareCurrencyCandidates: function(a, b) {
             if (TextExtractor._doCurrencyCandidatesOverlap(a, b)) {
                 return b.tokenStrength - a.tokenStrength ||
@@ -3116,11 +3133,14 @@ async function lunaToolsWriteTextToClipboard(text) {
 
             candidates.sort(TextExtractor._compareCurrencyCandidates);
 
-            return candidates[0];
+            return {
+                ...candidates[0],
+                physicalUnitRangesToIgnore: TextExtractor._getPhysicalUnitCurrencyRanges(candidates)
+            };
         },
         extractCurrencyDetails: function(inputText) {
             if (Utils.isInvalidString(inputText)) {
-                return { amount: null, currencyCode: null, originalText: "", matchedCurrencyText: "", magnitudeAmountText: null };
+                return { amount: null, currencyCode: null, originalText: "", matchedCurrencyText: "", magnitudeAmountText: null, physicalUnitRangesToIgnore: [] };
             }
             const originalText = inputText.trim();
             const contextualCurrencyAmount = TextExtractor._extractCurrencyAmountFromContext(originalText);
@@ -3130,7 +3150,8 @@ async function lunaToolsWriteTextToClipboard(text) {
                     currencyCode: contextualCurrencyAmount.currencyCode,
                     originalText: contextualCurrencyAmount.originalText,
                     matchedCurrencyText: contextualCurrencyAmount.matchedCurrencyText,
-                    magnitudeAmountText: contextualCurrencyAmount.magnitudeAmountText
+                    magnitudeAmountText: contextualCurrencyAmount.magnitudeAmountText,
+                    physicalUnitRangesToIgnore: contextualCurrencyAmount.physicalUnitRangesToIgnore
                 };
             }
 
@@ -3172,23 +3193,22 @@ async function lunaToolsWriteTextToClipboard(text) {
                 }
             }
 
-            return { amount, currencyCode, originalText, matchedCurrencyText, magnitudeAmountText };
+            const details = {
+                amount, currencyCode, originalText, matchedCurrencyText, magnitudeAmountText,
+                expressionStart: 0, expressionEnd: originalText.length
+            };
+            return {
+                ...details,
+                physicalUnitRangesToIgnore: TextExtractor._getPhysicalUnitCurrencyRanges([details])
+            };
         },
-        extractPhysicalUnitDetails: function(inputText, ignoredText = null) {
+        extractPhysicalUnitDetails: function(inputText, ignoredRanges = []) {
             if (Utils.isInvalidString(inputText)) return [];
             const foundMatches = [];
             const trimmedText = inputText.trim();
-            const normalizedIgnoredText = typeof ignoredText === 'string'
-                ? ignoredText.trim().toLowerCase()
-                : '';
-            const shouldIgnoreCurrencyOverlap = (matchedText) => {
-                const normalizedMatchedText = String(matchedText || '').trim().toLowerCase();
-                return Boolean(
-                    normalizedIgnoredText &&
-                    normalizedMatchedText &&
-                    normalizedIgnoredText.includes(normalizedMatchedText)
-                );
-            };
+            const shouldIgnoreCurrencyOverlap = (match) => ignoredRanges.some(range =>
+                match.index >= range.start && match.index + match[0].length <= range.end
+            );
 
             for (const categoryKey in Config.UNIT_CONVERSION_CONFIG) {
                 for (const unit of Config.UNIT_CONVERSION_CONFIG[categoryKey]) {
@@ -3210,7 +3230,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                             continue;
                         }
 
-                        if (shouldIgnoreCurrencyOverlap(originalMatchedSegment)) {
+                        if (shouldIgnoreCurrencyOverlap(match)) {
                             continue;
                         }
 
@@ -3239,7 +3259,7 @@ async function lunaToolsWriteTextToClipboard(text) {
 
             const plainOzInputMatch = REGEXES.PLAIN_OZ_REGEX.exec(trimmedText);
             if (plainOzInputMatch) {
-                 if (!shouldIgnoreCurrencyOverlap(plainOzInputMatch[0])) {
+                 if (!shouldIgnoreCurrencyOverlap(plainOzInputMatch)) {
                     const valueFromPlainOz = Utils.parseFloatLenient(plainOzInputMatch[1]);
                     const matchedMassOz = foundMatches.find(m =>
                         m.value === valueFromPlainOz && m.unitInfo.category === 'mass' &&
@@ -3732,8 +3752,8 @@ async function lunaToolsWriteTextToClipboard(text) {
             if (typeof unitInfo.factor === 'number') return value * unitInfo.factor;
             return null;
         },
-        processUnitConversion: function(selectedText, currencyUnitTextToIgnore = null) {
-            const unitDetailItems = TextExtractor.extractPhysicalUnitDetails(selectedText, currencyUnitTextToIgnore);
+        processUnitConversion: function(selectedText, currencyUnitRangesToIgnore = []) {
+            const unitDetailItems = TextExtractor.extractPhysicalUnitDetails(selectedText, currencyUnitRangesToIgnore);
             if (!unitDetailItems || unitDetailItems.length === 0) return null;
             const conversionDataObjects = [];
             for (const unitDetails of unitDetailItems) {
@@ -3766,20 +3786,11 @@ async function lunaToolsWriteTextToClipboard(text) {
         processCurrencyConversion: async function(selectedText) {
             const currencyDetails = TextExtractor.extractCurrencyDetails(selectedText);
 
-            if (currencyDetails.amount === null || currencyDetails.amount < 0 || !currencyDetails.currencyCode) {
+            if (!Number.isFinite(currencyDetails.amount) || !currencyDetails.currencyCode) {
                 return null;
             }
 
-            const matchedCurrencyToken = String(currencyDetails.matchedCurrencyText || '').trim();
-            // C$ ends with the Celsius token "C", while the case-insensitive feet
-            // pattern also accepts the HUF symbol "Ft". Suppress only these proven
-            // currency/unit collisions so genuinely ambiguous inputs such as
-            // "100 파운드" can continue to show both supported interpretations.
-            const overlappingCurrencyUnitText = (
-                (currencyDetails.currencyCode === 'CAD' && /^C\$$/iu.test(matchedCurrencyToken)) ||
-                (currencyDetails.currencyCode === 'HUF' && matchedCurrencyToken === 'Ft')
-            ) ? currencyDetails.originalText : null;
-            const physicalUnitTextToIgnore = currencyDetails.magnitudeAmountText || overlappingCurrencyUnitText;
+            const physicalUnitRangesToIgnore = currencyDetails.physicalUnitRangesToIgnore;
 
             try {
                 const {
@@ -3812,7 +3823,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                 const contentHtml = `≈ <b class="converted-value">${formattedKrwText}</b><br><small>(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${formattedRateText}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate}${freshnessSuffix})</small>`;
                 const copyText = `${plainOriginalTextForCopy} ${UI_STRINGS.RESULT_CURRENCY_SUFFIX}\n≈ ${Formatter.formatNumberToKoreanUnits(convertedValue, false)}\n(1 ${currencyDetails.currencyCode} ${currencyFlag} ≈ ${Formatter.formatNumberToKoreanUnits(rate, false)}, ${UI_STRINGS.ECB_TEXT}, 기준일: ${safeRateDate}${freshnessSuffix})`;
 
-                return { titleHtml, contentHtml, copyText, isError: false, physicalUnitTextToIgnore };
+                return { titleHtml, contentHtml, copyText, isError: false, physicalUnitRangesToIgnore };
             } catch (error) {
                 const errMsgBase = `${UI_STRINGS.ERROR_ICON} 환율 변환 실패 (${Utils.escapeHTML(currencyDetails.currencyCode || "?")} → ${Config.DEFAULT_TARGET_CURRENCY}).`;
                 const errMsgDetail = (error && error.message) ? error.message : '알 수 없는 오류입니다.';
@@ -3822,7 +3833,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                     contentHtml: `${errMsgBase}<br><small class="error-detail">${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}</small>`,
                     copyText: `${currencyDetails.originalText} ${UI_STRINGS.RESULT_CURRENCY_ERROR_SUFFIX}\n${errMsgBase}\n${UI_STRINGS.ERROR_ICON} ${Utils.escapeHTML(errMsgDetail)}`,
                     isError: true,
-                    physicalUnitTextToIgnore
+                    physicalUnitRangesToIgnore
                 };
             }
         },
@@ -3848,18 +3859,18 @@ async function lunaToolsWriteTextToClipboard(text) {
         fetchAndProcessConversions: async function(selectedText) {
             let resultsArray = [];
             let conversionAttempted = false;
-            let currencyUnitTextToIgnore = null;
+            let currencyUnitRangesToIgnore = [];
 
             const currencyResultObject = await Converter.processCurrencyConversion(selectedText);
             if (currencyResultObject) {
                 conversionAttempted = true;
                 resultsArray.push(currencyResultObject);
-                if (currencyResultObject.physicalUnitTextToIgnore) {
-                    currencyUnitTextToIgnore = currencyResultObject.physicalUnitTextToIgnore;
+                if (currencyResultObject.physicalUnitRangesToIgnore) {
+                    currencyUnitRangesToIgnore = currencyResultObject.physicalUnitRangesToIgnore;
                 }
             }
 
-            const unitConversionOutcome = Converter.processUnitConversion(selectedText, currencyUnitTextToIgnore);
+            const unitConversionOutcome = Converter.processUnitConversion(selectedText, currencyUnitRangesToIgnore);
             if (unitConversionOutcome && unitConversionOutcome.results && unitConversionOutcome.results.length > 0) {
                 conversionAttempted = true;
                 resultsArray.push(...unitConversionOutcome.results);

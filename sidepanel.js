@@ -4132,8 +4132,11 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const compareSessionRenderEntries = (a, b) => {
-        if (a.session.isPinned !== b.session.isPinned) {
-          return a.session.isPinned ? -1 : 1;
+        // Legacy sessions omit isPinned; they have the same priority as false.
+        const aPinned = a.session.isPinned === true;
+        const bPinned = b.session.isPinned === true;
+        if (aPinned !== bPinned) {
+          return aPinned ? -1 : 1;
         }
         const timestampCompare = b.timestamp - a.timestamp;
         return timestampCompare || a.index - b.index;
