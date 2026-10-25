@@ -43,6 +43,7 @@ const MAX_RECONCILE_TAB_REFERENCES = 300;
 let exchangeRateRefreshPromise = null;
 let tabCountBadgeUpdatePromise = null;
 let tabCountBadgeUpdateRequested = false;
+let tabMuteCommandQueue = Promise.resolve();
 
 function normalizeCurrencyCode(value) {
   return String(value || '').trim().toUpperCase();
@@ -1569,18 +1570,28 @@ async function ensureTabCacheInitialized() {
   return tabCacheInitializationPromise;
 }
 
-async function handleCommand(command, tab) {
-  try {
-    if (command === "sort-tabs") {
-      await ensureTabCacheInitialized();
-      await tabManager.sortTabsInCurrentWindow(tab?.windowId);
-    } else if (command === "toggle-mute-current") {
-      const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (typeof currentTab?.id === 'number') {
-        const isMuted = !!currentTab.mutedInfo?.muted;
-        await chrome.tabs.update(currentTab.id, { muted: !isMuted });
-      }
-    } else if (command === "toggle-mute-all") {
+function queueMuteCommand(command, commandTab) {
+  // Capture the target before waiting for earlier commands. The focused tab may
+  // change while an all-tabs command is still updating tabs.
+  const targetLookup = command === "toggle-mute-current"
+    ? (Number.isInteger(commandTab?.id) && commandTab.id >= 0
+      ? Promise.resolve({ tabId: commandTab.id })
+      : chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(
+        ([activeTab]) => ({ tabId: activeTab?.id }),
+        error => ({ error })
+      ))
+    : null;
+
+  const operation = tabMuteCommandQueue.then(async () => {
+    if (command === "toggle-mute-current") {
+      const target = await targetLookup;
+      if (target.error) throw target.error;
+      if (!Number.isInteger(target.tabId) || target.tabId < 0) return;
+      // Re-read the state after preceding commands; event data can be stale.
+      // If this tab has closed, do not retarget a different active tab.
+      const currentTab = await chrome.tabs.get(target.tabId);
+      await chrome.tabs.update(target.tabId, { muted: !currentTab.mutedInfo?.muted });
+    } else {
       const allTabs = await chrome.tabs.query({});
       const anyUnmuted = allTabs.some(t => !t.mutedInfo?.muted);
       const targetMuteState = anyUnmuted;
@@ -1594,6 +1605,22 @@ async function handleCommand(command, tab) {
           }
         }
       }
+    }
+  });
+
+  // Keep both mute commands in one queue, and let later commands run even if
+  // a target disappears or a Chrome API call rejects.
+  tabMuteCommandQueue = operation.catch(() => {});
+  return operation;
+}
+
+async function handleCommand(command, tab) {
+  try {
+    if (command === "sort-tabs") {
+      await ensureTabCacheInitialized();
+      await tabManager.sortTabsInCurrentWindow(tab?.windowId);
+    } else if (command === "toggle-mute-current" || command === "toggle-mute-all") {
+      await queueMuteCommand(command, tab);
     }
   } catch (error) {
     console.warn(`LunaTools: 단축키 명령 처리 실패 (${command})`, error);
