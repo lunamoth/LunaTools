@@ -1301,6 +1301,7 @@ async function lunaToolsWriteTextToClipboard(text) {
   class PictureInPictureHandler {
     static PIP_RESTRICTED_ATTRIBUTES = ['disablePictureInPicture'];
     static PIP_KEY = 'P';
+    static PLAYBACK_START_TIMEOUT_MS = 3000;
     static EDITABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
 
     constructor() {
@@ -1537,11 +1538,29 @@ async function lunaToolsWriteTextToClipboard(text) {
 
         try {
           if (targetVideo.paused && (targetVideo.videoWidth < 100 || targetVideo.videoHeight < 100)) {
+              let playbackTimeoutId = null;
+              let playbackTimedOut = false;
               try {
                   overrideState.playbackChanged = true;
                   targetVideo.muted = true;
-                  await targetVideo.play();
+                  // play() can remain pending while a stream buffers. Bound
+                  // this temporary playback attempt so it cannot retain the
+                  // toggle lock, mute state and PiP overrides indefinitely.
+                  await Promise.race([
+                      targetVideo.play(),
+                      new Promise(resolve => {
+                          playbackTimeoutId = setTimeout(() => {
+                              playbackTimedOut = true;
+                              resolve();
+                          }, PictureInPictureHandler.PLAYBACK_START_TIMEOUT_MS);
+                      })
+                  ]);
+                  // The enclosing finally restores playback/attributes and
+                  // releases the lock. Do not enter PiP after a timed-out play.
+                  if (playbackTimedOut) return;
               } catch(playError) {
+              } finally {
+                  if (playbackTimeoutId !== null) clearTimeout(playbackTimeoutId);
               }
           }
 
