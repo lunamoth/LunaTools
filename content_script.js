@@ -1781,19 +1781,46 @@ async function lunaToolsWriteTextToClipboard(text) {
 
     const UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE = String.raw`(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+\-\u2212\uFE63\uFF0D]?\d+)?`;
     const NUMERIC_TOKEN_PATTERN_SOURCE = String.raw`[+\-\u2212\uFE63\uFF0D]?${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE}`;
-    const NUMERIC_TOKEN_START_BOUNDARY_SOURCE = String.raw`(?<![\d.,eE+\-\u2212\uFE63\uFF0D/×xX\u2010-\u2015~～])`;
-    const COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE = String.raw`(?:\*{1,2}|[/⁄∕÷×xX^·⋅+]|[\-\u2212\uFE63\uFF0D\u2010-\u2015~～])`;
+    const NUMERIC_TOKEN_START_BOUNDARY_SOURCE = String.raw`(?<![\d.,eE+\-\u2212\uFE63\uFF0D/×xX±∓\u2010-\u2015~～])`;
+    // Uncertainty and ratio expressions are not standalone scalar values.
+    // Reject both operands of "10 ± 2 kg" / "USD 1:2" instead of silently
+    // converting only the number next to the unit or currency token.
+    const COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE = String.raw`(?:\*{1,2}|[/⁄∕÷×xX^·⋅+±∓]|[\-\u2212\uFE63\uFF0D\u2010-\u2015~～])`;
+    // The neighbouring operand can carry a magnitude, too (1M - 2 USD,
+    // 1억 ± 2만 원). Checking only plain digits loses that operand.
+    const KOREAN_CURRENCY_GRAMMAR_SUFFIX_PATTERN_SOURCE = String.raw`(?:이었습니다|이었습니까|이었지만|이었으며|이었고|이었던|이었다|였습니다|였습니까|였지만|였으며|였고|였던|였다|입니다|입니까|이에요|예요|이라고|이라는|이라면|이라도|이어서|이므로|이고|이며|이지만|이면|인데|이다|라고|라는|라면|라도|라서|부터|까지|에서|에게|한테|께서|으로|처럼|만큼|마다|조차|마저|밖에|어치|짜리|가량|정도|수준|보다|은|는|이|가|을|를|의|에|께|로|와|과|도|만|쯤|당)`;
+    const CURRENCY_CONTEXT_TOKEN_PATTERN_SOURCE = `(?:${Config.CURRENCY_PATTERNS.map(pattern => `(?:${pattern.regex.source})`).join('|')})`;
+    // Korean numerals must end at a token boundary (or a complete currency
+    // token). Otherwise "이벤트" / "사이트" starts with a false 2 / 4.
+    const NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE = String.raw`(?:${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE}(?:\s*(?:trillions?|billions?|millions?|thousands?|bln|mln|tln|bn|mn|tn|[BMKT]|[천백십경조억만]+))?|(?<![\p{L}\p{M}\p{N}\p{Pc}])[일이삼사오육칠팔구영천백십경조억만]+(?=$|[^\p{L}\p{M}\p{N}\p{Pc}]|${CURRENCY_CONTEXT_TOKEN_PATTERN_SOURCE}(?:${KOREAN_CURRENCY_GRAMMAR_SUFFIX_PATTERN_SOURCE})?(?![\p{L}\p{M}\p{N}\p{Pc}])))`;
     const COMPOUND_NUMERIC_LEFT_CONTEXT_REGEX = new RegExp(
-        `(?:${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE})\\s*${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}\\s*$`,
+        `(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})\\s*${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}\\s*$`,
         'iu'
     );
     const COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX = new RegExp(
-        `^\\s*${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}\\s*(?:${NUMERIC_TOKEN_PATTERN_SOURCE})`,
+        `^\\s*${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}\\s*[+\\-\\u2212\\uFE63\\uFF0D]?(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})`,
         'iu'
+    );
+    // Colons around a currency/quantity may denote a ratio, but those
+    // around a complete clock time may be ordinary list/label punctuation.
+    const RATIO_NUMERIC_LEFT_CONTEXT_REGEX = new RegExp(
+        `(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})\\s*:\\s*$`, 'iu'
+    );
+    const RATIO_NUMERIC_RIGHT_CONTEXT_REGEX = new RegExp(
+        `^\\s*:\\s*[+\\-\\u2212\\uFE63\\uFF0D]?(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})`, 'iu'
+    );
+    // Each operand may repeat its currency (100 USD ± 2 USD). Reject the
+    // whole expression instead of discarding the first amount and returning
+    // the second one. Keep this separate from clock-time punctuation rules.
+    const CURRENCY_COMPOUND_LEFT_CONTEXT_REGEX = new RegExp(
+        `(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})\\s*(?:${CURRENCY_CONTEXT_TOKEN_PATTERN_SOURCE}\\s*)?(?:${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}|:)\\s*(?:${CURRENCY_CONTEXT_TOKEN_PATTERN_SOURCE}\\s*)?$`, 'iu'
+    );
+    const CURRENCY_COMPOUND_RIGHT_CONTEXT_REGEX = new RegExp(
+        `^\\s*(?:${COMPOUND_NUMERIC_OPERATOR_PATTERN_SOURCE}|:)\\s*(?:${CURRENCY_CONTEXT_TOKEN_PATTERN_SOURCE}\\s*)?[+\\-\\u2212\\uFE63\\uFF0D]?(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})`, 'iu'
     );
     const LEADING_NUMERIC_SIGN_REGEX = /^[+\-\u2212\uFE63\uFF0D]/u;
     const NUMERIC_VALUE_BEFORE_SIGN_REGEX = new RegExp(
-        `(?:${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE})\\s*$`,
+        `(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})\\s*$`,
         'iu'
     );
     const PHYSICAL_UNIT_REGEX_CACHE = new WeakMap();
@@ -2551,7 +2578,7 @@ async function lunaToolsWriteTextToClipboard(text) {
             return new RegExp(`^(?:${source})$`, 'iu').test(amountText.trim());
         },
         _getKoreanCurrencyGrammarSuffixPatternSource: function() {
-            return String.raw`(?:이었습니다|이었습니까|이었지만|이었으며|이었고|이었던|이었다|였습니다|였습니까|였지만|였으며|였고|였던|였다|입니다|입니까|이에요|예요|이라고|이라는|이라면|이라도|이어서|이므로|이고|이며|이지만|이면|인데|이다|라고|라는|라면|라도|라서|부터|까지|에서|에게|한테|께서|으로|처럼|만큼|마다|조차|마저|밖에|어치|짜리|가량|정도|수준|보다|은|는|이|가|을|를|의|에|께|로|와|과|도|만|쯤|당)`;
+            return KOREAN_CURRENCY_GRAMMAR_SUFFIX_PATTERN_SOURCE;
         },
         _getKoreanCurrencyGrammarSuffix: function(followingText, currencyToken = '') {
             const suffixSource = TextExtractor._getKoreanCurrencyGrammarSuffixPatternSource();
@@ -2679,7 +2706,11 @@ async function lunaToolsWriteTextToClipboard(text) {
             }
 
             if (COMPOUND_NUMERIC_LEFT_CONTEXT_REGEX.test(beforeCandidate) ||
-                COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX.test(afterCandidate)) {
+                COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX.test(afterCandidate) ||
+                CURRENCY_COMPOUND_LEFT_CONTEXT_REGEX.test(beforeCandidate) ||
+                CURRENCY_COMPOUND_RIGHT_CONTEXT_REGEX.test(afterCandidate) ||
+                RATIO_NUMERIC_LEFT_CONTEXT_REGEX.test(beforeCandidate) ||
+                RATIO_NUMERIC_RIGHT_CONTEXT_REGEX.test(afterCandidate)) {
                 return true;
             }
 
@@ -3245,6 +3276,14 @@ async function lunaToolsWriteTextToClipboard(text) {
                         // such as m² and m/s, but reject an unconsumed exponent or
                         // compound-unit operator instead of changing the dimension.
                         const followingText = trimmedText.slice(match.index + match[0].length);
+                        // A rejected amount such as "USD 1M ± 2M" must not
+                        // reappear as a partial metre conversion of its 1M.
+                        if (unit.category === 'length' && /^m$/iu.test(match[2]) &&
+                            (COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX.test(followingText) ||
+                                CURRENCY_COMPOUND_RIGHT_CONTEXT_REGEX.test(followingText) ||
+                                RATIO_NUMERIC_RIGHT_CONTEXT_REGEX.test(followingText))) {
+                            continue;
+                        }
                         if (/^\s*(?:[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]|\^\s*[+\-−]?\s*\d|(?:[\/⁄∕·⋅*×]|per\b)\s*(?:[\p{L}µμ°Ω%]|\())/iu.test(followingText)) {
                             continue;
                         }
