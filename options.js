@@ -403,7 +403,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (typeof value.title !== 'string') {
                 throw new Error(`${contextMessage}의 탭 그룹 제목 데이터가 올바르지 않습니다.`);
             }
-            normalized.title = value.title.slice(0, 200);
+            // The 200-character session-name limit does not apply to Chrome
+            // tab group titles. A backup must preserve the entire title.
+            normalized.title = value.title;
         }
         if (hasOwn(value, 'color')) {
             if (typeof value.color !== 'string') {

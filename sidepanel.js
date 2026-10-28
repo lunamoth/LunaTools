@@ -3728,7 +3728,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const normalized = {};
         if (hasOwn(value, 'title') && typeof value.title === 'string') {
-          normalized.title = value.title.slice(0, CONSTANTS.UI.SESSION_NAME_MAX_LENGTH);
+          // A tab group title is browser data, not a session name. Preserve it
+          // exactly so saving, restoring and change detection cannot silently
+          // lose or overlook characters after the session-name UI limit.
+          normalized.title = value.title;
         }
         if (hasOwn(value, 'color')) {
           normalized.color = value.color;
