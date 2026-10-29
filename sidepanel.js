@@ -460,6 +460,7 @@ document.addEventListener('DOMContentLoaded', function() {
             isInitialLoad: true,
             currentRunId: 0,
             isPreparingRun: false,
+            runOptionsReady: false,
             processingRunId: null,
             completionRunId: null,
             unprocessedInputCount: 0
@@ -1739,7 +1740,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const setControlsEnabled = (isEnabled) => {
             if(UI.urlInput) UI.urlInput.disabled = !isEnabled;
-            if(UI.optionsList) UI.optionsList.querySelectorAll('input, button').forEach(el => el.disabled = !isEnabled);
+            if(UI.optionsList) UI.optionsList.querySelectorAll('input, button').forEach(el => {
+                el.disabled = !isEnabled || !state.runOptionsReady;
+            });
 
             [UI.savedListsDropdown, UI.importButton, UI.exportButton, UI.clearButton,
              UI.sortUrlsButton, UI.deduplicateUrlsButton, UI.getAllTabsButton, UI.getCurrentTabsButton,
@@ -1853,7 +1856,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (viewState === 'input') {
                     UI.startRunButton.textContent = isCounting ? `${CONFIG.TEXT.RUN} (집계 중…)` :
                         (displayCount > 0 ? CONFIG.TEXT.RUN_COUNT(displayCount) : CONFIG.TEXT.RUN);
-                    UI.startRunButton.disabled = state.isPreparingRun || isCounting || displayCount === 0;
+                    UI.startRunButton.disabled = !state.runOptionsReady || state.isPreparingRun || isCounting || displayCount === 0;
                 } else if (viewState === 'complete') {
                      UI.startRunButton.textContent = CONFIG.TEXT.RESTART;
                      UI.startRunButton.classList.add(CONFIG.CSS.SUCCESS_BTN_CLASS);
@@ -3060,7 +3063,7 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const startProcess = async () => {
-            if (!UI.urlInput || state.isPreparingRun || state.currentView !== 'input') return;
+            if (!UI.urlInput || !state.runOptionsReady || state.isPreparingRun || state.currentView !== 'input') return;
             const editorSnapshot = captureListEditorState();
             const initialRunId = state.currentRunId;
             const sortAtStart = Boolean(UI.sortUrlsBeforeRunCheckbox?.checked);
@@ -3226,6 +3229,7 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const saveOptions = async () => {
+            if (!state.runOptionsReady) return;
             if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox || !UI.playSoundCheckbox) return;
             const options = normalizeRunOptions({
                 interval: UI.intervalInput.value,
@@ -3257,16 +3261,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 UI.delayLoadingCheckbox.checked = options.delayLoading;
                 UI.sortUrlsBeforeRunCheckbox.checked = options.sortUrlsBeforeRun;
                 UI.playSoundCheckbox.checked = options.playSound;
+                state.runOptionsReady = true;
             } catch (e) {
                 console.error('Failed to load options:', e);
-                Toast.show('실행 옵션을 불러오지 못해 기본값을 사용합니다.', 'error', 5000);
-                const options = normalizeRunOptions();
-                UI.intervalInput.value = options.interval;
-                UI.removeDuplicatesCheckbox.checked = options.removeDuplicates;
-                UI.focusLockCheckbox.checked = options.focusLock;
-                UI.delayLoadingCheckbox.checked = options.delayLoading;
-                UI.sortUrlsBeforeRunCheckbox.checked = options.sortUrlsBeforeRun;
-                UI.playSoundCheckbox.checked = options.playSound;
+                Toast.show('실행 옵션을 불러오지 못해 기존 설정 보호를 위해 실행과 옵션 변경을 중단했습니다. 패널을 다시 열어주세요.', 'error', 5000);
+            } finally {
+                if (UI.optionsList) UI.optionsList.querySelectorAll('input, button').forEach(el => {
+                    el.disabled = !state.runOptionsReady || state.currentView !== 'input';
+                });
+                updateButtonState();
             }
         };
 
@@ -3356,6 +3359,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (state.currentView === 'input') scheduleSetCardHeight();
                 });
                 UI.optionsList.addEventListener('click', (e) => {
+                    if (!state.runOptionsReady || state.currentView !== 'input') return;
                     const item = e.target.closest('.option-item');
                     if (!item) return;
 
@@ -3589,7 +3593,18 @@ document.addEventListener('DOMContentLoaded', function() {
             createNameAlreadyExistsMessage: (name) => `⚠️ '${escapeHtml(name)}' 이름이 이미 존재합니다.`,
             createNameChangedMessage: (name) => `✅ 이름이 '${escapeHtml(name)}'(으)로 변경되었습니다.`,
             createImportSuccessMessage: (count) => `📥 ${count}개의 세션을 가져왔습니다.`,
-            createConfirmSaveAndCloseMessage: (count) => `현재 탭, Split View 탭 및 공유 탭 그룹의 탭을 제외한 다른 탭을 닫고, 전체 ${count}개의 탭을 새 세션으로 저장하시겠습니까?`
+            createConfirmSaveAndCloseMessage: (count, snapshot) =>
+              `현재 탭, Split View 탭 및 공유 탭 그룹의 탭을 제외한 다른 저장 가능한 탭을 닫고, ${count}개의 탭을 새 세션으로 저장하시겠습니까?` +
+              (snapshot.skippedTabCount > 0 ? `\n\n저장할 수 없는 탭 ${snapshot.skippedTabCount}개는 세션에 포함되지 않으며 닫지 않습니다.` : '') +
+              (snapshot.splitViewTabCount > 0 ? `\nSplit View 탭 ${snapshot.splitViewTabCount}개의 주소는 저장되지만 분할 화면은 복원되지 않습니다.` : '') +
+              (snapshot.sharedGroupCount > 0 ? `\n공유 탭 그룹 ${snapshot.sharedGroupCount}개의 공유 상태는 복원되지 않습니다.` : ''),
+            createSnapshotNotice: (snapshot) => {
+              const details = [];
+              if (snapshot.skippedTabCount > 0) details.push(`저장할 수 없는 탭 ${snapshot.skippedTabCount}개는 세션에 포함되지 않았습니다.`);
+              if (snapshot.splitViewTabCount > 0) details.push(`Split View 탭 ${snapshot.splitViewTabCount}개의 분할 화면은 복원되지 않습니다.`);
+              if (snapshot.sharedGroupCount > 0) details.push(`탭 그룹 ${snapshot.sharedGroupCount}개의 공유 상태는 복원되지 않습니다.`);
+              return details.length ? ` ⚠️ ${details.join(' ')}` : '';
+            }
         }
       };
 
@@ -4324,7 +4339,10 @@ document.addEventListener('DOMContentLoaded', function() {
         })
       );
 
-      const updateAndSaveSessions = async (updateFunction, { errorMessagePrefix }) => {
+      const updateAndSaveSessions = async (updateFunction, {
+        errorMessagePrefix,
+        successDuration = CONSTANTS.UI.TOAST_DURATION
+      }) => {
         try {
           const result = await mutateAndPersistSessions(async (sessions) => {
             const successMessage = await updateFunction(sessions);
@@ -4333,7 +4351,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             return { successMessage };
           });
-          if (result?.successMessage) showToast(result.successMessage);
+          if (result?.successMessage) showToast(result.successMessage, successDuration);
           return !result?.skipSave;
         } catch (e) {
           showToast(`❌ ${errorMessagePrefix}: ${escapeHtml(e.message)}`);
@@ -4377,6 +4395,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
           const validTabEntries = tabEntries
             .filter(({ normalizedUrl }) => Boolean(normalizedUrl));
+          const skippedTabCount = tabEntries.length - validTabEntries.length;
           const groupedTabs = validTabEntries
             .map(({ tab }) => tab)
             .filter(tab => Number.isInteger(tab.groupId) && tab.groupId > -1);
@@ -4412,6 +4431,11 @@ document.addEventListener('DOMContentLoaded', function() {
             showToast(CONSTANTS.MESSAGES.SESSION_TAB_GROUP_CAPTURE_FAILED);
             return { tabs: [], closingCandidates: [], captureFailed: true };
           }
+
+          const splitViewTabCount = validTabEntries.filter(({ tab }) => getSessionTabSplitViewId(tab) >= 0).length;
+          const sharedGroupCount = new Set(groupedTabs
+            .filter(tab => capturedGroupsByKey.get(`${tab.windowId}:${tab.groupId}`)?.shared === true)
+            .map(tab => `${tab.windowId}:${tab.groupId}`)).size;
 
           return {
             tabs: validTabEntries.map(({ tab, normalizedUrl }) => ({
@@ -4449,6 +4473,9 @@ document.addEventListener('DOMContentLoaded', function() {
                   : null,
                 lastAccessed: Number.isFinite(tab.lastAccessed) ? tab.lastAccessed : null
               })),
+            skippedTabCount,
+            splitViewTabCount,
+            sharedGroupCount,
             captureFailed: false
           };
         } catch (error) {
@@ -4978,6 +5005,11 @@ document.addEventListener('DOMContentLoaded', function() {
           return;
         }
         if (!canSaveTabCount(tabs.length) || !canSaveWindowCount(tabs)) return;
+        const snapshotNotice = CONSTANTS.MESSAGES.createSnapshotNotice(snapshot);
+        if (overwriteId && snapshotNotice &&
+            !confirm(`이 구성에는 복원할 수 없는 탭 또는 레이아웃이 있습니다.${snapshotNotice}\n\n기존 세션을 이 구성으로 덮어쓰시겠습니까?`)) {
+          return;
+        }
 
         const saved = await updateAndSaveSessions(
           (sessions) => {
@@ -4989,16 +5021,19 @@ document.addEventListener('DOMContentLoaded', function() {
               }
               const name = overwriteName;
               sessions[sessionIndex] = { ...sessions[sessionIndex], tabs, name };
-              return CONSTANTS.MESSAGES.createSessionUpdatedMessage(name);
+              return CONSTANTS.MESSAGES.createSessionUpdatedMessage(name) + snapshotNotice;
             }
 
             let name = requestedName;
             if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`.trim();
             name = generateUniqueSessionName(name, sessions);
             sessions.push({ id: generateUniqueSessionId(sessions), name, tabs, isPinned: false });
-            return CONSTANTS.MESSAGES.createSessionSavedMessage(name);
+            return CONSTANTS.MESSAGES.createSessionSavedMessage(name) + snapshotNotice;
           },
-          { errorMessagePrefix: CONSTANTS.MESSAGES.SESSION_SAVE_FAILED }
+          {
+            errorMessagePrefix: CONSTANTS.MESSAGES.SESSION_SAVE_FAILED,
+            successDuration: snapshotNotice ? CONSTANTS.UI.TOAST_DURATION * 2 : CONSTANTS.UI.TOAST_DURATION
+          }
         );
 
         // Preserve the typed name on a failed write and any text entered while
@@ -5023,7 +5058,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const tabInteractionTracker = createTabInteractionTracker();
         initialSnapshot.closingCandidates.forEach(candidate => tabInteractionTracker.watch(candidate));
         try {
-          if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(initialSnapshot.tabs.length))) return;
+          if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(
+            initialSnapshot.tabs.length, initialSnapshot
+          ))) return;
 
           // Re-capture after confirmation, but never expand or change the
           // destructive target set without renewed user consent.
@@ -5033,8 +5070,9 @@ document.addEventListener('DOMContentLoaded', function() {
             showToast(CONSTANTS.MESSAGES.NO_VALID_TABS_TO_SAVE);
             return;
           }
-          if (getSessionClosingCandidateSignature(initialSnapshot) !==
-              getSessionClosingCandidateSignature(snapshot)) {
+          if (initialSnapshot.skippedTabCount !== snapshot.skippedTabCount ||
+              getSessionClosingCandidateSignature(initialSnapshot) !==
+                getSessionClosingCandidateSignature(snapshot)) {
             showToast(
               CONSTANTS.MESSAGES.SESSION_TABS_CHANGED_DURING_CONFIRM,
               CONSTANTS.UI.TOAST_DURATION * 1.5
@@ -5186,13 +5224,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const notClosedCount = protectedSplitViewCount + protectedSharedGroupCount +
               changedCount + failedCount;
 
+            const snapshotNotice = CONSTANTS.MESSAGES.createSnapshotNotice(snapshot);
             if (notClosedCount > 0) {
               showToast(
-                CONSTANTS.MESSAGES.SESSION_SAVED_TABS_PARTIALLY_CLOSED(name, closedCount, notClosedCount),
+                CONSTANTS.MESSAGES.SESSION_SAVED_TABS_PARTIALLY_CLOSED(name, closedCount, notClosedCount) + snapshotNotice,
                 CONSTANTS.UI.TOAST_DURATION * 1.5
               );
             } else {
-              showToast(CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, closedCount));
+              showToast(CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, closedCount) + snapshotNotice,
+                snapshotNotice ? CONSTANTS.UI.TOAST_DURATION * 1.5 : CONSTANTS.UI.TOAST_DURATION);
             }
           } catch (closeError) {
             console.error('Error closing tabs:', closeError);

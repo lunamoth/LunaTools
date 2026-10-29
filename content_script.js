@@ -623,6 +623,13 @@ async function lunaToolsWriteTextToClipboard(text) {
         this._resetState();
         return;
       }
+      // Some platforms dispatch contextmenu on right-button down, before any
+      // drag or mouseup. Keep tracking that sequence instead of discarding it;
+      // an ordinary early right click must still be allowed to open its menu.
+      if (this.isMouseDown) {
+        if (this.didMove || this.suppressNextContextMenu) event.preventDefault();
+        return;
+      }
       if (this.didMove || this.suppressNextContextMenu) {
         event.preventDefault();
       }
@@ -2280,7 +2287,10 @@ async function lunaToolsWriteTextToClipboard(text) {
     };
 
     const TimeDateParser = {
+        _offsetFormatters: new Map(),
         _parseGmtOffsetMinutes(offsetString) {
+            // Intl uses a bare "GMT" for a zero offset, even with longOffset.
+            if (/^GMT$/i.test(String(offsetString || '').trim())) return 0;
             const match = String(offsetString || '').match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/i);
             if (!match) return null;
             const hours = parseInt(match[2], 10);
@@ -2302,10 +2312,14 @@ async function lunaToolsWriteTextToClipboard(text) {
 
         _getOffsetStringForInstant(ianaTimeZone, instant) {
             try {
-                const formatter = new Intl.DateTimeFormat('en-US', {
-                    timeZone: ianaTimeZone,
-                    timeZoneName: 'longOffset',
-                });
+                let formatter = this._offsetFormatters.get(ianaTimeZone);
+                if (!formatter) {
+                    formatter = new Intl.DateTimeFormat('en-US', {
+                        timeZone: ianaTimeZone,
+                        timeZoneName: 'longOffset',
+                    });
+                    this._offsetFormatters.set(ianaTimeZone, formatter);
+                }
                 const parts = formatter.formatToParts(instant);
                 const offsetPart = parts.find(p => p.type === 'timeZoneName');
                 return offsetPart ? offsetPart.value : null;
@@ -2313,29 +2327,30 @@ async function lunaToolsWriteTextToClipboard(text) {
             return null;
         },
 
-        _getOffsetStringForIANA(ianaTimeZone, year, monthIndex, day, hour, minute) {
+        _getOffsetStringsForIANA(ianaTimeZone, year, monthIndex, day, hour, minute) {
             const localWallClockAsUtcMs = Date.UTC(year, monthIndex, day, hour, minute);
-            let candidateInstantMs = localWallClockAsUtcMs;
-            let offsetString = null;
+            const possibleOffsets = new Set();
 
-            // Resolve the offset for the intended local wall-clock time, not merely for
-            // the same numeric fields interpreted as UTC. This avoids one-hour errors
-            // around daylight-saving transitions for dynamic aliases such as PT/ET.
-            for (let attempt = 0; attempt < 4; attempt += 1) {
-                offsetString = this._getOffsetStringForInstant(ianaTimeZone, new Date(candidateInstantMs));
+            // Check both sides of nearby offset transitions. During a fall-back
+            // hour the same wall clock occurs twice; guessing either offset can
+            // give a result one hour wrong. A spring-forward gap has no match.
+            for (let deltaHours = -36; deltaHours <= 36; deltaHours += 6) {
+                const offsetString = this._getOffsetStringForInstant(
+                    ianaTimeZone, new Date(localWallClockAsUtcMs + deltaHours * 60 * 60 * 1000)
+                );
                 const offsetMinutes = this._parseGmtOffsetMinutes(offsetString);
-                if (offsetMinutes === null) return offsetString;
-
-                const nextCandidateInstantMs = localWallClockAsUtcMs - (offsetMinutes * 60 * 1000);
-                if (Math.abs(nextCandidateInstantMs - candidateInstantMs) < 1000) {
-                    return this._formatGmtOffsetMinutes(offsetMinutes);
-                }
-                candidateInstantMs = nextCandidateInstantMs;
+                if (offsetMinutes !== null) possibleOffsets.add(offsetMinutes);
             }
 
-            // A non-converging offset means that the requested wall-clock time falls
-            // inside a daylight-saving gap and therefore has no valid instant.
-            return null;
+            return [...possibleOffsets]
+                .filter(offsetMinutes => {
+                    const candidateInstant = new Date(localWallClockAsUtcMs - offsetMinutes * 60 * 1000);
+                    return this._parseGmtOffsetMinutes(
+                        this._getOffsetStringForInstant(ianaTimeZone, candidateInstant)
+                    ) === offsetMinutes;
+                })
+                .sort((a, b) => b - a)
+                .map(offsetMinutes => this._formatGmtOffsetMinutes(offsetMinutes));
         },
 
         _isValidDate(year, monthIndex, day) {
@@ -2536,24 +2551,28 @@ async function lunaToolsWriteTextToClipboard(text) {
                     day = nextDate.getUTCDate();
                 }
 
-                if (resolvedIanaTimeZone) {
-                    resolvedTzOffsetString = this._getOffsetStringForIANA(resolvedIanaTimeZone, year, monthIndex, day, hour, minute);
-                    if (!resolvedTzOffsetString) continue;
+                const resolvedOffsets = resolvedIanaTimeZone
+                    ? this._getOffsetStringsForIANA(resolvedIanaTimeZone, year, monthIndex, day, hour, minute)
+                    : [resolvedTzOffsetString];
+                if (resolvedOffsets.length === 0) continue;
+
+                for (const offsetString of resolvedOffsets) {
+                    try {
+                        const monthNameForParse = Config.MONTH_NAMES_EN_FULL[monthIndex];
+                        const dateStringForParsing = `${monthNameForParse} ${day}, ${year} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')} ${offsetString}`;
+                        const sourceDate = new Date(dateStringForParsing);
+
+                        if (isNaN(sourceDate.getTime())) continue;
+                        results.push({
+                            date: sourceDate,
+                            originalText: resolvedOffsets.length > 1
+                                ? `${originalMatch.trim()} (${offsetString.replace(/^GMT/, 'UTC')}, 중복 시각)`
+                                : originalMatch.trim(),
+                            hasExplicitDate,
+                            hasExplicitSeconds: Boolean(secondStr)
+                        });
+                    } catch (e) {  }
                 }
-
-                try {
-                    const monthNameForParse = Config.MONTH_NAMES_EN_FULL[monthIndex];
-                    const dateStringForParsing = `${monthNameForParse} ${day}, ${year} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')} ${resolvedTzOffsetString}`;
-                    const sourceDate = new Date(dateStringForParsing);
-
-                    if (isNaN(sourceDate.getTime())) continue;
-                    results.push({
-                        date: sourceDate,
-                        originalText: originalMatch.trim(),
-                        hasExplicitDate,
-                        hasExplicitSeconds: Boolean(secondStr)
-                    });
-                } catch (e) {  }
             }
             return results;
         }
