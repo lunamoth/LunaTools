@@ -2051,12 +2051,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     const editorSnapshot = captureListEditorState();
                     const urlsToSave = editorSnapshot.urls.trim();
                     let savedListName = editorSnapshot.loadedListName;
+                    const expectedSavedUrls = state.originalLoadedListUrls;
                     let savedSuccessfully = false;
                     if (savedListName) {
                         const loadedListName = savedListName;
                         const mutationResult = await mutateSavedLists((lists) => {
                             if (!hasOwnListKey(lists, loadedListName)) {
                                 return { skipSave: true, missing: true };
+                            }
+                            // 백업 복원 등으로 저장된 목록이 바뀌었다면 예전 편집기로 덮어쓰지 않습니다.
+                            if (typeof expectedSavedUrls !== 'string' || lists[loadedListName].urls !== expectedSavedUrls) {
+                                return { skipSave: true, changed: true };
                             }
                             lists[loadedListName].urls = urlsToSave;
                             return {};
@@ -2066,6 +2071,8 @@ document.addEventListener('DOMContentLoaded', function() {
                             savedSuccessfully = true;
                         } else if (mutationResult.missing) {
                             Toast.show(`'${loadedListName}' 목록을 찾을 수 없어 저장하지 못했습니다.`, 'error');
+                        } else if (mutationResult.changed) {
+                            Toast.show('저장된 목록이 바뀌어 덮어쓰기를 중단했습니다. 현재 입력을 별도로 보관하고 저장된 목록을 확인해주세요.', 'error', 7000);
                         }
                     } else {
                         const now = new Date(); const year = now.getFullYear(); const month = String(now.getMonth() + 1).padStart(2, '0'); const day = String(now.getDate()).padStart(2, '0'); let hours = now.getHours(); const minutes = String(now.getMinutes()).padStart(2, '0'); const ampm = hours >= 12 ? '오후' : '오전'; hours = hours % 12; hours = hours ? hours : 12;
@@ -2125,9 +2132,13 @@ document.addEventListener('DOMContentLoaded', function() {
             const editorSnapshot = captureListEditorState();
             const loadedListName = editorSnapshot.loadedListName;
             const urlsToSave = editorSnapshot.urls.trim();
+            const expectedSavedUrls = state.originalLoadedListUrls;
             const mutationResult = await mutateSavedLists((lists) => {
                 if (!hasOwnListKey(lists, loadedListName)) {
                     return { skipSave: true, missing: true };
+                }
+                if (typeof expectedSavedUrls !== 'string' || lists[loadedListName].urls !== expectedSavedUrls) {
+                    return { skipSave: true, changed: true };
                 }
                 lists[loadedListName].urls = urlsToSave;
                 return {};
@@ -2141,6 +2152,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     state.isDirty = true;
                 }
                 await loadSavedLists();
+                return;
+            }
+            if (mutationResult.changed) {
+                Toast.show('저장된 목록이 바뀌어 덮어쓰기를 중단했습니다. 현재 입력을 별도로 보관하고 저장된 목록을 확인해주세요.', 'error', 7000);
                 return;
             }
             if (mutationResult.saved) {
@@ -2179,7 +2194,12 @@ document.addEventListener('DOMContentLoaded', function() {
             const editorSnapshot = captureListEditorState();
             const urlsToSave = editorSnapshot.urls.trim();
             const loadedListName = editorSnapshot.loadedListName;
+            const expectedSavedUrls = state.originalLoadedListUrls;
             const mutationResult = await mutateSavedLists(async (lists) => {
+                if (hasOwnListKey(lists, listName) && listName === loadedListName &&
+                    (typeof expectedSavedUrls !== 'string' || lists[listName].urls !== expectedSavedUrls)) {
+                    return { skipSave: true, changed: true };
+                }
                 if (hasOwnListKey(lists, listName) && listName !== loadedListName) {
                     const safeListName = escapeHtml(listName);
                     const overwrite = await Modal.show({
@@ -2201,6 +2221,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 await loadSavedLists();
                 if (UI.savedListsDropdown) UI.savedListsDropdown.blur();
                 return true;
+            }
+            if (mutationResult.changed) {
+                Toast.show('저장된 목록이 바뀌어 덮어쓰기를 중단했습니다. 현재 입력을 별도로 보관하고 저장된 목록을 확인해주세요.', 'error', 7000);
             }
             return false;
         };

@@ -2394,7 +2394,12 @@ async function lunaToolsWriteTextToClipboard(text) {
                     if (monthIndex === -1) monthIndex = Config.MONTH_NAMES_EN_SHORT.indexOf(monthNameStr);
 
                     day = dayNameStr ? parseInt(dayNameStr, 10) : today.getDate();
-                    parsedDateSuccessfully = monthIndex !== -1 && this._isValidDate(year, monthIndex, day);
+                    // 연도가 없는 날짜는 아직 원본 시간대의 현재 연도를 알 수 없습니다.
+                    // 윤년인 2000년으로 월·일 범위만 검사하고, 시간대 확인 후
+                    // 원본 시간대의 현재 연도로 다시 검증합니다.
+                    parsedDateSuccessfully = monthIndex !== -1 && this._isValidDate(
+                        yearNameStr ? year : 2000, monthIndex, day
+                    );
 
                 } else if (yearYMDStr) {
                     year = parseInt(yearYMDStr, 10);
@@ -2528,9 +2533,10 @@ async function lunaToolsWriteTextToClipboard(text) {
                 // when the requested time on the source region's day is valid.
                 if (!resolvedTzOffsetString && !resolvedIanaTimeZone) continue;
 
-                // A time without a date belongs to "today" in its source timezone,
-                // not necessarily to the browser's local calendar day.
-                if (!hasExplicitDate) {
+                // A time without a date, and a month/day without a year, use
+                // the source timezone's current calendar. Around New Year the
+                // browser and source may already be in different years.
+                if (!hasExplicitDate || (monthNameStr && !yearNameStr)) {
                     const currentSourceOffsetString = resolvedIanaTimeZone
                         ? this._getOffsetStringForInstant(resolvedIanaTimeZone, today)
                         : resolvedTzOffsetString;
@@ -2539,8 +2545,12 @@ async function lunaToolsWriteTextToClipboard(text) {
 
                     const currentSourceCalendar = new Date(today.getTime() + (currentSourceOffsetMinutes * 60 * 1000));
                     year = currentSourceCalendar.getUTCFullYear();
-                    monthIndex = currentSourceCalendar.getUTCMonth();
-                    day = currentSourceCalendar.getUTCDate();
+                    if (!hasExplicitDate) {
+                        monthIndex = currentSourceCalendar.getUTCMonth();
+                        day = currentSourceCalendar.getUTCDate();
+                    } else if (!this._isValidDate(year, monthIndex, day)) {
+                        continue;
+                    }
                 }
 
                 if (rollsToNextDay) {
