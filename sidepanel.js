@@ -1969,6 +1969,27 @@ document.addEventListener('DOMContentLoaded', function() {
         const readSavedListsAfterPendingOperations = () =>
             enqueueSavedListMutation(() => runWithLocalDataStorageLock(getSavedLists));
 
+        // Capture the actual stored record, including its original key and
+        // metadata. parseStoredListMap() supplies a current timestamp for
+        // legacy records without createdAt, so comparing its synthesized value
+        // across reads would incorrectly block an unchanged legacy list.
+        const getSavedListSnapshot = async (listName) => {
+            const data = await chrome.storage.local.get(CONFIG.URL_LISTS_KEY);
+            const rawLists = data[CONFIG.URL_LISTS_KEY];
+            const lists = parseStoredListMap(rawLists);
+            if (!hasOwnListKey(lists, listName)) return null;
+
+            const rawName = Object.keys(rawLists).find(name => normalizeListName(name) === listName);
+            if (rawName === undefined) throw new Error('저장된 목록을 확인할 수 없습니다.');
+            return {
+                urls: lists[listName].urls,
+                signature: JSON.stringify([rawName, rawLists[rawName]])
+            };
+        };
+
+        const readSavedListSnapshotAfterPendingOperations = (listName) =>
+            enqueueSavedListMutation(() => runWithLocalDataStorageLock(() => getSavedListSnapshot(listName)));
+
         const loadSavedLists = async () => {
             const loadGeneration = ++savedListLoadGeneration;
             const lists = await readSavedListsAfterPendingOperations();
@@ -2311,6 +2332,32 @@ document.addEventListener('DOMContentLoaded', function() {
             const safeListName = escapeHtml(listName);
             const editorSnapshot = captureListEditorState();
 
+            let confirmedSnapshot;
+            try {
+                confirmedSnapshot = await readSavedListSnapshotAfterPendingOperations(listName);
+            } catch (error) {
+                console.error('Error checking list before deletion:', error);
+                Toast.show('저장된 목록을 확인하지 못해 삭제를 중단했습니다.', 'error', 5000);
+                return;
+            }
+            if (!confirmedSnapshot) {
+                Toast.show(`'${listName}' 목록을 찾을 수 없습니다. 목록이 이미 삭제되었을 수 있습니다.`, 'error');
+                await loadSavedLists();
+                return;
+            }
+            if (UI.savedListsDropdown?.value !== listName || !isListEditorUnchanged(editorSnapshot)) {
+                Toast.show('목록을 확인하는 동안 편집 상태가 변경되어 삭제를 중단했습니다.', 'info', 5000);
+                return;
+            }
+            // A backup may have replaced the selected list before this click,
+            // while its older contents are still displayed in the editor.
+            if (state.loadedListName === listName &&
+                typeof state.originalLoadedListUrls === 'string' &&
+                state.originalLoadedListUrls !== confirmedSnapshot.urls) {
+                Toast.show('저장된 목록이 바뀌어 삭제를 중단했습니다. 편집 내용을 보관한 뒤 목록을 다시 불러와 확인해주세요.', 'error', 7000);
+                return;
+            }
+
             const confirmed = await Modal.show({
                 title: '목록 삭제 확인',
                 body: `<strong>'${safeListName}'</strong> 목록을 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
@@ -2319,13 +2366,27 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             if (!confirmed) return;
 
-            const mutationResult = await mutateSavedLists((lists) => {
-                if (!hasOwnListKey(lists, listName)) {
-                    return { skipSave: true, missing: true };
-                }
-                delete lists[listName];
-                return {};
-            });
+            let mutationResult;
+            try {
+                mutationResult = await mutateSavedLists(async (lists) => {
+                    if (!hasOwnListKey(lists, listName)) {
+                        return { skipSave: true, missing: true };
+                    }
+                    // Check again inside the same storage lock as the deletion.
+                    // A confirmation for an older record must never delete a
+                    // newly restored or otherwise replaced same-named list.
+                    const currentSnapshot = await getSavedListSnapshot(listName);
+                    if (!currentSnapshot || currentSnapshot.signature !== confirmedSnapshot.signature) {
+                        return { skipSave: true, changed: true };
+                    }
+                    delete lists[listName];
+                    return {};
+                });
+            } catch (error) {
+                console.error('Error checking list during deletion:', error);
+                Toast.show('저장된 목록을 확인하지 못해 삭제를 중단했습니다.', 'error', 5000);
+                return;
+            }
 
             if (mutationResult.saved) {
                 const wasCurrentlyLoaded = state.loadedListName === listName;
@@ -2348,6 +2409,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     Toast.show(`'${listName}' 목록이 삭제되었습니다.`, 'success');
                 }
                 await loadSavedLists();
+            } else if (mutationResult.changed) {
+                Toast.show('확인하는 동안 저장된 목록이 바뀌어 삭제를 중단했습니다. 목록을 다시 불러와 확인해주세요.', 'error', 7000);
             } else if (mutationResult.missing) {
                 Toast.show(`'${listName}' 목록을 찾을 수 없습니다. 목록이 이미 삭제되었을 수 있습니다.`, 'error');
                 await loadSavedLists();
@@ -2692,7 +2755,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (state.loadedListName && newListsData[state.loadedListName]) {
                     const persistedUrls = newListsData[state.loadedListName].urls;
                     if (state.isDirty) {
-                        state.originalLoadedListUrls = persistedUrls;
+                        // Keep the editor's original baseline. Advancing it to
+                        // an imported replacement would allow a later Save to
+                        // silently overwrite content the draft never contained.
+                        if (state.originalLoadedListUrls !== persistedUrls) {
+                            Toast.show('가져온 목록과 편집 중인 내용이 다릅니다. 편집 내용을 별도로 보관한 뒤 저장된 목록을 다시 확인해주세요.', 'info', 7000);
+                        }
                     } else if (UI.urlInput) {
                         UI.urlInput.value = persistedUrls;
                         state.originalLoadedListUrls = persistedUrls;
