@@ -35,9 +35,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const LOCAL_KEYS = [STORAGE_KEYS.MULTI_URL_OPTIONS, STORAGE_KEYS.SAVED_URL_LISTS, STORAGE_KEYS.SESSIONS];
     const LOCAL_DATA_STORAGE_LOCK = 'lunatools-local-data-storage';
 
-    const runWithLocalDataStorageLock = async (operation) => {
+    const runWithLocalDataStorageLock = async (operation, { requireLock = false } = {}) => {
         const lockManager = globalThis.navigator?.locks;
         if (!lockManager || typeof lockManager.request !== 'function') {
+            if (requireLock) throw new Error('데이터 보호 잠금을 사용할 수 없어 작업을 중단했습니다.');
             return operation();
         }
 
@@ -55,6 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // 일부 제한된 문맥에서 잠금 획득 자체가 거부되더라도 기존 저장 기능은 유지한다.
             // 콜백이 시작된 뒤의 오류는 작업 오류이므로 절대 재실행하지 않는다.
             if (operationStarted) throw error;
+            if (requireLock) throw new Error('데이터 보호 잠금을 얻지 못해 작업을 중단했습니다.');
             return operation();
         }
     };
@@ -850,8 +852,14 @@ document.addEventListener('DOMContentLoaded', () => {
             let rollbackSucceeded = false;
             try {
                 const backupData = normalizeBackupData(JSON.parse(e.target.result));
-                
-                // 경고 후 진행
+
+                // Confirm against a coherent snapshot. A session saved while
+                // this dialog is open must not be silently replaced afterward.
+                const confirmedSnapshot = await runWithLocalDataStorageLock(async () => ({
+                    sync: await chrome.storage.sync.get(SYNC_KEYS),
+                    local: await chrome.storage.local.get(LOCAL_KEYS)
+                }), { requireLock: true });
+
                 if (!confirm('경고: 현재 LunaTools 설정과 데이터(URL 목록, 세션 포함)가 백업 파일의 내용으로 대체됩니다. 계속하시겠습니까?')) {
                     if (restoreFileInput) restoreFileInput.value = ''; // Reset file input
                     return;
@@ -861,6 +869,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     const syncSnapshot = await chrome.storage.sync.get(SYNC_KEYS);
                     const localSnapshot = await chrome.storage.local.get(LOCAL_KEYS);
 
+                    if (JSON.stringify(syncSnapshot) !== JSON.stringify(confirmedSnapshot.sync) ||
+                        JSON.stringify(localSnapshot) !== JSON.stringify(confirmedSnapshot.local)) {
+                        throw new Error('확인하는 동안 설정 또는 데이터가 변경되어 복원을 중단했습니다. 현재 상태를 확인한 뒤 다시 시도해주세요.');
+                    }
+
                     try {
                         await replaceKnownStorageKeys(chrome.storage.sync, backupData.syncKeysToReplace, backupData.sync);
                         await replaceKnownStorageKeys(chrome.storage.local, backupData.localKeysToReplace, backupData.local);
@@ -869,7 +882,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         rollbackSucceeded = await restoreStorageSnapshots(syncSnapshot, localSnapshot);
                         throw restoreWriteError;
                     }
-                });
+                }, { requireLock: true });
                 
                 showStatus('데이터를 성공적으로 복원했습니다. 페이지가 새로고침됩니다.');
                 

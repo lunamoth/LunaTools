@@ -3,9 +3,10 @@ document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
     const LOCAL_DATA_STORAGE_LOCK = 'lunatools-local-data-storage';
-    const runWithLocalDataStorageLock = async (operation) => {
+    const runWithLocalDataStorageLock = async (operation, { requireLock = false } = {}) => {
         const lockManager = globalThis.navigator?.locks;
         if (!lockManager || typeof lockManager.request !== 'function') {
+            if (requireLock) throw new Error('데이터 보호 잠금을 사용할 수 없어 작업을 중단했습니다.');
             return operation();
         }
 
@@ -23,6 +24,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // 일부 제한된 문맥에서 잠금 획득 자체가 거부되더라도 기존 저장 기능은 유지한다.
             // 콜백이 시작된 뒤의 오류는 작업 오류이므로 절대 재실행하지 않는다.
             if (operationStarted) throw error;
+            if (requireLock) throw new Error('데이터 보호 잠금을 얻지 못해 작업을 중단했습니다.');
             return operation();
         }
     };
@@ -4410,7 +4412,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return queuedOperation;
       };
 
-      const mutateAndPersistSessions = (mutator) => enqueueSessionMutation(() =>
+      const mutateAndPersistSessions = (mutator, { afterPersist = null, requireLock = false } = {}) => enqueueSessionMutation(() =>
         runWithLocalDataStorageLock(async () => {
           const persistedSessions = parseSessionsForMutation(
             await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, [])
@@ -4421,6 +4423,7 @@ document.addEventListener('DOMContentLoaded', function() {
           // memory spikes on large databases. Existing session objects stay shared and
           // individual mutators use copy-on-write before changing an existing record.
           const workingSessions = persistedSessions.slice();
+          let persisted = false;
 
           try {
             const result = await mutator(workingSessions);
@@ -4431,15 +4434,18 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, workingSessions);
+            persisted = true;
             allSessions = workingSessions;
             renderSessions();
+            if (typeof afterPersist === 'function') await afterPersist(result);
             return result;
           } catch (error) {
-            allSessions = persistedSessions;
+            // A post-save action cannot undo a successful storage write.
+            allSessions = persisted ? workingSessions : persistedSessions;
             renderSessions();
             throw error;
           }
-        })
+        }, { requireLock })
       );
 
       const updateAndSaveSessions = async (updateFunction, {
@@ -5198,9 +5204,8 @@ document.addEventListener('DOMContentLoaded', function() {
           });
 
           const requestedName = sessionInput.value.trim();
-          let savedSession;
           try {
-            savedSession = await mutateAndPersistSessions((sessions) => {
+            await mutateAndPersistSessions((sessions) => {
               let name = requestedName;
               if (!name) name = `${CONSTANTS.DEFAULTS.SESSION_PREFIX} ${formatDate(Date.now())}`.trim();
               name = generateUniqueSessionName(name, sessions);
@@ -5209,145 +5214,151 @@ document.addEventListener('DOMContentLoaded', function() {
                 name, tabs: snapshot.tabs, isPinned: false
               });
               return { name };
+            }, {
+              // Keep the shared storage lock until every verified tab has been
+              // handled. A backup restore must not replace this session while
+              // the tabs that depend on it are still being closed.
+              requireLock: true,
+              afterPersist: async (savedSession) => {
+                if (sessionInput.value.trim() === requestedName) {
+                  sessionInput.value = '';
+                }
+                renderSessions();
+                const name = savedSession.name;
+                try {
+                  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+                  const protectedTabIds = new Set(Number.isInteger(activeTab?.id) ? [activeTab.id] : []);
+                  const verifiedCandidates = [];
+                  let changedCount = 0;
+                  let protectedSplitViewCount = 0;
+                  let protectedSharedGroupCount = 0;
+
+                  for (const candidate of snapshot.closingCandidates) {
+                    if (protectedTabIds.has(candidate.id)) continue;
+                    if (getSessionTabSplitViewId(candidate) >= 0) {
+                      protectedSplitViewCount++;
+                      continue;
+                    }
+                    if (getSessionTabGroupShared(candidate)) {
+                      protectedSharedGroupCount++;
+                      continue;
+                    }
+                    try {
+                      const liveTab = await chrome.tabs.get(candidate.id);
+                      // A raw pendingUrl means navigation is still in flight even when
+                      // its scheme is unsupported and normalization returns null. Keep
+                      // such tabs instead of closing content that was not stably saved.
+                      if (await isStableSessionClosingCandidateWithGroup(liveTab, candidate)) {
+                        verifiedCandidates.push(candidate);
+                      } else {
+                        changedCount++;
+                      }
+                    } catch (_) {
+                      // Already closed by the user; no action is needed.
+                    }
+                  }
+
+                  // Protect a tab selected while verification was running, including
+                  // a tab that was selected and then left before the live state read.
+                  const [latestActiveTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+                  if (Number.isInteger(latestActiveTab?.id)) protectedTabIds.add(latestActiveTab.id);
+                  for (const candidate of verifiedCandidates) {
+                    if (!protectedTabIds.has(candidate.id) &&
+                        tabInteractionTracker.hasInteracted(candidate.id)) {
+                      protectedTabIds.add(candidate.id);
+                      changedCount++;
+                    }
+                  }
+                  const candidatesToClose = verifiedCandidates
+                    .filter(candidate => !protectedTabIds.has(candidate.id))
+                    .sort((a, b) => {
+                      if (a.windowId !== b.windowId) return a.windowId - b.windowId;
+
+                      // 각 창의 활성 탭을 먼저 닫으면 Chrome이 다음 탭을 자동 활성화해
+                      // lastAccessed를 바꿉니다. 활성 탭을 마지막에 닫아, 확장 프로그램
+                      // 자체 동작을 사용자 변경으로 오인해 탭을 남기는 일을 막습니다.
+                      if (Boolean(a.active) !== Boolean(b.active)) return a.active ? 1 : -1;
+                      return a.index - b.index;
+                    });
+
+                  let closedCount = 0;
+                  let failedCount = 0;
+                  const closedSnapshotIndicesByWindow = new Map();
+                  for (const candidate of candidatesToClose) {
+                    try {
+                      if (tabInteractionTracker.hasInteracted(candidate.id)) {
+                        changedCount++;
+                        continue;
+                      }
+                      // Verification and removal can span several seconds for a large
+                      // session. Refresh the protected foreground tab immediately
+                      // before the final state read for every destructive removal.
+                      const [activeTabBeforeRemoval] = await chrome.tabs.query({
+                        active: true,
+                        lastFocusedWindow: true
+                      });
+                      if (activeTabBeforeRemoval?.id === candidate.id) {
+                        protectedTabIds.add(candidate.id);
+                        changedCount++;
+                        continue;
+                      }
+
+                      // Keep the state read as the final asynchronous operation before
+                      // removal. Navigation, structural changes, and any tab accessed
+                      // since the snapshot all make the candidate ineligible. Account
+                      // only for index shifts caused by removals completed in this loop.
+                      const closedSnapshotIndices = closedSnapshotIndicesByWindow.get(candidate.windowId) || [];
+                      const expectedIndex = candidate.index - closedSnapshotIndices.reduce(
+                        (count, closedIndex) => count + (closedIndex < candidate.index ? 1 : 0),
+                        0
+                      );
+                      const liveTab = await chrome.tabs.get(candidate.id);
+                      if (!(await isStableSessionClosingCandidateWithGroup(liveTab, candidate, { expectedIndex }))) {
+                        changedCount++;
+                        continue;
+                      }
+                      if (tabInteractionTracker.hasInteracted(candidate.id)) {
+                        changedCount++;
+                        continue;
+                      }
+
+                      await chrome.tabs.remove(candidate.id);
+                      closedSnapshotIndices.push(candidate.index);
+                      closedSnapshotIndicesByWindow.set(candidate.windowId, closedSnapshotIndices);
+                      closedCount++;
+                    } catch (closeError) {
+                      const closeErrorMessage = String(closeError?.message || '').toLowerCase();
+                      const tabAlreadyGone = closeErrorMessage.includes('no tab with id') ||
+                        closeErrorMessage.includes('invalid tab id') ||
+                        closeErrorMessage.includes('tab id not found');
+                      if (!tabAlreadyGone) {
+                        failedCount++;
+                        console.warn(`Failed to close saved tab ${candidate.id}.`, closeError);
+                      }
+                    }
+                  }
+                  const notClosedCount = protectedSplitViewCount + protectedSharedGroupCount +
+                    changedCount + failedCount;
+
+                  const snapshotNotice = CONSTANTS.MESSAGES.createSnapshotNotice(snapshot);
+                  if (notClosedCount > 0) {
+                    showToast(
+                      CONSTANTS.MESSAGES.SESSION_SAVED_TABS_PARTIALLY_CLOSED(name, closedCount, notClosedCount) + snapshotNotice,
+                      CONSTANTS.UI.TOAST_DURATION * 1.5
+                    );
+                  } else {
+                    showToast(CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, closedCount) + snapshotNotice,
+                      snapshotNotice ? CONSTANTS.UI.TOAST_DURATION * 1.5 : CONSTANTS.UI.TOAST_DURATION);
+                  }
+                } catch (closeError) {
+                  console.error('Error closing tabs:', closeError);
+                  showToast(CONSTANTS.MESSAGES.SESSION_SAVED_TABS_CLOSE_FAILED(name), CONSTANTS.UI.TOAST_DURATION * 1.5);
+                }
+              }
             });
-            if (sessionInput.value.trim() === requestedName) {
-              sessionInput.value = '';
-            }
-            renderSessions();
           } catch (saveError) {
             showToast(`❌ ${CONSTANTS.MESSAGES.SESSION_SAVE_FAILED}: ${escapeHtml(saveError.message)}`);
             return;
-          }
-
-          const name = savedSession.name;
-          try {
-            const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-            const protectedTabIds = new Set(Number.isInteger(activeTab?.id) ? [activeTab.id] : []);
-            const verifiedCandidates = [];
-            let changedCount = 0;
-            let protectedSplitViewCount = 0;
-            let protectedSharedGroupCount = 0;
-
-            for (const candidate of snapshot.closingCandidates) {
-              if (protectedTabIds.has(candidate.id)) continue;
-              if (getSessionTabSplitViewId(candidate) >= 0) {
-                protectedSplitViewCount++;
-                continue;
-              }
-              if (getSessionTabGroupShared(candidate)) {
-                protectedSharedGroupCount++;
-                continue;
-              }
-              try {
-                const liveTab = await chrome.tabs.get(candidate.id);
-                // A raw pendingUrl means navigation is still in flight even when
-                // its scheme is unsupported and normalization returns null. Keep
-                // such tabs instead of closing content that was not stably saved.
-                if (await isStableSessionClosingCandidateWithGroup(liveTab, candidate)) {
-                  verifiedCandidates.push(candidate);
-                } else {
-                  changedCount++;
-                }
-              } catch (_) {
-                // Already closed by the user; no action is needed.
-              }
-            }
-
-            // Protect a tab selected while verification was running, including
-            // a tab that was selected and then left before the live state read.
-            const [latestActiveTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-            if (Number.isInteger(latestActiveTab?.id)) protectedTabIds.add(latestActiveTab.id);
-            for (const candidate of verifiedCandidates) {
-              if (!protectedTabIds.has(candidate.id) &&
-                  tabInteractionTracker.hasInteracted(candidate.id)) {
-                protectedTabIds.add(candidate.id);
-                changedCount++;
-              }
-            }
-            const candidatesToClose = verifiedCandidates
-              .filter(candidate => !protectedTabIds.has(candidate.id))
-              .sort((a, b) => {
-                if (a.windowId !== b.windowId) return a.windowId - b.windowId;
-
-                // 각 창의 활성 탭을 먼저 닫으면 Chrome이 다음 탭을 자동 활성화해
-                // lastAccessed를 바꿉니다. 활성 탭을 마지막에 닫아, 확장 프로그램
-                // 자체 동작을 사용자 변경으로 오인해 탭을 남기는 일을 막습니다.
-                if (Boolean(a.active) !== Boolean(b.active)) return a.active ? 1 : -1;
-                return a.index - b.index;
-              });
-
-            let closedCount = 0;
-            let failedCount = 0;
-            const closedSnapshotIndicesByWindow = new Map();
-            for (const candidate of candidatesToClose) {
-              try {
-                if (tabInteractionTracker.hasInteracted(candidate.id)) {
-                  changedCount++;
-                  continue;
-                }
-                // Verification and removal can span several seconds for a large
-                // session. Refresh the protected foreground tab immediately
-                // before the final state read for every destructive removal.
-                const [activeTabBeforeRemoval] = await chrome.tabs.query({
-                  active: true,
-                  lastFocusedWindow: true
-                });
-                if (activeTabBeforeRemoval?.id === candidate.id) {
-                  protectedTabIds.add(candidate.id);
-                  changedCount++;
-                  continue;
-                }
-
-                // Keep the state read as the final asynchronous operation before
-                // removal. Navigation, structural changes, and any tab accessed
-                // since the snapshot all make the candidate ineligible. Account
-                // only for index shifts caused by removals completed in this loop.
-                const closedSnapshotIndices = closedSnapshotIndicesByWindow.get(candidate.windowId) || [];
-                const expectedIndex = candidate.index - closedSnapshotIndices.reduce(
-                  (count, closedIndex) => count + (closedIndex < candidate.index ? 1 : 0),
-                  0
-                );
-                const liveTab = await chrome.tabs.get(candidate.id);
-                if (!(await isStableSessionClosingCandidateWithGroup(liveTab, candidate, { expectedIndex }))) {
-                  changedCount++;
-                  continue;
-                }
-                if (tabInteractionTracker.hasInteracted(candidate.id)) {
-                  changedCount++;
-                  continue;
-                }
-
-                await chrome.tabs.remove(candidate.id);
-                closedSnapshotIndices.push(candidate.index);
-                closedSnapshotIndicesByWindow.set(candidate.windowId, closedSnapshotIndices);
-                closedCount++;
-              } catch (closeError) {
-                const closeErrorMessage = String(closeError?.message || '').toLowerCase();
-                const tabAlreadyGone = closeErrorMessage.includes('no tab with id') ||
-                  closeErrorMessage.includes('invalid tab id') ||
-                  closeErrorMessage.includes('tab id not found');
-                if (!tabAlreadyGone) {
-                  failedCount++;
-                  console.warn(`Failed to close saved tab ${candidate.id}.`, closeError);
-                }
-              }
-            }
-            const notClosedCount = protectedSplitViewCount + protectedSharedGroupCount +
-              changedCount + failedCount;
-
-            const snapshotNotice = CONSTANTS.MESSAGES.createSnapshotNotice(snapshot);
-            if (notClosedCount > 0) {
-              showToast(
-                CONSTANTS.MESSAGES.SESSION_SAVED_TABS_PARTIALLY_CLOSED(name, closedCount, notClosedCount) + snapshotNotice,
-                CONSTANTS.UI.TOAST_DURATION * 1.5
-              );
-            } else {
-              showToast(CONSTANTS.MESSAGES.SESSION_SAVED_AND_TABS_CLOSED(name, closedCount) + snapshotNotice,
-                snapshotNotice ? CONSTANTS.UI.TOAST_DURATION * 1.5 : CONSTANTS.UI.TOAST_DURATION);
-            }
-          } catch (closeError) {
-            console.error('Error closing tabs:', closeError);
-            showToast(CONSTANTS.MESSAGES.SESSION_SAVED_TABS_CLOSE_FAILED(name), CONSTANTS.UI.TOAST_DURATION * 1.5);
           }
         } finally {
           tabInteractionTracker.stop();
