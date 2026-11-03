@@ -240,10 +240,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 interactedTabIds.add(tabId);
             }
         };
+        // Chrome reports cross-window moves as detach/attach, not onMoved.
+        // Restore may itself move tabs within their new window while grouping,
+        // but it never moves an owned tab between windows. Track cross-window
+        // moves as soon as the ID is watched, even during layout setup.
+        const handleCrossWindowTabMove = (tabId) => {
+            if (!stopped && Number.isInteger(tabId) && watchedTabIds.has(tabId)) {
+                interactedTabIds.add(tabId);
+            }
+        };
         const handleTabUpdated = (tabId, changeInfo) => {
-            // Split View는 탭 활성화나 순서 이동 없이도 변경될 수 있습니다.
-            // 다시 해제되더라도 이번 작업 중 사용자가 구성한 탭은 보존합니다.
+            // Split View can change without activating or moving the tab.
             if (Number.isInteger(changeInfo?.splitViewId)) rememberTabInteraction(tabId);
+            // Pinning and group membership can also change and be restored
+            // before the final snapshot. Ignore the restore's own layout setup,
+            // then treat later changes as user interaction even if reverted.
+            if (movementWatchedTabIds.has(tabId) &&
+                (typeof changeInfo?.pinned === 'boolean' || Number.isInteger(changeInfo?.groupId))) {
+                rememberTabInteraction(tabId);
+            }
         };
         const handleTabGroupUpdated = (group) => {
             if (stopped || !Number.isInteger(group?.id)) return;
@@ -325,6 +340,8 @@ document.addEventListener('DOMContentLoaded', function() {
         chrome.tabs.onActivated.addListener(handleTabActivated);
         if (chrome.tabs.onHighlighted) chrome.tabs.onHighlighted.addListener(handleTabsHighlighted);
         if (chrome.tabs.onMoved) chrome.tabs.onMoved.addListener(handleTabMoved);
+        if (chrome.tabs.onDetached) chrome.tabs.onDetached.addListener(handleCrossWindowTabMove);
+        if (chrome.tabs.onAttached) chrome.tabs.onAttached.addListener(handleCrossWindowTabMove);
         if (chrome.tabs.onUpdated) chrome.tabs.onUpdated.addListener(handleTabUpdated);
         if (chrome.tabGroups?.onUpdated) chrome.tabGroups.onUpdated.addListener(handleTabGroupUpdated);
         chrome.windows.onFocusChanged.addListener(handleWindowFocusChanged);
@@ -358,6 +375,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 chrome.tabs.onActivated.removeListener(handleTabActivated);
                 if (chrome.tabs.onHighlighted) chrome.tabs.onHighlighted.removeListener(handleTabsHighlighted);
                 if (chrome.tabs.onMoved) chrome.tabs.onMoved.removeListener(handleTabMoved);
+                if (chrome.tabs.onDetached) chrome.tabs.onDetached.removeListener(handleCrossWindowTabMove);
+                if (chrome.tabs.onAttached) chrome.tabs.onAttached.removeListener(handleCrossWindowTabMove);
                 if (chrome.tabs.onUpdated) chrome.tabs.onUpdated.removeListener(handleTabUpdated);
                 if (chrome.tabGroups?.onUpdated) chrome.tabGroups.onUpdated.removeListener(handleTabGroupUpdated);
                 chrome.windows.onFocusChanged.removeListener(handleWindowFocusChanged);
@@ -2983,7 +3002,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 createdTab = newTab;
                 const tabId = newTab.id;
-                interactionTracker?.watch(newTab);
+                // No layout moves are initiated for a newly opened URL tab.
+                // A user move must protect it from cancellation cleanup.
+                interactionTracker?.watchMovement(newTab);
 
                 const assignment = await waitForTabUrlAssignment(tabId, normalizedUrl, newTab);
 
@@ -3115,7 +3136,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     allowRedirectedCleanup = creationResult.allowRedirectedCleanup === true;
                 } else {
                     createdTab = await chrome.tabs.create({ url: urlToOpen, active: (UI.focusLockCheckbox ? !UI.focusLockCheckbox.checked : true) });
-                    tabInteractionTracker.watch(createdTab);
+                    tabInteractionTracker.watchMovement(createdTab);
                 }
 
                 if (runId !== state.currentRunId) {
@@ -5173,7 +5194,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!canSaveTabCount(initialSnapshot.tabs.length) || !canSaveWindowCount(initialSnapshot.tabs)) return;
 
         const tabInteractionTracker = createTabInteractionTracker();
-        initialSnapshot.closingCandidates.forEach(candidate => tabInteractionTracker.watch(candidate));
+        // Closing a saved session does not move tabs itself. Start recording
+        // movement and group edits before confirmation, including changes later
+        // reverted to the same visible snapshot.
+        initialSnapshot.closingCandidates.forEach(candidate => {
+          tabInteractionTracker.watchMovement(candidate);
+          tabInteractionTracker.watchGroup(candidate, getSessionTabGroupId(candidate));
+        });
         try {
           if (!confirm(CONSTANTS.MESSAGES.createConfirmSaveAndCloseMessage(
             initialSnapshot.tabs.length, initialSnapshot
