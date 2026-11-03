@@ -1,0 +1,912 @@
+body {
+    /* FOUC 방지를 위해 초기에는 콘텐츠를 숨깁니다. */
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.2s ease-in; /* 부드럽게 나타나는 효과 */
+}
+
+body.theme-applied {
+    /* 테마 적용이 완료되면 콘텐츠를 보여줍니다. */
+    visibility: visible;
+    opacity: 1;
+}
+
+@layer base, layout, components;
+
+@layer base {
+    :root {
+        /* Solarized Palette (Maintained for color consistency) */
+        --solar-base03:  #002b36;
+        --solar-base02:  #073642;
+        --solar-base01:  #586e75;
+        --solar-base00:  #657b83;
+        --solar-base0:   #839496;
+        --solar-base1:   #93a1a1;
+        --solar-base2:   #eee8d5;
+        --solar-base3:   #fdf6e3;
+        --solar-yellow:  #b58900;
+        --solar-orange:  #cb4b16;
+        --solar-red:     #dc322f;
+        --solar-magenta: #d33682;
+        --solar-violet:  #6c71c4;
+        --solar-blue:    #268bd2;
+        --solar-cyan:    #2aa198;
+        --solar-green:   #859900;
+
+        /* [개선] Apple HIG Semantic Colors - Light Theme */
+        --body-bg-color: var(--solar-base2); /* 전체 페이지 배경 */
+        --font-color: var(--solar-base02);
+        --font-color-dim: var(--solar-base01);
+        --accent-color: var(--solar-blue);
+        --danger-color: var(--solar-red);
+        --success-color: var(--solar-green);
+        --pin-color: var(--solar-orange);
+        --highlight-bg-color: var(--solar-yellow);
+        --highlight-font-color: var(--solar-base3);
+        
+        /* [개선] 소재(Material) 세분화 */
+        --material-regular-bg: rgba(253, 246, 227, 0.85);
+        --material-thick-bg: rgba(253, 246, 227, 0.95); /* 모달용, 더 불투명 */
+        --material-thin-bg: rgba(253, 246, 227, 0.75);  /* 팝오버용, 더 투명 */
+        --material-opaque-bg: var(--solar-base3);
+        --blur-effect: blur(24px) saturate(120%); /* [수정] 블러 효과 강화 */
+        
+        /* [개선] 고도화된 그림자 */
+        --shadow-subtle: 0 1px 2px rgba(0,43,54,0.05);
+        --shadow-card: 0 2px 4px rgba(0,43,54,0.07), 0 0 1px rgba(0,43,54,0.05);
+        --shadow-panel: 0 4px 12px rgba(0,43,54,0.09), 0 1px 2px rgba(0,43,54,0.07);
+        --shadow-modal: 0 15px 40px rgba(0,43,54,0.15), 0 5px 15px rgba(0,43,54,0.1);
+
+        /* [개선] 활성 상태 색상 */
+        --active-bg-color: color-mix(in srgb, var(--accent-color) 12%, transparent);
+        --hover-bg-color: rgba(0, 43, 54, 0.05);
+
+        --border-color: rgba(0, 43, 54, 0.1); 
+        --divider-color: rgba(0, 43, 54, 0.08);
+        
+        --input-bg-color: rgba(0, 43, 54, 0.05);
+        --input-focus-bg-color: rgba(0, 43, 54, 0.08);
+
+        --radius-md: 24px; /* [수정] 기본 반경 증가 */
+        --radius-sm: 12px;
+        --spacing-xs: 4px;
+        --spacing-sm: 8px;
+        --spacing-md: 16px; /* [수정] 간격 조정 */
+        --spacing-lg: 20px;
+        --spacing-xl: 28px;
+    }
+
+    body.dark-mode {
+        /* [개선] Apple HIG Semantic Colors - Dark Theme */
+        --body-bg-color: var(--solar-base03);
+        --font-color: var(--solar-base2);
+        --font-color-dim: var(--solar-base0);
+        
+        --material-regular-bg: rgba(7, 54, 66, 0.85);
+        --material-thick-bg: rgba(0, 43, 54, 0.95);
+        --material-thin-bg: rgba(7, 54, 66, 0.75);
+        --material-opaque-bg: var(--solar-base03);
+        
+        --shadow-subtle: 0 1px 2px rgba(0,0,0,0.1);
+        --shadow-card: 0 2px 4px rgba(0,0,0,0.2), 0 0 1px rgba(0,0,0,0.1);
+        --shadow-panel: 0 5px 15px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.2);
+        --shadow-modal: 0 20px 50px rgba(0,0,0,0.4), 0 8px 20px rgba(0,0,0,0.3);
+
+        --active-bg-color: color-mix(in srgb, var(--accent-color) 20%, transparent);
+        --hover-bg-color: rgba(253, 246, 227, 0.05);
+
+        --border-color: rgba(253, 246, 227, 0.1); 
+        --divider-color: rgba(253, 246, 227, 0.08);
+
+        --input-bg-color: rgba(253, 246, 227, 0.05);
+        --input-focus-bg-color: rgba(253, 246, 227, 0.08);
+
+        --pin-bg-color: rgba(181, 137, 0, 0.15);
+        --highlight-font-color: var(--solar-base03);
+    }
+    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
+        background-color: var(--body-bg-color);
+        color: var(--font-color);
+        overflow: hidden;
+        height: 100vh;
+        transition: background-color 0.3s ease, color 0.3s ease;
+    }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(147, 161, 161, 0.3); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(147, 161, 161, 0.5); }
+}
+
+@layer layout {
+    .container {
+        display: grid;
+        grid-template-columns: minmax(300px, var(--column-folders-width, 10%)) 8px minmax(350px, var(--column-notes-width, 10%)) 8px 1fr;
+        height: 100vh;
+        padding: var(--spacing-lg);
+        gap: 0;
+    }
+    .panel {
+        background: var(--material-regular-bg);
+        -webkit-backdrop-filter: var(--blur-effect);
+        backdrop-filter: var(--blur-effect);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        transition: all 0.3s ease;
+        min-width: 0;
+        box-shadow: var(--shadow-panel);
+    }
+
+    .splitter {
+        cursor: col-resize;
+        background-color: transparent;
+        transition: background-color 0.2s ease;
+        align-self: center;
+        height: 100%;
+        margin: 0 -4px;
+        z-index: 10;
+    }
+    .splitter:hover, .splitter.dragging {
+        background-color: var(--accent-color);
+        opacity: 0.5;
+    }
+    
+    body.dark-mode .panel {
+         box-shadow: var(--shadow-panel), inset 0 1px 0 rgba(253, 246, 227, 0.05);
+    }
+
+    .panel.drop-target, .item-list-entry.drop-target {
+        border-color: var(--accent-color);
+        box-shadow: 0 0 10px var(--accent-color), var(--shadow-panel);
+        background-color: var(--active-bg-color);
+    }
+    .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--spacing-md) var(--spacing-lg);
+        flex-shrink: 0;
+        gap: var(--spacing-sm);
+    }
+    .panel-footer {
+        padding: var(--spacing-sm) var(--spacing-lg);
+        border-block-start: 1px solid var(--divider-color);
+        font-size: 13px;
+        color: var(--font-color-dim);
+        flex-shrink: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: var(--spacing-sm);
+    }
+    .main-content { padding: 0; }
+    .editor-area { display: flex; flex-direction: column; height: 100%; }
+    #editor-footer {
+        flex-shrink: 0;
+        padding: var(--spacing-sm) var(--spacing-xl);
+        border-block-start: 1px solid var(--divider-color);
+        display: flex;
+        gap: var(--spacing-lg);
+        font-size: 13px;
+        color: var(--font-color-dim);
+        align-items: center;
+        justify-content: flex-end;
+    }
+    
+    body.zen-mode .container {
+        display: flex; justify-content: center; align-items: center; gap: 0; grid-template-columns: none;
+    }
+    body.zen-mode .panel:not(.main-content), body.zen-mode .splitter { display: none; }
+    body.zen-mode .main-content {
+        width: 100%; max-width: var(--zen-max-width, 850px); height: 98%; flex-shrink: 0; position: relative;
+    }
+    body.zen-mode #editor-footer { display: none; }
+    
+    .zen-resize-handle {
+        display: none; position: absolute; top: 0; bottom: 0; width: 10px; cursor: col-resize; z-index: 20;
+    }
+    body.zen-mode .zen-resize-handle { display: block; }
+    body.zen-mode .zen-resize-handle:hover { background-color: var(--accent-color); opacity: 0.5; }
+    #zen-resize-handle-left { left: 0; }
+    #zen-resize-handle-right { right: 0; }
+}
+
+@layer components {
+    .ripple {
+        position: absolute;
+        border-radius: 50%;
+        background-color: rgba(0, 0, 0, 0.2);
+        transform: scale(0);
+        animation: ripple-effect-animation 600ms linear;
+        pointer-events: none;
+    }
+
+    body.dark-mode .ripple {
+        background-color: rgba(255, 255, 255, 0.2);
+    }
+
+    @keyframes ripple-effect-animation {
+        to {
+            transform: scale(4);
+            opacity: 0;
+        }
+    }
+    
+    .panel-header > h2 { font-size: 18px; font-weight: 600; flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .panel-header > .button-group { display: flex; gap: var(--spacing-xs); }
+    
+    #dashboard-container {
+        padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-md);
+        border-bottom: 1px solid var(--divider-color);
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing-md);
+        user-select: none;
+    }
+    #digital-clock {
+        font-size: 52px;
+        font-weight: 700;
+        text-align: center;
+        color: var(--font-color);
+        order: 1; /* [수정] 순서 1번으로 지정 */
+    }
+    #widget-row {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--spacing-lg);
+        order: 2; /* [수정] 아날로그 시계와 날씨 묶음을 순서 2번으로 지정 */
+    }
+    #analog-clock-container {
+        order: 1; /* widget-row 내부에서 1번 */
+    }
+    #weather-container {
+        order: 2; /* widget-row 내부에서 2번 */
+    }
+
+    #analog-clock-container, #weather-container {
+        flex: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+    }
+    
+    #analog-clock-container {
+        /* [BUG FIX] 배경을 CSS가 전담하도록 수정하고 입체감을 위해 그림자 추가 */
+        width: 150px; /* [BUG FIX] 타원형이 되지 않도록 너비 고정 */
+        height: 150px; /* [BUG FIX] 타원형이 되지 않도록 높이 고정 */
+        background: var(--material-opaque-bg);
+        border-radius: 50%;
+        padding: 0;
+        box-shadow: var(--shadow-card);
+        transition: background-color 0.3s ease;
+    }
+
+    /* --- [수정 시작] 날씨 위젯 어포던스 강화 (CSS 가상 요소 방식) --- */
+    #weather-container {
+        gap: 4px;
+        font-size: 16px;
+        font-weight: 500;
+        position: relative;
+        padding: var(--spacing-sm) var(--spacing-lg);
+        border-radius: var(--radius-sm);
+        transition: transform 0.2s ease-out, background-color 0.2s ease-out, box-shadow 0.2s ease-out;
+    }
+    #weather-container:hover {
+        background-color: var(--hover-bg-color);
+        transform: scale(1.1);
+        box-shadow: 0 0 10px var(--accent-color);
+    }
+    /* 돋보기 아이콘을 CSS ::after 가상요소로 생성 */
+    #weather-container::after {
+        content: '🔍';
+        position: absolute;
+	    bottom: 4px;
+        right: 4px;
+        font-size: 32px;
+        color: var(--font-color-dim);
+        background-color: var(--input-bg-color);
+        padding: 4px;
+        border-radius: 50%;
+        line-height: 1;
+        opacity: 0; /* 평소에는 숨김 */
+        transform: scale(0.8);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        pointer-events: none; /* 아이콘이 클릭을 방해하지 않도록 함 */
+    }
+    /* 날씨 위젯에 마우스를 올렸을 때 ::after 가상요소(돋보기)를 표시 */
+    #weather-container:hover::after {
+        opacity: 1;
+        transform: scale(1);
+    }
+    /* --- [수정 끝] --- */
+
+    #analog-clock { 
+        width: 150px; 
+        height: 150px;
+        /* [개선] 픽셀 선명도를 위한 렌더링 힌트 */
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: crisp-edges;
+    }
+    #weather-icon { font-size: 72px; line-height: 1; }
+	#weather-temp { font-size: 42px; font-weight: 700; }
+    #calendar-container {
+        width: 100%;
+        position: relative;
+        order: 3; /* [버그 수정] 대시보드 내 위젯 순서를 3번으로 지정하여 마지막에 표시되도록 합니다. */
+		margin-top: var(--spacing-md); 
+    }
+
+    /* [디자인 수정] 앱 그리드 컨테이너 (2x2) */
+    #app-grid-container {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr); /* 2열 그리드 */
+        gap: var(--spacing-md);
+        padding: 0 var(--spacing-lg) var(--spacing-md); /* 좌우 패딩 맞춤 */
+        width: 100%;
+        order: 4; /* 캘린더 다음 순서 */
+        justify-items: center; /* 아이템 가운데 정렬 */
+    }
+
+    /* [디자인 수정] 앱 아이콘 위젯 Wrapper */
+    .app-icon-widget {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--spacing-xs);
+        cursor: pointer;
+        padding: var(--spacing-sm);
+        border-radius: var(--radius-md); /* 호버 시 전체 영역 둥글게 */
+        transition: transform 0.2s ease, background-color 0.2s ease;
+        width: 100%; /* 그리드 셀 채우기 */
+        max-width: 100px; /* 너무 커지지 않게 제한 */
+        position: relative;
+        overflow: hidden; /* Ripple 효과 제한 */
+    }
+
+    .app-icon-widget:hover {
+        background-color: var(--hover-bg-color);
+        transform: scale(1.05);
+    }
+
+    /* [디자인 수정] 앱 아이콘 배경 (iOS 스타일) */
+    .app-icon-bg {
+        width: 56px;
+        height: 56px;
+        background-color: var(--input-bg-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 14px; /* iOS squircle 느낌 */
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 28px;
+        line-height: 1;
+        box-shadow: var(--shadow-subtle);
+        transition: box-shadow 0.2s ease;
+        flex-shrink: 0;
+    }
+
+    .app-icon-widget:hover .app-icon-bg {
+        box-shadow: var(--shadow-card);
+        border-color: var(--accent-color); /* 호버 시 테두리 포인트 */
+    }
+
+    /* [디자인 수정] 앱 라벨 */
+    .app-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--font-color);
+        text-align: center;
+        width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        letter-spacing: -0.3px;
+    }
+
+    #calendar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-sm); }
+    #calendar-header h3 { font-size: 14px; font-weight: 600; cursor: pointer; padding: var(--spacing-xs); border-radius: var(--radius-sm); transition: background-color 0.2s ease; }
+    #calendar-header h3:hover { background-color: var(--hover-bg-color); }
+    #calendar-header button { background: none; border: none; cursor: pointer; padding: var(--spacing-xs); font-size: 14px; color: var(--font-color-dim); border-radius: var(--radius-sm); position: relative; overflow: hidden; }
+    #calendar-header button:hover { background-color: var(--hover-bg-color); color: var(--font-color); }
+    #calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; font-size: 14px; }
+    .calendar-day { padding: 4px 2px; border-radius: 4px; position: relative; }
+    .day-name { font-weight: 600; color: var(--font-color-dim); }
+    .date-cell { cursor: default; }
+    .date-cell.current-month { color: var(--font-color); }
+    .date-cell.today { font-weight: 700; background-color: var(--hover-bg-color); color: var(--font-color); }
+    .date-cell.has-notes { cursor: pointer; text-decoration: underline; text-decoration-color: var(--accent-color); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+    .date-cell.has-notes:hover { background-color: var(--hover-bg-color); }
+    .date-cell.active-date { background-color: var(--accent-color); color: var(--solar-base3) !important; font-weight: 700; text-decoration: none; }
+    
+    .date-picker-popover {
+        position: absolute; top: 32px; left: 50%; transform: translateX(-50%); width: 100%; min-width: 250px;
+        background-color: var(--material-thin-bg);
+        -webkit-backdrop-filter: var(--blur-effect);
+        backdrop-filter: var(--blur-effect);
+        border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-modal); padding: 0;
+        z-index: 10; display: flex; flex-direction: column; gap: var(--spacing-sm);
+    }
+    .date-picker-header { display: flex; justify-content: space-between; align-items: center; padding: var(--spacing-sm) var(--spacing-sm) var(--spacing-sm) var(--spacing-md); border-bottom: 1px solid var(--divider-color); }
+    
+    /* [버그 수정] 날짜 선택 팝오버의 닫기 버튼 위치를 오른쪽 상단 모서리에 더 가깝게 조정합니다. */
+    .date-picker-popover .modal-close-button {
+        top: 0px; /* 기존 12px에서 더 위로 이동 */
+        right: 0px; /* 기존 12px에서 더 오른쪽으로 이동 */
+    }
+
+    .date-picker-header h4 { font-size: 14px; font-weight: 600; }
+    .date-picker-inputs { display: flex; gap: var(--spacing-sm); align-items: center; padding: 0 var(--spacing-md); }
+    .date-picker-inputs input[type="number"] { width: 100%; background: var(--input-bg-color); border: 1px solid transparent; color: var(--font-color); padding: var(--spacing-sm); border-radius: var(--radius-sm); font-size: 14px; outline: none; text-align: center; -moz-appearance: textfield; }
+    .date-picker-inputs input[type="number"]::-webkit-outer-spin-button, .date-picker-inputs input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .date-picker-inputs input[type="number"]:focus { border-color: var(--accent-color); }
+    .date-picker-actions { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: var(--spacing-xs) var(--spacing-md) var(--spacing-md); }
+    .date-picker-actions .modal-button { padding: 6px 12px; border-radius: var(--radius-sm); border: none; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s ease; }
+    #date-picker-today-btn { background-color: var(--hover-bg-color); color: var(--font-color); }
+    #date-picker-confirm-btn { background-color: var(--accent-color); color: var(--solar-base3); }
+    
+    .icon-button { background: none; border: none; color: var(--font-color-dim); font-size: 20px; cursor: pointer; padding: var(--spacing-xs); border-radius: var(--radius-sm); line-height: 1; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+    .icon-button:hover { color: var(--font-color); background-color: var(--hover-bg-color); box-shadow: 0 0 10px var(--accent-color); }
+    .icon-button:active { transform: scale(0.92); }
+    #empty-trash-btn:hover { color: var(--danger-color); }
+
+    .text-button { background: none; border: none; color: var(--font-color-dim); cursor: pointer; padding: var(--spacing-xs) var(--spacing-sm); border-radius: var(--radius-sm); font-size: inherit; font-family: inherit; display: flex; align-items: center; gap: var(--spacing-xs); transition: all 0.2s ease; white-space: nowrap; position: relative; overflow: hidden; }
+    .text-button:hover { color: var(--font-color); background-color: var(--hover-bg-color); }
+    .text-button:active { transform: scale(0.97); }
+
+    .pin-btn.pinned { color: var(--pin-color); }
+    .favorite-btn.favorited { color: var(--solar-yellow); }
+
+    .section-header {
+        padding: 24px var(--spacing-md) 4px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--font-color-dim);
+        text-transform: uppercase;
+        pointer-events: none;
+    }
+    
+    .item-list { list-style: none; overflow-y: auto; padding: var(--spacing-sm); flex-grow: 1; }
+    .item-list-entry { display: flex; align-items: center; gap: var(--spacing-sm); padding: 12px var(--spacing-md); border-radius: var(--radius-sm); cursor: pointer; user-select: none; font-size: 14px; line-height: 1.4; overflow: hidden; max-height: 80px; transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease; }
+    .item-list-entry:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; box-shadow: 0 0 0 2px var(--material-opaque-bg), 0 0 0 4px var(--accent-color); }
+    .item-list-entry:hover { background-color: var(--hover-bg-color); }
+    .item-list-entry.active { background-color: var(--active-bg-color); }
+    .item-list-entry.active .item-name { color: var(--accent-color); font-weight: 600; }
+    .item-list-entry.active .item-count { color: color-mix(in srgb, var(--accent-color) 70%, var(--font-color-dim)); }
+    .item-list-entry.dragging { opacity: 0.4; background: var(--active-bg-color); }
+    .item-list-entry.pinned { background-color: var(--pin-bg-color); }
+    /* [BUG FIX] 고정된 노트가 활성화되었을 때, 활성 스타일이 고정 스타일을 덮어쓰도록 합니다. */
+    .item-list-entry.pinned.active { background-color: var(--active-bg-color); }
+    .item-list-entry[draggable="true"] { cursor: grab; }
+    #folder-list .item-list-entry { max-height: 48px; }
+
+    .drag-over-indicator { height: 2px; background-color: var(--accent-color); margin-block: -1px; margin-inline: var(--spacing-sm); list-style: none; }
+    .pin-divider { height: 0; border-bottom: 1px solid var(--divider-color); margin: 6px var(--spacing-sm); list-style: none; }
+    
+    .item-details { flex-grow: 1; overflow: hidden; display: flex; align-items: baseline; }
+    .item-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 2px 0; font-weight: 500; transition: color 0.2s ease, font-weight 0.2s ease; }
+    .item-name mark { background-color: var(--highlight-bg-color); color: var(--highlight-font-color); border-radius: 3px; padding: 0 2px; }
+    .item-name[contenteditable="true"] { white-space: normal; overflow: visible; text-overflow: clip; word-break: break-all; background-color: var(--input-focus-bg-color); box-shadow: 0 0 0 2px var(--accent-color); outline: none; cursor: text; padding-inline: var(--spacing-xs); border-radius: 4px; }
+    .item-count { font-size: 13px; color: var(--font-color-dim); margin-left: var(--spacing-xs); flex-shrink: 0; transition: color 0.2s ease; }
+    .item-snippet { font-size: 13px; color: var(--font-color-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: var(--spacing-xs); }
+    .item-snippet mark { background-color: var(--highlight-bg-color); color: var(--highlight-font-color); border-radius: 3px; padding: 0 2px; }
+    #note-list .item-details { flex-direction: column; align-items: flex-start; gap: 2px; }
+    #note-list .item-snippet { width: 100%; margin-top: 0; }
+    .item-actions { display: flex; align-items: center; opacity: 0; transition: opacity .2s ease; margin-inline-start: auto; }
+    .item-list-entry:hover > .item-actions, .item-list-entry.active > .item-actions { opacity: 1; }
+    .delete-item-btn, .pin-btn, .restore-item-btn, .perm-delete-item-btn, .favorite-btn { font-size: 16px; }
+    .delete-item-btn:hover { color: var(--danger-color); }
+    .restore-item-btn:hover { color: var(--success-color); }
+    .perm-delete-item-btn:hover { color: var(--danger-color); }
+
+    .notes-header-extra { padding: var(--spacing-sm); flex-shrink: 0; display: flex; gap: var(--spacing-sm); align-items: center; }
+    .search-container { position: relative; flex-grow: 1; }
+    .search-container #clear-search { display: none; }
+    .search-container:has(#search-input:not(:placeholder-shown)) #clear-search { display: block; }
+    #search-input { width: 100%; background: var(--input-bg-color); border: 1px solid transparent; color: var(--font-color); padding: 9px var(--spacing-md); border-radius: var(--radius-sm); font-size: 14px; outline: none; transition: all .2s ease; }
+    #search-input:focus { border-color: var(--accent-color); background: var(--input-focus-bg-color); box-shadow: 0 0 8px color-mix(in srgb, var(--accent-color) 25%, transparent); }
+    #search-input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
+    #clear-search { position: absolute; inset-inline-end: var(--spacing-sm); top: 50%; transform: translateY(-50%); background: 0; border: 0; color: var(--font-color-dim); font-size: 20px; cursor: pointer; overflow: hidden; }
+    #note-sort-select { background: var(--input-bg-color); border: 1px solid transparent; color: var(--font-color); padding: var(--spacing-sm) var(--spacing-xs); border-radius: var(--radius-sm); font-size: 13px; outline: none; flex-shrink: 0; -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%2393a1a1' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708 .708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 4px center; background-size: 16px; padding-inline-end: var(--spacing-xl); }
+    
+    #note-title-input { background: transparent; border: none; color: var(--font-color); font-weight: 700; font-family: var(--editor-font-family); font-size: calc(var(--editor-font-size, 17px) + 11px); padding: 32px var(--spacing-xl) var(--spacing-md); width: 100%; outline: none; flex-shrink: 0; }
+    #note-content-textarea { background: transparent; border: none; color: var(--font-color); line-height: 1.7; width: 100%; flex-grow: 1; outline: none; resize: none; padding: 0 var(--spacing-xl) var(--spacing-xl); font-family: var(--editor-font-family); font-size: var(--editor-font-size, 17px); }
+    
+    .editor-area.markdown-view-mode #note-content-textarea { display: none; }
+    .editor-area:not(.markdown-view-mode) #note-content-view { display: none; }
+
+    /* --- 마크다운 뷰어 스타일 --- */
+    .note-content-view {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 0 var(--spacing-xl) var(--spacing-xl);
+        font-family: var(--editor-font-family);
+        font-size: var(--editor-font-size, 17px);
+        line-height: 1.7;
+        color: var(--font-color);
+        cursor: default;
+    }
+    .note-content-view:empty::before {
+        content: "마크다운 미리보기 모드입니다. 편집하려면 상단 버튼을 눌러주세요.";
+        color: var(--font-color-dim);
+        font-style: italic;
+    }
+    .note-content-view > *:first-child { margin-top: 0; }
+    .note-content-view h1, .note-content-view h2, .note-content-view h3, .note-content-view h4, .note-content-view h5, .note-content-view h6 {
+        font-weight: 600;
+        margin: 1.5em 0 0.8em;
+        padding-bottom: 0.3em;
+        border-bottom: 1px solid var(--divider-color);
+        line-height: 1.3;
+    }
+    .note-content-view h1 { font-size: 2em; }
+    .note-content-view h2 { font-size: 1.5em; }
+    .note-content-view h3 { font-size: 1.25em; }
+    .note-content-view p { margin-bottom: 1em; }
+    .note-content-view ul, .note-content-view ol {
+        margin: 0 0 1em 2em;
+        padding: 0;
+    }
+    .note-content-view li { margin-bottom: 0.4em; }
+    .note-content-view blockquote {
+        margin: 1.5em 0;
+        padding: 0.5em 1em;
+        border-left: 4px solid var(--accent-color);
+        background-color: var(--input-bg-color);
+        color: var(--font-color-dim);
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .note-content-view blockquote > p { margin-bottom: 0; }
+    .note-content-view code {
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+        background-color: var(--input-bg-color);
+        color: var(--font-color);
+        padding: .2em .4em;
+        margin: 0;
+        font-size: 85%;
+        border-radius: 6px;
+    }
+    .note-content-view pre {
+        margin: 1.5em 0;
+        padding: var(--spacing-md);
+        background-color: var(--input-bg-color);
+        border-radius: var(--radius-sm);
+        overflow-x: auto;
+    }
+    .note-content-view pre code {
+        padding: 0;
+        background-color: transparent;
+        font-size: 100%;
+    }
+    .note-content-view hr {
+        border: none;
+        border-top: 2px solid var(--divider-color);
+        margin: 2em 0;
+    }
+    .note-content-view a {
+        color: var(--accent-color);
+        text-decoration: none;
+        font-weight: 500;
+    }
+    .note-content-view a:hover {
+        text-decoration: underline;
+    }
+    .note-content-view img {
+        max-width: 100%;
+        height: auto;
+        border-radius: var(--radius-sm);
+        margin: 1em 0;
+    }
+
+
+    #save-status-indicator { display: flex; align-items: center; gap: 6px; transition: opacity 0.3s ease; opacity: 0; }
+    #save-status-indicator.visible { opacity: 1; }
+    #save-status-indicator.saving::before { content: ''; width: 12px; height: 12px; border: 2px solid var(--font-color-dim); border-top-color: var(--font-color); border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .placeholder { display: flex; flex-direction: column; gap: 10px; justify-content: center; align-items: center; height: 100%; font-size: 18px; color: var(--font-color-dim); text-align: center; }
+    .placeholder-icon { font-size: 100px; }
+    
+    .modal {
+        background: var(--material-thick-bg);
+        color: var(--font-color);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        padding: var(--spacing-xl);
+        width: 90%;
+        max-width: 540px;
+        margin: auto;
+        box-shadow: var(--shadow-modal);
+        border: none;
+    }
+    @keyframes modal-pop-in {
+        0% { opacity: 0; transform: scale(0.95); }
+        60% { opacity: 1; transform: scale(1.02); }
+        100% { opacity: 1; transform: scale(1); }
+    }
+    .modal[open] {
+        animation: modal-pop-in 0.3s ease-out forwards;
+    }
+    .modal::backdrop { 
+	background: rgba(0,0,0,0.3); 
+	}
+    .modal h3 { font-size: 18px; font-weight: 600; text-align: center; margin-bottom: 24px; }
+    .modal div#modal-message { font-size: 14px; color: var(--font-color-dim); text-align: center; line-height: 1.5; margin-bottom: 24px;}
+    .modal form { display: flex; flex-direction: column; gap: 20px; }
+    .modal-close-button {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: none;
+        border: none;
+        font-size: 20px;
+        cursor: pointer;
+        padding: 8px;
+        line-height: 1;
+        border-radius: 50%;
+        color: var(--font-color-dim);
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+    }
+    .modal-close-button:hover { background-color: var(--hover-bg-color); color: var(--font-color); }
+    
+    .modal-error { color: var(--danger-color); font-size: 13px; font-weight: 500; text-align: center; min-height: 18px; }
+    
+    .shortcut-list {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 var(--spacing-md) 0;
+        text-align: left;
+        font-size: 15px;
+    }
+    .shortcut-list li {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--spacing-md) 0;
+        border-bottom: 1px solid var(--divider-color);
+        gap: var(--spacing-lg);
+    }
+    .shortcut-list li:last-child {
+        border-bottom: none;
+    }
+    .shortcut-key {
+        font-weight: 600;
+        color: var(--accent-color);
+        background-color: var(--hover-bg-color);
+        padding: 4px 8px;
+        border-radius: 6px;
+        white-space: nowrap;
+    }
+    .shortcut-desc {
+        color: var(--font-color-dim);
+        text-align: right;
+        flex-shrink: 0;
+    }
+
+    .modal-input { width: 100%; background: var(--input-bg-color); border: 1px solid transparent; color: var(--font-color); padding: 12px var(--spacing-md); border-radius: 10px; font-size: 16px; outline: none; transition: all .2s ease; }
+    .modal-input:focus { border-color: var(--accent-color); background: var(--input-focus-bg-color); }
+    .modal-buttons { display: flex; justify-content: center; gap: var(--spacing-md); }
+    .modal-button { padding: 12px 24px; border-radius: 10px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: all .2s ease; position: relative; overflow: hidden; }
+    .modal-button:hover { opacity: 0.85; box-shadow: 0 0 10px color-mix(in srgb, currentColor 30%, transparent); }
+    .modal-button:active { transform: scale(0.96); }
+    .modal-button.confirm { background-color: var(--accent-color); color: var(--solar-base3); }
+    .modal-button.cancel { background-color: var(--hover-bg-color); color: var(--font-color); }
+    .modal-button.danger { background-color: var(--danger-color); color: var(--solar-base3); }
+    .modal-button.neutral { background-color: var(--hover-bg-color); color: var(--font-color); }
+    
+    .settings-modal { max-width: 600px; padding: 0; }
+    .settings-modal::backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; background-color: rgba(0, 0, 0, 0.3); }
+    .settings-header { display: flex; justify-content: center; align-items: center; position: relative; border-bottom: 1px solid var(--divider-color); padding: var(--spacing-lg) 32px; }
+    .settings-header h3 { font-size: 18px; }
+    .settings-content { display: flex; flex-direction: column; padding: 0 32px var(--spacing-xl); gap: var(--spacing-xl); }
+    .settings-tabs { display: flex; gap: var(--spacing-md); border-bottom: 1px solid var(--divider-color); margin-top: var(--spacing-md); padding-bottom: var(--spacing-md); justify-content: center; width: 100%; }
+    .settings-tab-btn { flex: 1; text-align: center; padding: var(--spacing-sm) var(--spacing-md); border: none; background-color: transparent; color: var(--font-color-dim); cursor: pointer; border-radius: var(--radius-sm); font-size: 14px; font-weight: 500; transition: all 0.2s ease; white-space: nowrap; position: relative; overflow: hidden; }
+    .settings-tab-btn:hover { background-color: var(--hover-bg-color); color: var(--font-color); }
+    .settings-tab-btn.active { background-color: var(--active-bg-color); color: var(--accent-color); font-weight: 600; }
+    .settings-tab-panel { display: none; flex-direction: column; gap: 20px; animation: fadeIn 0.3s ease; }
+    .settings-tab-panel.active { display: flex; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    
+    .settings-tab-panel h4 { font-size: 16px; margin-bottom: var(--spacing-sm); padding-bottom: var(--spacing-md); border-bottom: 1px solid var(--divider-color); font-weight: 600; }
+    .settings-group {
+        display: grid;
+        grid-template-columns: 120px 1fr 80px 30px;
+        align-items: center;
+        gap: var(--spacing-md);
+    }
+    #settings-tab-editor .settings-group, #settings-tab-weather .settings-group { grid-template-columns: 120px 1fr; }
+    /* [기능 추가] 저장소 정보 그룹 스타일 추가 */
+    #settings-tab-weather .settings-group.weather-search-group, .storage-info-group { grid-template-columns: 120px 1fr; }
+    .settings-group label { font-size: 14px; font-weight: 500; }
+    .settings-group input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; background: var(--input-bg-color); outline: none; border-radius: 3px; }
+    .settings-group input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; background: var(--accent-color); cursor: pointer; border-radius: 50%; }
+    .settings-value-input {
+        width: 100%;
+        background: var(--input-bg-color);
+        border: 1px solid transparent;
+        color: var(--font-color);
+        padding: var(--spacing-sm);
+        border-radius: var(--radius-sm);
+        font-size: 14px;
+        outline: none;
+        text-align: right;
+        -moz-appearance: textfield;
+    }
+    .settings-value-input::-webkit-outer-spin-button,
+    .settings-value-input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+    .settings-value-input:focus {
+        border-color: var(--accent-color);
+        background: var(--input-focus-bg-color);
+    }
+    .settings-unit-label {
+        font-size: 14px;
+        color: var(--font-color-dim);
+        text-align: left;
+        padding-left: 4px;
+    }
+    .weather-search-wrapper { position: relative; }
+    .weather-search-input-wrapper { display: flex; gap: var(--spacing-sm); }
+    .weather-search-input-wrapper input { flex-grow: 1; min-width: 0; }
+    .weather-search-input-wrapper button { flex-shrink: 0; padding-inline: 16px; }
+    .city-results-list { position: absolute; top: 100%; left: 0; right: 0; background-color: var(--material-opaque-bg); border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-modal); list-style: none; margin-top: 4px; max-height: 150px; overflow-y: auto; z-index: 10; display: none; }
+    .city-results-list li { padding: 10px var(--spacing-md); font-size: 14px; cursor: pointer; border-bottom: 1px solid var(--divider-color); }
+    .city-results-list li:last-child { border-bottom: none; }
+    .city-results-list li:hover { background-color: var(--hover-bg-color); }
+    
+    /* [기능 추가] 저장소 사용량 텍스트 스타일 */
+    .storage-usage-text {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--font-color-dim);
+        text-align: right;
+        padding-right: 10px;
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    }
+
+    .settings-group-row { display: flex; gap: var(--spacing-md); justify-content: center; }
+    .settings-description { font-size: 13px; color: var(--font-color-dim); line-height: 1.6; }
+    .settings-description a { color: var(--accent-color); text-decoration: none; }
+    .settings-description a:hover { text-decoration: underline; }
+    .settings-footer { border-top: 1px solid var(--divider-color); display: flex; justify-content: space-between; align-items: center; padding: var(--spacing-lg) 32px; }
+    .settings-footer .modal-button.danger { background-color: var(--hover-bg-color); color: var(--font-color); }
+
+    #toast-container { position: fixed; inset-block-start: 20px; inset-inline-end: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 10px; }
+    .toast { padding: var(--spacing-md) 20px; border-radius: var(--radius-sm); color: var(--solar-base3); font-size: 14px; font-weight: 500; opacity: 0; transform: translateX(100%); animation: slideIn-out 4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; }
+    .toast.success { background-color: var(--success-color); }
+    .toast.error { background-color: var(--danger-color); }
+    @keyframes slideIn-out { 0%, 100% { opacity: 0; transform: translateX(100%); } 10%, 90% { opacity: 1; transform: translateX(0); } }
+
+    #markdown-toggle-btn, #zen-mode-toggle-btn, #theme-toggle-btn {
+        position: fixed; top: 24px; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border-color);
+        background-color: var(--material-regular-bg);
+        -webkit-backdrop-filter: var(--blur-effect); backdrop-filter: var(--blur-effect);
+        color: var(--font-color); font-size: 22px; cursor: pointer; display: flex; justify-content: center; align-items: center;
+        transition: all 0.3s ease; z-index: 1000;
+        overflow: hidden;
+    }
+    #markdown-toggle-btn { right: 140px; }
+    #zen-mode-toggle-btn { right: 84px; }
+    #theme-toggle-btn { right: 28px; }
+	#markdown-toggle-btn:hover, #zen-mode-toggle-btn:hover, #theme-toggle-btn:hover { transform: scale(1.1); box-shadow: 0 0 10px var(--accent-color); }
+    #markdown-toggle-btn.active { color: var(--accent-color); }
+    
+    .editor-area.readonly #note-title-input, 
+    .editor-area.readonly #note-content-textarea,
+    .editor-area.readonly .note-content-view { 
+        cursor: default; 
+        background-color: var(--input-bg-color); 
+        opacity: 0.8; 
+    }
+    .editor-area.readonly #editor-footer { justify-content: center; }
+
+    .import-overlay {
+        position: fixed;
+        inset: 0;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        animation: fadeIn 0.3s ease forwards;
+    }
+    .import-indicator-box {
+        background: var(--material-thick-bg);
+        padding: var(--spacing-xl) 32px;
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-modal);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--spacing-lg);
+        color: var(--font-color);
+        text-align: center;
+    }
+    .import-spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid var(--font-color-dim);
+        border-top-color: var(--accent-color);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    .import-message {
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--font-color);
+    }
+
+    /* [BUG FIX & 기능 추가] iframe 뷰 공통 스타일 */
+    #weather-view-container,
+    #habit-tracker-container,
+    #diet-challenge-container {
+        grid-column: 3 / 6;
+        grid-row: 1 / 1;
+        position: relative;
+        overflow: hidden;
+        border-radius: var(--radius-md);
+        background-color: var(--body-bg-color);
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--border-color);
+        box-shadow: var(--shadow-panel);
+    }
+
+    #weather-iframe,
+    #habit-tracker-iframe,
+    #diet-challenge-iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+    }
+
+    #close-weather-view-btn,
+    #close-habit-tracker-btn,
+    #close-diet-challenge-btn {
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: 1px solid var(--border-color);
+        background-color: var(--material-regular-bg);
+        -webkit-backdrop-filter: var(--blur-effect);
+        backdrop-filter: var(--blur-effect);
+        color: var(--font-color);
+        font-size: 22px;
+        cursor: pointer;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        transition: all 0.3s ease;
+        z-index: 1002;
+        overflow: hidden;
+    }
+
+    #close-weather-view-btn:hover,
+    #close-habit-tracker-btn:hover,
+    #close-diet-challenge-btn:hover {
+        transform: scale(1.1);
+        box-shadow: 0 0 10px var(--danger-color);
+    }
+}
+.markdown-preview-error {
+    color: var(--danger-color);
+    font-weight: 600;
+}
