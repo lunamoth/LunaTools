@@ -3685,6 +3685,7 @@ document.addEventListener('DOMContentLoaded', function() {
             NO_VALID_TABS_TO_SAVE: '⚠️ 저장할 유효한 탭이 없습니다.',
             UPDATE_SESSION_NOT_FOUND: '⚠️ 업데이트할 세션을 찾을 수 없습니다.', SESSION_SAVE_FAILED: '세션 저장 실패',
             SESSION_UPDATE_CHANGED: '⚠️ 확인 후 세션이 변경되어 덮어쓰기를 중단했습니다. 현재 세션을 확인한 뒤 다시 시도해주세요.',
+            SESSION_DELETE_CHANGED: '⚠️ 삭제를 처리하는 동안 세션이 변경되어 삭제를 중단했습니다. 현재 세션을 확인한 뒤 다시 시도해주세요.',
             SESSION_NOT_FOUND: '⚠️ 세션을 찾을 수 없습니다.', createSessionDeletedMessage: (name) => `🗑️ '${escapeHtml(name)}' 세션을 삭제했습니다.`,
             SESSION_RESTORED: '✅ 세션을 복원했습니다.', DELETE_FAILED: '삭제 실패', NAME_CANNOT_BE_EMPTY: '⚠️ 이름은 비워둘 수 없습니다.',
             RENAME_FAILED: '이름 변경 실패', SESSION_PINNED: '📍 세션을 고정했습니다.', SESSION_UNPINNED: '📌 고정을 해제했습니다.',
@@ -5437,11 +5438,23 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const handleDeleteSession = async (sessionId) => {
+        const selectedSession = findSessionById(sessionId);
+        if (!selectedSession) {
+          showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
+          return;
+        }
+        const expectedSessionSignature = JSON.stringify(selectedSession);
         let deletionResult;
         try {
           deletionResult = await mutateAndPersistSessions((sessions) => {
             const sessionIndex = sessions.findIndex(s => String(s.id) === String(sessionId));
             if (sessionIndex === -1) return { skipSave: true, missing: true };
+            // The storage lock may be waiting behind a backup restore or another
+            // update. A matching ID alone does not prove this is the record the
+            // user selected; never delete a replacement with changed contents.
+            if (JSON.stringify(sessions[sessionIndex]) !== expectedSessionSignature) {
+              return { skipSave: true, changed: true };
+            }
             const [session] = sessions.splice(sessionIndex, 1);
             return { session, sessionIndex };
           });
@@ -5450,6 +5463,10 @@ document.addEventListener('DOMContentLoaded', function() {
           return;
         }
 
+        if (deletionResult?.changed) {
+          showToast(CONSTANTS.MESSAGES.SESSION_DELETE_CHANGED, CONSTANTS.UI.TOAST_DURATION * 1.5);
+          return;
+        }
         if (deletionResult?.missing || !deletionResult?.session) {
           showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
           return;
