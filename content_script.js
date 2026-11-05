@@ -1936,6 +1936,8 @@ async function lunaToolsWriteTextToClipboard(text) {
         lastMouseY: 0,
         currentPopupElement: null,
         popupContentContainer: null,
+        popupLifecycleCleanup: null,
+        popupDragCleanup: null,
         lastSelectionRect: null,
         closePopupTimeout: null,
         conversionGeneration: 0,
@@ -4080,7 +4082,79 @@ async function lunaToolsWriteTextToClipboard(text) {
             popup.appendChild(AppState.popupContentContainer);
             document.body.appendChild(popup);
             AppState.currentPopupElement = popup;
-            PopupUI.enableDrag(popup, titleBarElement, closeButton);
+            const cleanupDrag = PopupUI.enableDrag(popup, titleBarElement, closeButton);
+            AppState.popupDragCleanup = cleanupDrag;
+            AppState.popupLifecycleCleanup = PopupUI.observePopupLifecycle(
+                popup, AppState.popupContentContainer, cleanupDrag
+            );
+        },
+        observePopupLifecycle: function(popup, content, cleanupDrag) {
+            let stopped = false;
+            let observedNodes = [];
+
+            // The popup is normally a direct child of body. Observe only its
+            // ancestor chain and its own children, not every subtree mutation
+            // on a busy page. Rebuild the chain if the page moves the popup.
+            const getAncestry = () => {
+                const nodes = [];
+                for (let node = popup; node;) {
+                    nodes.push(node);
+                    node = node.parentNode ||
+                        (node.host && typeof node.host === 'object' ? node.host : null);
+                }
+                return nodes;
+            };
+            const observe = (nodes) => {
+                observer.disconnect();
+                for (const node of nodes) observer.observe(node, { childList: true });
+                observedNodes = nodes;
+            };
+            const cleanup = () => {
+                if (stopped) return;
+                stopped = true;
+                observer.disconnect();
+                cleanupDrag();
+                if (AppState.popupLifecycleCleanup === cleanup) AppState.popupLifecycleCleanup = null;
+                if (AppState.popupDragCleanup === cleanupDrag) AppState.popupDragCleanup = null;
+                if (AppState.currentPopupElement === popup) {
+                    clearTimeout(AppState.closePopupTimeout);
+                    AppState.closePopupTimeout = null;
+                    AppState.popupDisplayGeneration += 1;
+                    AppState.currentPopupElement = null;
+                    AppState.popupContentContainer = null;
+                }
+                observedNodes = [];
+            };
+            const observer = new MutationObserver((mutations) => {
+                // Ignore unrelated additions/removals in body or another
+                // ancestor. Only a removed watched node can detach this
+                // popup, move it, or detach its content container.
+                let relevantRemoval = false;
+                for (const mutation of mutations) {
+                    for (const removed of mutation.removedNodes) {
+                        if (removed === content || observedNodes.includes(removed)) {
+                            relevantRemoval = true;
+                            break;
+                        }
+                    }
+                    if (relevantRemoval) break;
+                }
+                if (!relevantRemoval) return;
+                if (!popup.isConnected || !popup.contains(content)) {
+                    cleanup();
+                    // If a site removed only the contents, remove the now
+                    // incomplete extension popup as well.
+                    if (popup.isConnected) popup.remove();
+                    return;
+                }
+                const nodes = getAncestry();
+                if (nodes.length !== observedNodes.length ||
+                    nodes.some((node, index) => node !== observedNodes[index])) {
+                    observe(nodes);
+                }
+            });
+            observe(getAncestry());
+            return cleanup;
         },
         enableDrag: function(popupEl, dragHandleEl, closeButtonEl) {
             let isDragging = false, dragOffsetX, dragOffsetY;
@@ -4130,12 +4204,14 @@ async function lunaToolsWriteTextToClipboard(text) {
                 document.addEventListener('resume', onDragEnd, true);
                 e.preventDefault();
             });
+            return onDragEnd;
         },
         close: function() {
             // 닫기 이후 완료되는 느린 환율 요청이 팝업을 다시 열지 못하게 무효화합니다.
             AppState.conversionGeneration += 1;
             AppState.popupDisplayGeneration += 1;
             if (AppState.currentPopupElement) {
+                AppState.popupDragCleanup?.();
                 // 닫기 애니메이션 중에도 아래 페이지의 클릭/휠/포커스를 즉시 허용합니다.
                 AppState.currentPopupElement.inert = true;
                 AppState.currentPopupElement.style.setProperty('pointer-events', 'none', 'important');
@@ -4182,8 +4258,11 @@ async function lunaToolsWriteTextToClipboard(text) {
                 AppState.popupDisplayGeneration += 1;
                 clearTimeout(AppState.closePopupTimeout);
                 AppState.closePopupTimeout = null;
-                AppState.popupContentContainer?.remove();
-                AppState.currentPopupElement?.remove();
+                const staleContent = AppState.popupContentContainer;
+                const stalePopup = AppState.currentPopupElement;
+                AppState.popupLifecycleCleanup?.();
+                staleContent?.remove();
+                stalePopup?.remove();
                 document.getElementById(UI_STRINGS.POPUP_LAYER_ID)?.remove();
                 AppState.currentPopupElement = null;
                 AppState.popupContentContainer = null;

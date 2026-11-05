@@ -450,6 +450,11 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             FADE_DURATION: 300,
             MAX_IMPORT_FILE_SIZE_BYTES: 32 * 1024 * 1024,
+            // Import stores a list for editing; the smaller execution limit
+            // applies only when opening tabs. Bound import separately so a
+            // large text file cannot create an unbounded Set or output string.
+            MAX_IMPORT_URLS: 100000,
+            MAX_IMPORT_URL_TEXT_LENGTH: 32 * 1024 * 1024,
             MAX_URLS_PER_RUN: 300,
             MAX_URL_LENGTH: 2048,
             MAX_LIST_NAME_LENGTH: 200,
@@ -1266,8 +1271,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 UI.toastContainer.appendChild(toast);
                 setTimeout(() => toast.classList.add('show'), 10);
                 setTimeout(() => {
+                    // A transition may be cancelled or never run. Do not let a
+                    // hidden toast and its listener remain in the container forever.
+                    let removalTimeout = null;
+                    const removeToast = () => {
+                        if (removalTimeout !== null) clearTimeout(removalTimeout);
+                        toast.removeEventListener('transitionend', removeToast);
+                        toast.remove();
+                    };
+                    toast.addEventListener('transitionend', removeToast, { once: true });
                     toast.classList.remove('show');
-                    toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+                    // The default fade lasts 400 ms. This fallback also handles
+                    // disabled animations and transitioncancel without changing
+                    // the normal animation's timing.
+                    removalTimeout = setTimeout(removeToast, 1000);
                 }, duration);
             }
         };
@@ -2637,6 +2654,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const normalizedUrls = [];
             const seenUrls = new Set();
             const stats = { invalid: 0, tooLong: 0, duplicate: 0, overLimit: 0 };
+            let normalizedTextLength = 0;
+            let importLimitExceeded = false;
 
             const completed = await visitUrlTextLines(urlsText, (rawLine) => {
                 const trimmed = rawLine.trim();
@@ -2655,14 +2674,20 @@ document.addEventListener('DOMContentLoaded', function() {
                     stats.duplicate += 1;
                     return;
                 }
-                if (normalizedUrls.length >= CONFIG.MAX_URLS_PER_RUN) {
-                    stats.overLimit += 1;
+                // Do not apply the 300-tab execution limit to a text-file import.
+                // If the import's own bounds are exceeded, reject the whole
+                // import before it can overwrite or append to the editor.
+                if (normalizedUrls.length >= CONFIG.MAX_IMPORT_URLS ||
+                    normalizedTextLength + normalizedUrl.length + 1 > CONFIG.MAX_IMPORT_URL_TEXT_LENGTH) {
+                    importLimitExceeded = true;
                     return;
                 }
 
                 seenUrls.add(normalizedUrl);
                 normalizedUrls.push(normalizedUrl);
-            }, isCancelled);
+                normalizedTextLength += normalizedUrl.length + 1;
+            }, () => importLimitExceeded || isCancelled());
+            if (importLimitExceeded) return { importLimitExceeded: true };
             if (!completed) return null;
 
             return {
@@ -2811,6 +2836,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const importCancelled = () => !isFileImportEditorAvailable() ||
                 state.currentRunId !== importRunId || !isListEditorUnchanged(importEditorSnapshot);
             const normalizedImport = await normalizeImportedUrlListText(textContent, importCancelled);
+            if (normalizedImport?.importLimitExceeded) {
+                Toast.show('텍스트 목록이 너무 커서 가져오기를 중단했습니다. 파일을 나누어 다시 가져와 주세요. 기존 입력은 유지됩니다.', 'error', 7000);
+                return;
+            }
             if (!normalizedImport || importCancelled()) {
                 showFileImportCancelledNotice();
                 return;
@@ -3748,6 +3777,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       let allSessions = [];
       let toastTimeout;
+      let toastCleanupTimer;
       let inputDebounce;
       let sessionMutationQueue = Promise.resolve();
 
@@ -3786,7 +3816,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const showToast = (message, duration = CONSTANTS.UI.TOAST_DURATION, undoCallback = null) => {
         clearTimeout(toastTimeout);
+        clearTimeout(toastCleanupTimer);
+        toastCleanupTimer = null;
         toastEl.replaceChildren();
+
+        const hideToast = () => {
+          toastEl.classList.remove('show');
+          clearTimeout(toastCleanupTimer);
+          // Keep the exit animation intact, then release the undo button and
+          // the deleted session captured by its click handler. A later toast
+          // cancels this cleanup before installing its own contents.
+          toastCleanupTimer = setTimeout(() => {
+            toastEl.replaceChildren();
+            toastCleanupTimer = null;
+          }, 350);
+        };
         
         const messageSpan = document.createElement('span');
         messageSpan.textContent = message;
@@ -3802,7 +3846,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 undoStarted = true;
                 undoButton.disabled = true;
                 clearTimeout(toastTimeout);
-                toastEl.classList.remove('show');
+                toastTimeout = null;
+                hideToast();
                 void undoCallback();
             };
             toastEl.appendChild(undoButton);
@@ -3810,7 +3855,8 @@ document.addEventListener('DOMContentLoaded', function() {
         
         toastEl.classList.add('show');
         toastTimeout = setTimeout(() => {
-            toastEl.classList.remove('show');
+            toastTimeout = null;
+            hideToast();
         }, duration);
       };
       
@@ -4453,6 +4499,22 @@ document.addEventListener('DOMContentLoaded', function() {
               allSessions = persistedSessions;
               renderSessions();
               return result;
+            }
+
+            // Validate aggregate bounds after every mutation, not only the
+            // imported batch. Otherwise adding individually valid sessions to
+            // an already large collection can make the stored collection fail
+            // its own reader on the next load. Do this before storage.set so
+            // an exceeded bound leaves the original data untouched.
+            if (workingSessions.length > CONSTANTS.LIMITS.MAX_IMPORT_SESSIONS) {
+              throw new Error(`저장 제한 초과: 전체 세션은 최대 ${CONSTANTS.LIMITS.MAX_IMPORT_SESSIONS}개입니다.`);
+            }
+            let totalSessionTabs = 0;
+            for (const session of workingSessions) {
+              totalSessionTabs += session.tabs.length;
+              if (totalSessionTabs > CONSTANTS.LIMITS.MAX_IMPORT_TOTAL_TABS) {
+                throw new Error(`저장 제한 초과: 전체 세션 탭은 최대 ${CONSTANTS.LIMITS.MAX_IMPORT_TOTAL_TABS}개입니다.`);
+              }
             }
 
             await storage.set(CONSTANTS.STORAGE_KEYS.SESSIONS, workingSessions);
@@ -5710,7 +5772,7 @@ document.addEventListener('DOMContentLoaded', function() {
           } catch (error) {
             const message = String(error?.message || '');
             showToast(
-              message.startsWith('저장 공간') || message.startsWith('가져오기 제한 초과') || message === CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS
+              message.startsWith('저장 공간') || message.startsWith('저장 제한 초과') || message.startsWith('가져오기 제한 초과') || message === CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS
                 ? `❌ ${message}`
                 : CONSTANTS.MESSAGES.IMPORT_INVALID_FORMAT
             );
@@ -5742,6 +5804,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const cleanup = () => {
         if (toastTimeout) clearTimeout(toastTimeout);
+        if (toastCleanupTimer) clearTimeout(toastCleanupTimer);
+        toastEl.classList.remove('show');
+        toastEl.replaceChildren();
         if (inputDebounce) clearTimeout(inputDebounce);
       };
 
