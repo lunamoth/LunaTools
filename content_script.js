@@ -1680,7 +1680,9 @@ async function lunaToolsWriteTextToClipboard(text) {
         },
         CATEGORY_BASE_UNITS: { length: 'm', mass: 'kg', volume: 'L', area: 'm²' },
         CURRENCY_PATTERNS: [
-            { code: 'CAD', regex: /캐나다\s*달러|캐나다달러|C\$|CAD/giu }, { code: 'AUD', regex: /호주\s*달러|호주달러|A\$|AUD/giu }, { code: 'CHF', regex: /스위스\s*프랑|스위스프랑|CHF|SFr\./giu }, { code: 'SGD', regex: /싱가포르\s*달러|싱가포르달러|S\$|SGD/giu }, { code: 'HKD', regex: /홍콩\s*달러|홍콩달러|HK\$|HKD/giu }, { code: 'NZD', regex: /뉴질랜드\s*달러|뉴질랜드달러|NZ\$|NZD/giu }, { code: 'MXN', regex: /멕시코\s*페소|멕시코페소|Mex\$|MXN/giu }, { code: 'BRL', regex: /브라질\s*헤알|헤알|R\$|BRL/giu }, { code: 'PHP', regex: /필리핀\s*페소|필리핀페소|₱|PHP/giu }, { code: 'MYR', regex: /말레이시아\s*링깃|링깃|RM|MYR/giu }, { code: 'GBP', regex: /파운드\s*스털링|영국\s*파운드|GBP\s*[£￡]|[£￡]\s*GBP/giu }, { code: 'JPY', regex: /일본\s*엔화|일본\s*엔|엔화|엔|円|[¥￥]|JPY/giu }, { code: 'EUR', regex: /유로|€|EUR/giu }, { code: 'CNY', regex: /중국\s*위안화|중국\s*위안|위안화|위안|元|CNY|인민폐|런민비/giu }, { code: 'KRW', regex: /원|₩|KRW|한국\s*원|대한민국\s*원/giu }, { code: 'INR', regex: /인도\s*루피|인도루피|루피(?!아)|₹|Rs\.?|INR/giu }, { code: 'TRY', regex: /터키\s*리라|튀르키예\s*리라|리라|₺|TRY/giu }, { code: 'IDR', regex: /인도네시아\s*루피아|루피아|Rp|IDR/giu }, { code: 'PLN', regex: /폴란드\s*즐로티|즐로티|zł|PLN/giu }, { code: 'ILS', regex: /이스라엘\s*셰켈|셰켈|₪|ILS/giu }, { code: 'THB', regex: /태국\s*바트|바트|밧|฿|THB/giu }, { code: 'SEK', regex: /스웨덴\s*크로나|스웨덴크로나|SEK(?:kr)?|(?:krSEK)/giu }, { code: 'NOK', regex: /노르웨이\s*크로나|노르웨이크로나|NOK(?:kr)?|(?:krNOK)/giu }, { code: 'DKK', regex: /덴마크\s*크로나|덴마크크로나|DKK(?:kr)?|(?:krDKK)/giu }, { code: 'ISK', regex: /아이슬란드\s*크로나|아이슬란드크로나|ISK(?:kr)?|(?:krISK)/giu }, 
+            // 국가 접두사가 붙은 통화 기호를 일반 $·¥보다 구체적인 후보로 인식합니다.
+            // 기호 사이의 가로 공백은 허용하되 다른 줄의 금액과 합치지 않습니다.
+            { code: 'CAD', regex: /캐나다\s*달러|캐나다달러|CA[^\S\r\n\u2028\u2029]*\$|C\$|CAD/giu }, { code: 'AUD', regex: /호주\s*달러|호주달러|AU[^\S\r\n\u2028\u2029]*\$|A\$|AUD/giu }, { code: 'CHF', regex: /스위스\s*프랑|스위스프랑|CHF|SFr\./giu }, { code: 'SGD', regex: /싱가포르\s*달러|싱가포르달러|SG[^\S\r\n\u2028\u2029]*\$|S\$|SGD/giu }, { code: 'HKD', regex: /홍콩\s*달러|홍콩달러|HK\$|HKD/giu }, { code: 'NZD', regex: /뉴질랜드\s*달러|뉴질랜드달러|NZ\$|NZD/giu }, { code: 'MXN', regex: /멕시코\s*페소|멕시코페소|Mex\$|MX[^\S\r\n\u2028\u2029]*\$|MXN/giu }, { code: 'BRL', regex: /브라질\s*헤알|헤알|R\$|BRL/giu }, { code: 'PHP', regex: /필리핀\s*페소|필리핀페소|₱|PHP/giu }, { code: 'MYR', regex: /말레이시아\s*링깃|링깃|RM|MYR/giu }, { code: 'GBP', regex: /파운드\s*스털링|영국\s*파운드|GBP\s*[£￡]|[£￡]\s*GBP/giu }, { code: 'JPY', regex: /일본\s*엔화|일본\s*엔|엔화|엔|円|JP[^\S\r\n\u2028\u2029]*[¥￥]|[¥￥]|JPY/giu }, { code: 'EUR', regex: /유로|€|EUR/giu }, { code: 'CNY', regex: /중국\s*위안화|중국\s*위안|위안화|위안|CN[^\S\r\n\u2028\u2029]*[¥￥]|元|CNY|인민폐|런민비/giu }, { code: 'KRW', regex: /원|₩|KRW|한국\s*원|대한민국\s*원/giu }, { code: 'INR', regex: /인도\s*루피|인도루피|루피(?!아)|₹|Rs\.?|INR/giu }, { code: 'TRY', regex: /터키\s*리라|튀르키예\s*리라|리라|₺|TRY/giu }, { code: 'IDR', regex: /인도네시아\s*루피아|루피아|Rp|IDR/giu }, { code: 'PLN', regex: /폴란드\s*즐로티|즐로티|zł|PLN/giu }, { code: 'ILS', regex: /이스라엘\s*셰켈|셰켈|₪|ILS/giu }, { code: 'THB', regex: /태국\s*바트|바트|밧|฿|THB/giu }, { code: 'SEK', regex: /스웨덴\s*크로나|스웨덴크로나|SEK(?:kr)?|(?:krSEK)/giu }, { code: 'NOK', regex: /노르웨이\s*크로나|노르웨이크로나|NOK(?:kr)?|(?:krNOK)/giu }, { code: 'DKK', regex: /덴마크\s*크로나|덴마크크로나|DKK(?:kr)?|(?:krDKK)/giu }, { code: 'ISK', regex: /아이슬란드\s*크로나|아이슬란드크로나|ISK(?:kr)?|(?:krISK)/giu }, 
             // [수정됨] ZAR의 R을 단어 경계(\b)로 감쌈
             { code: 'ZAR', regex: /남아프리카\s*공화국\s*랜드|남아공\s*랜드|랜드|\bR\b|ZAR/giu }, 
             { code: 'RON', regex: /루마니아\s*레우|레우|lei|RON/giu }, { code: 'CZK', regex: /체코\s*코루나|코루나|Kč|CZK/giu }, { code: 'HUF', regex: /헝가리\s*포린트|포린트|Ft|HUF/giu }, { code: 'BGN', regex: /불가리아\s*레프|레프|лв|BGN/giu }, { code: 'GBP', regex: /파운드|[£￡]|GBP/giu }, { code: 'USD', regex: /달러|[\$＄]|USD|불|미국\s*달러/giu },
@@ -2650,6 +2652,19 @@ async function lunaToolsWriteTextToClipboard(text) {
             const isUnicodeWordContinuation = character => /[\p{L}\p{M}\p{Pc}]/u.test(character);
             const startsWithBoundarySensitiveLetter = /^[A-Za-z가-힣]/u.test(token);
             const endsWithBoundarySensitiveLetter = /[A-Za-z가-힣]$/u.test(token);
+
+            // Do not reinterpret the trailing $ or ¥ of a qualified symbol as
+            // USD or JPY when its complete currency expression was rejected
+            // (for example, "10 ± CA$2" or "CN¥1 - CN¥2").
+            if (/^[\$＄¥￥]$/u.test(token)) {
+                const beforeToken = originalText.slice(0, tokenStart);
+                const qualifiedDollarPrefix = /(?<![\p{L}\p{M}\p{Pc}])(?:(?:CA|AU|SG|MX|CAD|AUD|SGD|HKD|NZD|MXN|BRL|USD)[^\S\r\n\u2028\u2029]*|C|A|S|HK|NZ|Mex|R)$/iu;
+                const qualifiedYenPrefix = /(?<![\p{L}\p{M}\p{Pc}])(?:CN|JP|CNY|JPY)[^\S\r\n\u2028\u2029]*$/iu;
+                if ((currencyCode === 'USD' && /^[\$＄]$/u.test(token) && qualifiedDollarPrefix.test(beforeToken)) ||
+                    (currencyCode === 'JPY' && /^[¥￥]$/u.test(token) && qualifiedYenPrefix.test(beforeToken))) {
+                    return false;
+                }
+            }
 
             // Letter-based currency tokens may be adjacent to an amount, but
             // must not be extracted from inside ordinary words. Korean number
