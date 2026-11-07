@@ -3401,6 +3401,12 @@ async function lunaToolsWriteTextToClipboard(text) {
     };
 
     const Formatter = {
+        // 입력 수량은 변환 결과와 달리 임의로 소수 둘째 자리에서 반올림하지
+        // 않습니다. 작은 금액이나 단위가 0 또는 다른 값으로 표시되면 실제
+        // 계산에 사용한 값과 팝업·복사 내용이 서로 달라집니다.
+        formatOriginalNumber: function(number) {
+            return number.toLocaleString(undefined, { maximumSignificantDigits: 17 });
+        },
         prepareNumberForKoreanFormatting: function(number) {
             if (number === null || isNaN(number)) return null;
             const numAbs = Math.abs(number);
@@ -3481,7 +3487,7 @@ async function lunaToolsWriteTextToClipboard(text) {
             if (originalUnitText.toUpperCase() === 'C' && !originalUnitText.startsWith('°') && targetUnitCode === '°F') displayOriginalUnit = '°C';
 
             const targetUnitDisplayName = unitInfo.target_unit_name || targetUnitCode;
-            const valStr = originalValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+            const valStr = Formatter.formatOriginalNumber(originalValue);
             const convertedValStrTarget = convertedValue.toLocaleString(undefined, {
                 minimumFractionDigits: (Number.isInteger(Utils.parseFloatLenient(convertedValue.toFixed(displayPrecisionTarget))) && displayPrecisionTarget > 0 && convertedValue !== 0) ? 0 : displayPrecisionTarget,
                 maximumFractionDigits: displayPrecisionTarget
@@ -3906,7 +3912,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                 const convertedValue = currencyDetails.amount * rate;
                 const formattedKrwText = Formatter.formatNumberToKoreanUnits(convertedValue, true);
                 const formattedRateText = Formatter.formatNumberToKoreanUnits(rate, true);
-                const formattedOriginalAmount = currencyDetails.amount.toLocaleString(undefined, { maximumFractionDigits: (currencyDetails.amount % 1 === 0 && currencyDetails.amount < 1e15 && currencyDetails.amount > -1e15) ? 0 : 2 });
+                const formattedOriginalAmount = Formatter.formatOriginalNumber(currencyDetails.amount);
                 const currencyFlag = Config.CURRENCY_FLAGS[currencyDetails.currencyCode] || '';
                 let displayOriginalTextForHTML, plainOriginalTextForCopy;
                 if (currencyDetails.currencyCode === Config.DEFAULT_TARGET_CURRENCY) {
