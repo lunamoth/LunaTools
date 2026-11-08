@@ -496,6 +496,9 @@ document.addEventListener('DOMContentLoaded', function() {
         let listEditorGeneration = 0;
         let listLoadGeneration = 0;
         let listSortGeneration = 0;
+        let pendingRunOptionWrites = 0;
+        let runOptionRefreshNeeded = false;
+        let runOptionRefreshGeneration = 0;
 
         const captureListEditorState = () => ({
             generation: listEditorGeneration,
@@ -1844,6 +1847,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             setView('input');
             setControlsEnabled(true);
+            if (runOptionRefreshNeeded) void loadOptions();
             if (!state.isInitialLoad) {
                  loadSavedLists();
             }
@@ -1867,6 +1871,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             setView('input');
             setControlsEnabled(true);
+            if (runOptionRefreshNeeded) void loadOptions();
         };
 
         const updateCurrentListIndicator = () => {
@@ -1894,7 +1899,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (viewState === 'input') {
                     UI.startRunButton.textContent = isCounting ? `${CONFIG.TEXT.RUN} (집계 중…)` :
                         (displayCount > 0 ? CONFIG.TEXT.RUN_COUNT(displayCount) : CONFIG.TEXT.RUN);
-                    UI.startRunButton.disabled = !state.runOptionsReady || state.isPreparingRun || isCounting || displayCount === 0;
+                    UI.startRunButton.disabled = !state.runOptionsReady || runOptionRefreshNeeded ||
+                        pendingRunOptionWrites > 0 || state.isPreparingRun || isCounting || displayCount === 0;
                 } else if (viewState === 'complete') {
                      UI.startRunButton.textContent = CONFIG.TEXT.RESTART;
                      UI.startRunButton.classList.add(CONFIG.CSS.SUCCESS_BTN_CLASS);
@@ -3217,12 +3223,14 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const startProcess = async () => {
-            if (!UI.urlInput || !state.runOptionsReady || state.isPreparingRun || state.currentView !== 'input') return;
+            if (!UI.urlInput || !state.runOptionsReady || runOptionRefreshNeeded ||
+                pendingRunOptionWrites > 0 || state.isPreparingRun || state.currentView !== 'input') return;
             const editorSnapshot = captureListEditorState();
             const initialRunId = state.currentRunId;
             const sortAtStart = Boolean(UI.sortUrlsBeforeRunCheckbox?.checked);
             const deduplicateAtStart = Boolean(UI.removeDuplicatesCheckbox?.checked);
-            const preparationCancelled = () => state.currentView !== 'input' ||
+            const preparationCancelled = () => state.currentView !== 'input' || runOptionRefreshNeeded ||
+                pendingRunOptionWrites > 0 ||
                 state.currentRunId !== initialRunId || !isListEditorUnchanged(editorSnapshot) ||
                 Boolean(UI.sortUrlsBeforeRunCheckbox?.checked) !== sortAtStart ||
                 Boolean(UI.removeDuplicatesCheckbox?.checked) !== deduplicateAtStart;
@@ -3382,9 +3390,19 @@ document.addEventListener('DOMContentLoaded', function() {
             return normalized;
         };
 
-        const saveOptions = async () => {
+        const saveOptions = async (changedElement) => {
             if (!state.runOptionsReady) return;
             if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox || !UI.playSoundCheckbox) return;
+            const changedKey = [
+                ['interval', UI.intervalInput],
+                ['removeDuplicates', UI.removeDuplicatesCheckbox],
+                ['focusLock', UI.focusLockCheckbox],
+                ['delayLoading', UI.delayLoadingCheckbox],
+                ['sortUrlsBeforeRun', UI.sortUrlsBeforeRunCheckbox],
+                ['playSound', UI.playSoundCheckbox]
+            ].find(([, element]) => element === changedElement)?.[0];
+            if (!changedKey) return;
+
             const options = normalizeRunOptions({
                 interval: UI.intervalInput.value,
                 removeDuplicates: UI.removeDuplicatesCheckbox.checked,
@@ -3393,21 +3411,56 @@ document.addEventListener('DOMContentLoaded', function() {
                 sortUrlsBeforeRun: UI.sortUrlsBeforeRunCheckbox.checked,
                 playSound: UI.playSoundCheckbox.checked
             });
-            UI.intervalInput.value = options.interval;
+            if (changedKey === 'interval') UI.intervalInput.value = options.interval;
 
+            // A backup can replace the stored options while this panel remains
+            // open, or while this write is waiting for the shared storage lock.
+            // Merge only the control the user actually changed into the latest
+            // stored value, rather than writing every potentially stale control.
+            pendingRunOptionWrites += 1;
+            runOptionRefreshNeeded = true;
+            runOptionRefreshGeneration += 1;
+            updateButtonState();
             try {
-                await runWithLocalDataStorageLock(() =>
-                    chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: options })
-                );
+                await runWithLocalDataStorageLock(async () => {
+                    const data = await chrome.storage.local.get(CONFIG.STORAGE_KEY);
+                    const latestOptions = normalizeRunOptions(data[CONFIG.STORAGE_KEY]);
+                    latestOptions[changedKey] = options[changedKey];
+                    await chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: latestOptions });
+                });
             } catch (e) {
                 console.error('Failed to save options:', e);
                 Toast.show('실행 옵션 저장에 실패했습니다. 저장 공간 또는 권한 상태를 확인해주세요.', 'error', 5000);
+            } finally {
+                pendingRunOptionWrites -= 1;
+                runOptionRefreshNeeded = true;
+                if (pendingRunOptionWrites === 0) void loadOptions();
             }
         };
         const loadOptions = async () => {
             if (!UI.intervalInput || !UI.removeDuplicatesCheckbox || !UI.focusLockCheckbox || !UI.delayLoadingCheckbox || !UI.sortUrlsBeforeRunCheckbox || !UI.playSoundCheckbox) return;
+            // Do not change the interval during a run or while it is being
+            // edited. Nor may an older read overwrite a pending user change.
+            if (pendingRunOptionWrites > 0 || state.currentView !== 'input' ||
+                document.activeElement === UI.intervalInput) {
+                runOptionRefreshNeeded = true;
+                return;
+            }
+            const refreshGeneration = ++runOptionRefreshGeneration;
+            runOptionRefreshNeeded = true;
+            updateButtonState();
             try {
-                const data = await chrome.storage.local.get(CONFIG.STORAGE_KEY);
+                // Backup restoration can remove and then replace keys while
+                // holding this lock. Read only after that transaction ends.
+                const data = await runWithLocalDataStorageLock(() =>
+                    chrome.storage.local.get(CONFIG.STORAGE_KEY)
+                );
+                if (refreshGeneration !== runOptionRefreshGeneration) return;
+                if (pendingRunOptionWrites > 0 || state.currentView !== 'input' ||
+                    document.activeElement === UI.intervalInput) {
+                    runOptionRefreshNeeded = true;
+                    return;
+                }
                 const options = normalizeRunOptions(data[CONFIG.STORAGE_KEY]);
                 UI.intervalInput.value = options.interval;
                 UI.removeDuplicatesCheckbox.checked = options.removeDuplicates;
@@ -3416,7 +3469,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 UI.sortUrlsBeforeRunCheckbox.checked = options.sortUrlsBeforeRun;
                 UI.playSoundCheckbox.checked = options.playSound;
                 state.runOptionsReady = true;
+                runOptionRefreshNeeded = false;
             } catch (e) {
+                if (refreshGeneration !== runOptionRefreshGeneration) return;
+                state.runOptionsReady = false;
                 console.error('Failed to load options:', e);
                 Toast.show('실행 옵션을 불러오지 못해 기존 설정 보호를 위해 실행과 옵션 변경을 중단했습니다. 패널을 다시 열어주세요.', 'error', 5000);
             } finally {
@@ -3508,7 +3564,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if(UI.optionsList) {
                 UI.optionsList.addEventListener('change', (e) => {
-                    saveOptions();
+                    void saveOptions(e.target);
                     if (e.target.id === 'removeDuplicates') updateButtonState();
                     if (state.currentView === 'input') scheduleSetCardHeight();
                 });
@@ -3539,6 +3595,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                 });
             }
+            if (UI.intervalInput) UI.intervalInput.addEventListener('blur', () => {
+                if (runOptionRefreshNeeded) void loadOptions();
+            });
+            chrome.storage.onChanged.addListener((changes, area) => {
+                if (area !== 'local' || !Object.prototype.hasOwnProperty.call(changes, CONFIG.STORAGE_KEY)) return;
+                runOptionRefreshNeeded = true;
+                updateButtonState();
+                void loadOptions();
+            });
 
             if (UI.saveListButton) {
                 UI.saveListButton.addEventListener('click', () => {
