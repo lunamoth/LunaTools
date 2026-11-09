@@ -249,6 +249,10 @@ async function lunaToolsWriteTextToClipboard(text) {
         hostname,
         protocol: hasHttpScheme ? parsed.protocol : '',
         port: getExplicitRulePort(entry, hasHttpScheme),
+        // 차단 설정은 URL에 포함된 키워드도 허용합니다. URL 파서로
+        // 호스트 대소문자·국제화 도메인·기본 포트를 정규화한 문자열을
+        // 따로 보존해 경로·쿼리·해시의 나머지 글자도 매칭할 수 있게 합니다.
+        literalMatchText: hasHttpScheme ? parsed.href : parsed.href.replace(/^https:\/\//i, ''),
         pathname,
         search: allowPath ? parsed.search : '',
         hash: allowPath && parsed.hash ? parsed.hash.replace(/\/+$/, '') : ''
@@ -319,6 +323,15 @@ async function lunaToolsWriteTextToClipboard(text) {
 
     if (structuredRule.port && getEffectiveUrlPort(currentUrl) !== structuredRule.port) {
       return false;
+    }
+
+    // 설정 화면의 URL 키워드가 실제 주소에 연속해서 들어 있으면
+    // /board-view, ?v=abcdef, #part1처럼 뒤에 글자가 더 있어도 차단합니다.
+    // 위의 호스트·스킴·포트 검사는 먼저 통과해야 하므로 다른 도메인을
+    // 단순 부분 문자열만으로 차단하지 않습니다. 그 밖의 경우 기존의
+    // 경로 경계·쿼리 순서 무관 매칭을 그대로 사용합니다.
+    if (structuredRule.literalMatchText && currentUrl.href.includes(structuredRule.literalMatchText)) {
+      return true;
     }
 
     if (structuredRule.pathname) {
