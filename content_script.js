@@ -1925,7 +1925,10 @@ async function lunaToolsWriteTextToClipboard(text) {
                 '|' +
                 '(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})' +
                 '|' +
-                '(\\d{1,2})[-./](\\d{1,2})[-./](\\d{4}|\\d{2})' +
+                // Numeric month/day may omit the year, just like an English
+                // month name. Consume the whole date so it cannot be silently
+                // mistaken for a time on the current day.
+                '(\\d{1,2})[-./](\\d{1,2})(?:[-./](\\d{4}|\\d{2}))?' +
                 // Keep a date followed by a comma attached to its time. Otherwise
                 // the search can skip the date and silently use today's date.
                 ')\\s*,?' +
@@ -2431,12 +2434,17 @@ async function lunaToolsWriteTextToClipboard(text) {
                     const p1 = parseInt(part1MDYStr, 10);
                     const p2 = parseInt(part2MDYStr, 10);
 
-                    if (this._isValidDate(year, p1 - 1, p2)) {
+                    // A yearless date uses the source timezone's current year,
+                    // which is only known after resolving the timezone below.
+                    // Use a leap year for initial month/day validation so that
+                    // February 29 is checked against the correct year later.
+                    const validationYear = yearMDYStr ? year : 2000;
+                    if (this._isValidDate(validationYear, p1 - 1, p2)) {
                         monthIndex = p1 - 1;
                         day = p2;
                         parsedDateSuccessfully = true;
                     }
-                    else if (this._isValidDate(year, p2 - 1, p1)) {
+                    else if (this._isValidDate(validationYear, p2 - 1, p1)) {
                         monthIndex = p2 - 1;
                         day = p1;
                         parsedDateSuccessfully = true;
@@ -2553,7 +2561,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                 // A time without a date, and a month/day without a year, use
                 // the source timezone's current calendar. Around New Year the
                 // browser and source may already be in different years.
-                if (!hasExplicitDate || (monthNameStr && !yearNameStr)) {
+                if (!hasExplicitDate || (monthNameStr && !yearNameStr) || (part1MDYStr && !yearMDYStr)) {
                     const currentSourceOffsetString = resolvedIanaTimeZone
                         ? this._getOffsetStringForInstant(resolvedIanaTimeZone, today)
                         : resolvedTzOffsetString;
