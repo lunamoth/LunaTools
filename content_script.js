@@ -1923,6 +1923,13 @@ async function lunaToolsWriteTextToClipboard(text) {
             '(?:(?:' +
                 '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + '|sept)\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:(?:,\\s*|\\s+)(\\d{4}|\\d{2}))?)' +
                 '|' +
+                // Day-first English dates and Korean dates must remain attached
+                // to their time. Otherwise the time alone is silently converted
+                // using today's date, even when a different year was supplied.
+                '(\\d{1,2})(?:st|nd|rd|th)?\\s+(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + '|sept)\\.?(?:(?:,\\s*|\\s+)(\\d{4}|\\d{2}))?' +
+                '|' +
+                '(?:(\\d{4})\\s*년\\s*)?(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일' +
+                '|' +
                 '(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})' +
                 '|' +
                 // Numeric month/day may omit the year, just like an English
@@ -1931,9 +1938,14 @@ async function lunaToolsWriteTextToClipboard(text) {
                 '(\\d{1,2})[-./](\\d{1,2})(?:[-./](\\d{4}|\\d{2}))?' +
                 // Keep a date followed by a comma attached to its time. Otherwise
                 // the search can skip the date and silently use today's date.
-                ')\\s*,?' +
-            ')?\\s*' +
+                // Make whitespace runs atomic via (?!\\s). Adjacent optional
+                // whitespace searches can otherwise retry a long gap many
+                // times and freeze a page on malformed selected text.
+                ')\\s*(?!\\s)(?:,\\s*(?!\\s))?' +
+                '(?:(?:\\((?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|[월화수목금토일](?:요일)?)\\)|[월화수목금토일]요일)\\s*(?!\\s)(?:,\\s*(?!\\s))?)?' +
+            ')?' +
             '(?:at\\s+)?' +
+            '(?:(오전|오후)\\s*)?' +
             '(\\d{1,2})(?::(\\d{2}))?(?::(\\d{2}))?' +
             '\\s*(a\\.?m\\.?|p\\.?m\\.?)?' +
             '\\s+((?:P[SDMCE]?T|E[SDC]?T|C[SDMCE]?T|M[SD]?T|A[KDEH]?ST|WET|WEST|CET|CEST|BST|GMT|UTC)(?:[+-]\\d{1,2}(?::?\\d{2})?)?|(?:\\b(?:Pacific|Mountain|Central|Eastern|Atlantic|Alaska|Hawaii|Greenwich Mean|Coordinated Universal)(?: Standard| Daylight| European)? Time\\b)|[A-Z]{3,5})' +
@@ -2393,8 +2405,11 @@ async function lunaToolsWriteTextToClipboard(text) {
                 let [
                     ,
                     monthNameStr, dayNameStr, yearNameStr,
+                    dayFirstStr, monthFirstNameStr, yearDayFirstStr,
+                    yearKoreanStr, monthKoreanStr, dayKoreanStr,
                     yearYMDStr, monthYMDStr, dayYMDStr,
                     part1MDYStr, part2MDYStr, yearMDYStr,
+                    koreanAmPmStr,
                     hourStr, minuteStr, secondStr,
                     ampmStr,
                     tzStr
@@ -2402,24 +2417,31 @@ async function lunaToolsWriteTextToClipboard(text) {
 
                 let year, monthIndex, day;
                 let parsedDateSuccessfully = false;
-                const hasExplicitDate = Boolean(monthNameStr || yearYMDStr || part1MDYStr);
+                const hasExplicitDate = Boolean(monthNameStr || dayFirstStr || monthKoreanStr || yearYMDStr || part1MDYStr);
 
                 const today = new Date();
-                if (monthNameStr) {
-                    year = yearNameStr ? parseInt(yearNameStr, 10) : today.getFullYear();
-                    if (yearNameStr && yearNameStr.length === 2) year += (year < 70 ? 2000 : 1900);
+                if (monthNameStr || dayFirstStr) {
+                    const explicitYear = yearNameStr || yearDayFirstStr;
+                    year = explicitYear ? parseInt(explicitYear, 10) : today.getFullYear();
+                    if (explicitYear && explicitYear.length === 2) year += (year < 70 ? 2000 : 1900);
 
-                    monthNameStr = monthNameStr.toLowerCase().replace(/^sept$/, 'sep');
-                    monthIndex = Config.MONTH_NAMES_EN_FULL.indexOf(monthNameStr);
-                    if (monthIndex === -1) monthIndex = Config.MONTH_NAMES_EN_SHORT.indexOf(monthNameStr);
+                    const normalizedMonthName = (monthNameStr || monthFirstNameStr).toLowerCase().replace(/^sept$/, 'sep');
+                    monthIndex = Config.MONTH_NAMES_EN_FULL.indexOf(normalizedMonthName);
+                    if (monthIndex === -1) monthIndex = Config.MONTH_NAMES_EN_SHORT.indexOf(normalizedMonthName);
 
-                    day = dayNameStr ? parseInt(dayNameStr, 10) : today.getDate();
+                    day = parseInt(dayNameStr || dayFirstStr, 10);
                     // 연도가 없는 날짜는 아직 원본 시간대의 현재 연도를 알 수 없습니다.
                     // 윤년인 2000년으로 월·일 범위만 검사하고, 시간대 확인 후
                     // 원본 시간대의 현재 연도로 다시 검증합니다.
                     parsedDateSuccessfully = monthIndex !== -1 && this._isValidDate(
-                        yearNameStr ? year : 2000, monthIndex, day
+                        explicitYear ? year : 2000, monthIndex, day
                     );
+
+                } else if (monthKoreanStr) {
+                    year = yearKoreanStr ? parseInt(yearKoreanStr, 10) : today.getFullYear();
+                    monthIndex = parseInt(monthKoreanStr, 10) - 1;
+                    day = parseInt(dayKoreanStr, 10);
+                    parsedDateSuccessfully = this._isValidDate(yearKoreanStr ? year : 2000, monthIndex, day);
 
                 } else if (yearYMDStr) {
                     year = parseInt(yearYMDStr, 10);
@@ -2469,6 +2491,8 @@ async function lunaToolsWriteTextToClipboard(text) {
                     continue;
                 }
 
+                if (koreanAmPmStr && ampmStr) continue;
+                if (koreanAmPmStr) ampmStr = koreanAmPmStr === '오후' ? 'pm' : 'am';
                 if (ampmStr) {
                     if (hour < 1 || hour > 12) continue;
                     ampmStr = ampmStr.toLowerCase().replace(/\./g, '');
@@ -2561,7 +2585,9 @@ async function lunaToolsWriteTextToClipboard(text) {
                 // A time without a date, and a month/day without a year, use
                 // the source timezone's current calendar. Around New Year the
                 // browser and source may already be in different years.
-                if (!hasExplicitDate || (monthNameStr && !yearNameStr) || (part1MDYStr && !yearMDYStr)) {
+                if (!hasExplicitDate || (monthNameStr && !yearNameStr) ||
+                    (dayFirstStr && !yearDayFirstStr) || (monthKoreanStr && !yearKoreanStr) ||
+                    (part1MDYStr && !yearMDYStr)) {
                     const currentSourceOffsetString = resolvedIanaTimeZone
                         ? this._getOffsetStringForInstant(resolvedIanaTimeZone, today)
                         : resolvedTzOffsetString;
