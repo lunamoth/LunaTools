@@ -1930,18 +1930,20 @@ async function lunaToolsWriteTextToClipboard(text) {
                 '|' +
                 '(?:(\\d{4})\\s*년\\s*)?(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일' +
                 '|' +
-                '(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})' +
+                // Korean-style dates often contain spaces after each dot,
+                // e.g. 2030. 12. 31. Keep those parts with the time.
+                '(\\d{4})[-./][ \\t]*(?![ \\t])(\\d{1,2})[-./][ \\t]*(?![ \\t])(\\d{1,2})' +
                 '|' +
                 // Numeric month/day may omit the year, just like an English
                 // month name. Consume the whole date so it cannot be silently
                 // mistaken for a time on the current day.
-                '(\\d{1,2})[-./](\\d{1,2})(?:[-./](\\d{4}|\\d{2}))?' +
+                '(\\d{1,2})[-./][ \\t]*(?![ \\t])(\\d{1,2})(?:[-./][ \\t]*(?![ \\t])(\\d{4}|\\d{2}))?' +
                 // Keep a date followed by a comma attached to its time. Otherwise
                 // the search can skip the date and silently use today's date.
                 // Make whitespace runs atomic via (?!\\s). Adjacent optional
                 // whitespace searches can otherwise retry a long gap many
                 // times and freeze a page on malformed selected text.
-                ')\\s*(?!\\s)(?:,\\s*(?!\\s))?' +
+                ')(?:\\.(?=\\s|$))?\\s*(?!\\s)(?:,\\s*(?!\\s))?' +
                 '(?:(?:\\((?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|[월화수목금토일](?:요일)?)\\)|[월화수목금토일]요일)\\s*(?!\\s)(?:,\\s*(?!\\s))?)?' +
             ')?' +
             '(?:at\\s+)?' +
