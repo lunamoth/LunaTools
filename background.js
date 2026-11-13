@@ -790,6 +790,13 @@ class TabManager {
     return pendingUrl || url || null;
   }
 
+  _hasPendingTabNavigation(tab) {
+    // pendingUrl은 요청한 주소일 뿐 최종 도착 주소가 아닙니다. 서버의
+    // 리디렉션이나 로딩 실패가 끝나기 전에 이를 중복 삭제의 근거로 쓰면
+    // 서로 다른 페이지가 될 탭이나 이미 열려 있던 페이지를 닫을 수 있습니다.
+    return typeof tab?.pendingUrl === 'string' && tab.pendingUrl.length > 0;
+  }
+
   _tryParseUrl(urlString) {
     if (!urlString || urlString === NEW_TAB_URL || !(urlString.startsWith('http:') || urlString.startsWith('https:'))) {
       return null;
@@ -1120,7 +1127,8 @@ class TabManager {
         try {
           const liveTab = await chrome.tabs.get(tabId);
           const liveUrl = this._refreshTabCacheFromLiveTab(liveTab);
-          if (liveTab.windowId === currentTab.windowId && liveUrl?.href === parsedUrl.href) {
+          if (liveTab.windowId === currentTab.windowId && liveUrl?.href === parsedUrl.href &&
+              !this._hasPendingTabNavigation(liveTab)) {
             liveDuplicateTabs.push(liveTab);
           }
         } catch (error) {
@@ -1148,8 +1156,10 @@ class TabManager {
           ]);
           const keeperUrl = this._refreshTabCacheFromLiveTab(liveKeeper);
           const duplicateUrl = this._refreshTabCacheFromLiveTab(liveDuplicate);
-          if (liveKeeper.windowId !== currentTab.windowId || keeperUrl?.href !== parsedUrl.href) return;
-          if (liveDuplicate.windowId !== currentTab.windowId || duplicateUrl?.href !== parsedUrl.href) continue;
+          if (liveKeeper.windowId !== currentTab.windowId || keeperUrl?.href !== parsedUrl.href ||
+              this._hasPendingTabNavigation(liveKeeper)) return;
+          if (liveDuplicate.windowId !== currentTab.windowId || duplicateUrl?.href !== parsedUrl.href ||
+              this._hasPendingTabNavigation(liveDuplicate)) continue;
 
           const wasAccessed = (tab) => Number.isFinite(duplicateTab.lastAccessed) &&
             Number.isFinite(tab.lastAccessed) && tab.lastAccessed > duplicateTab.lastAccessed;
@@ -1183,6 +1193,8 @@ class TabManager {
             liveDuplicate.windowId === currentTab.windowId &&
             finalKeeperUrl?.href === parsedUrl.href &&
             finalDuplicateUrl?.href === parsedUrl.href &&
+            !this._hasPendingTabNavigation(liveKeeper) &&
+            !this._hasPendingTabNavigation(liveDuplicate) &&
             Boolean(liveKeeper.pinned) === Boolean(tabToKeep.pinned) &&
             Boolean(liveDuplicate.pinned) === Boolean(duplicateTab.pinned) &&
             liveDuplicate.active === false &&
@@ -1283,7 +1295,8 @@ class TabManager {
       let liveUrl = this._tryParseUrl(this._getTabUrlString(liveTab));
       let windowTabs = tabsByWindow.get(reference.windowId) || [];
       if (!windowTabs.some(tab => tab.id === liveTab.id &&
-          this._tryParseUrl(this._getTabUrlString(tab))?.href === liveUrl?.href)) {
+          this._tryParseUrl(this._getTabUrlString(tab))?.href === liveUrl?.href &&
+          this._hasPendingTabNavigation(tab) === this._hasPendingTabNavigation(liveTab))) {
         // Navigation may continue while verification reads other tabs. Refresh
         // the window snapshot instead of comparing a redirect to stale URLs.
         windowTabs = await chrome.tabs.query({ windowId: reference.windowId });
@@ -1295,11 +1308,18 @@ class TabManager {
           (reference.navigationFailed === true && liveUrl.href !== reference.url)) {
         throw new Error('복원된 탭의 창 또는 주소를 확인하지 못했습니다.');
       }
-      const duplicates = windowTabs.filter(tab =>
-        this._tryParseUrl(this._getTabUrlString(tab))?.href === liveUrl.href);
-      if (duplicates.length !== 1) throw new Error('같은 창의 중복 탭 정리가 완료되지 않았습니다.');
+      // 아직 이동 중인 탭은 같은 요청 URL이더라도 각기 다른 곳으로
+      // 리디렉션될 수 있습니다. 확정된 탭끼리만 중복 여부를 검증하고,
+      // 진행 중인 탭은 이후 onUpdated 이벤트에서 다시 정리합니다.
+      const pendingNavigation = this._hasPendingTabNavigation(liveTab);
+      if (!pendingNavigation) {
+        const duplicates = windowTabs.filter(tab =>
+          !this._hasPendingTabNavigation(tab) &&
+          this._tryParseUrl(this._getTabUrlString(tab))?.href === liveUrl.href);
+        if (duplicates.length !== 1) throw new Error('같은 창의 중복 탭 정리가 완료되지 않았습니다.');
+      }
       resolved.push({ requestedTabId: reference.tabId, tabId: liveTab.id,
-        windowId: liveTab.windowId, url: liveUrl.href });
+        windowId: liveTab.windowId, url: liveUrl.href, pendingNavigation });
     }
     return resolved;
   }
