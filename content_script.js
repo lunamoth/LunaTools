@@ -3522,6 +3522,24 @@ async function lunaToolsWriteTextToClipboard(text) {
             }
             return resultStr;
         },
+        formatConvertedUnitNumber: function(value, precision) {
+            let fractionDigits = precision;
+            // 기본 표시 자릿수로 반올림했을 때 0이 되는 작은 값은 실제로는
+            // 0이 아닙니다. 유효숫자 두 자리가 보이도록 소수 자릿수를 늘려
+            // 화면과 복사 결과 모두에서 값이 사라지지 않게 합니다.
+            if (Number.isFinite(value) && value !== 0 && Number(value.toFixed(fractionDigits)) === 0) {
+                const requiredDigits = 1 - Math.floor(Math.log10(Math.abs(value)));
+                // Intl.NumberFormat의 소수 자릿수 지원 범위를 넘는 극소수도
+                // 0으로 표시하지 않고 지수 표기법으로 보존합니다.
+                if (requiredDigits > 20) return value.toExponential(1);
+                fractionDigits = Math.max(fractionDigits, requiredDigits);
+            }
+            const roundedValue = Utils.parseFloatLenient(value.toFixed(fractionDigits));
+            return value.toLocaleString(undefined, {
+                minimumFractionDigits: (Number.isInteger(roundedValue) && fractionDigits > 0 && value !== 0) ? 0 : fractionDigits,
+                maximumFractionDigits: fractionDigits
+            });
+        },
         formatPhysicalUnitResult: function(originalValue, originalUnitText, convertedValue, targetUnitCode, unitInfo, defaultPrecision = 2) {
             if (originalValue === null || convertedValue === null || !unitInfo) return { html: UI_STRINGS.ERROR_UNIT_CONVERSION, plainText: UI_STRINGS.ERROR_UNIT_CONVERSION };
 
@@ -3537,10 +3555,7 @@ async function lunaToolsWriteTextToClipboard(text) {
 
             const targetUnitDisplayName = unitInfo.target_unit_name || targetUnitCode;
             const valStr = Formatter.formatOriginalNumber(originalValue);
-            const convertedValStrTarget = convertedValue.toLocaleString(undefined, {
-                minimumFractionDigits: (Number.isInteger(Utils.parseFloatLenient(convertedValue.toFixed(displayPrecisionTarget))) && displayPrecisionTarget > 0 && convertedValue !== 0) ? 0 : displayPrecisionTarget,
-                maximumFractionDigits: displayPrecisionTarget
-            });
+            const convertedValStrTarget = Formatter.formatConvertedUnitNumber(convertedValue, displayPrecisionTarget);
 
             let primaryResultHtml = `<span class="converted-value">${convertedValStrTarget} ${Utils.escapeHTML(targetUnitDisplayName)}</span>`;
             let primaryResultPlain = `${convertedValStrTarget} ${targetUnitDisplayName}`;
@@ -3554,10 +3569,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                         const addVal = baseValue * addOut.from_base_unit_factor;
                         if (typeof addVal === 'number' && !isNaN(addVal)) {
                             const addPrecision = addOut.precision || defaultPrecision;
-                            const formattedAddVal = addVal.toLocaleString(undefined, {
-                                minimumFractionDigits: (Number.isInteger(Utils.parseFloatLenient(addVal.toFixed(addPrecision))) && addPrecision > 0 && addVal !== 0) ? 0 : addPrecision,
-                                maximumFractionDigits: addPrecision
-                            });
+                            const formattedAddVal = Formatter.formatConvertedUnitNumber(addVal, addPrecision);
                             additionalResultsHtmlParts.push(`${formattedAddVal} ${Utils.escapeHTML(addOut.unit)}`);
                             additionalResultsPlainParts.push(`${formattedAddVal} ${addOut.unit}`);
                         }

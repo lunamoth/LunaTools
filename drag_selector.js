@@ -409,6 +409,7 @@
             const task = {
                 cancelled: false,
                 error: null,
+                previewTruncated: false,
                 body: document.body,
                 href: window.location.href,
                 links: [],
@@ -440,12 +441,18 @@
                 while (element) {
                     if (!this.#isLinkScanTaskUsable(task)) return task.links;
                     if (++visitedElements > DragSelector.CONFIG.LIMITS.MAX_SCAN_ELEMENTS) {
-                        throw new Error('LunaTools: drag element limit exceeded');
+                        // 미리보기의 메모리·작업량은 제한하되, 큰 페이지라는
+                        // 이유만으로 사용자가 선택한 작업을 취소하지 않습니다.
+                        task.previewTruncated = true;
+                        if (this.#isDragging && this.#activeLinkScanTask === task) this.#updateIndicatorText();
+                        return task.links;
                     }
                     if (element.shadowRoot) queue.push(element.shadowRoot);
                     if (element.matches('a[href]')) {
                         if (++candidateLinks > DragSelector.CONFIG.LIMITS.MAX_SCAN_LINKS) {
-                            throw new Error('LunaTools: drag link limit exceeded');
+                            task.previewTruncated = true;
+                            if (this.#isDragging && this.#activeLinkScanTask === task) this.#updateIndicatorText();
+                            return task.links;
                         }
                         const url = this.#getLinkUrl(element);
                         if (url && !url.href.startsWith(window.location.href + '#') &&
@@ -485,15 +492,67 @@
             return selected;
         }
 
+        async #rescanSelectedLinksIncrementally(selectionRect, task) {
+            // 미리보기가 제한에 도달했을 때만 전체 DOM을 다시 순회합니다.
+            // 실행에 쓰일 최대 100개와 초과 여부를 알리는 1개만 보관하므로
+            // 거대한 페이지에서도 링크 배열이 무한히 커지지 않습니다.
+            const selected = new Set();
+            const seenUrls = new Set();
+            const queue = [task.body];
+            const { MAX_SCAN_SLICE_MS, MAX_SCAN_SLICE_ELEMENTS } = DragSelector.CONFIG.TIMING;
+            const { MAX_URLS_PER_ACTION, MAX_URL_LENGTH } = DragSelector.CONFIG.LIMITS;
+            let sliceStartedAt = performance.now();
+            let sliceElements = 0;
+
+            for (let index = 0; index < queue.length; index += 1) {
+                const node = queue[index];
+                if (!node) continue;
+                const walker = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
+                let element = node.nodeType === Node.ELEMENT_NODE ? node : walker.nextNode();
+                while (element) {
+                    if (!this.#isLinkScanTaskUsable(task)) return null;
+                    if (element.shadowRoot) queue.push(element.shadowRoot);
+                    if (element.matches('a[href]')) {
+                        const url = this.#getLinkUrl(element);
+                        if (url && !url.href.startsWith(window.location.href + '#') &&
+                            ['http:', 'https:'].includes(url.protocol) &&
+                            !url.username && !url.password && url.hostname &&
+                            url.href.length <= MAX_URL_LENGTH && !seenUrls.has(url.href) &&
+                            this.#isElementVisibleWithoutBudget(element) &&
+                            this.#isElementIntersectingWithoutBudget(element, selectionRect)) {
+                            seenUrls.add(url.href);
+                            selected.add(element);
+                            if (selected.size > MAX_URLS_PER_ACTION) {
+                                task.rescanStoppedAtLimit = true;
+                                return selected;
+                            }
+                        }
+                    }
+                    element = walker.nextNode();
+                    sliceElements += 1;
+                    if (sliceElements >= MAX_SCAN_SLICE_ELEMENTS || performance.now() - sliceStartedAt >= MAX_SCAN_SLICE_MS) {
+                        if (!(await this.#yieldLinkScanTask(task))) return null;
+                        sliceElements = 0;
+                        sliceStartedAt = performance.now();
+                    }
+                }
+            }
+            return selected;
+        }
+
         async #finalizeActionAfterLinkScan(task, selectionRect, modifier) {
             if (!task || !modifier) return;
             try {
                 await task.promise;
                 if (!this.#isLinkScanTaskUsable(task)) return;
-                const finalLinks = await this.#getLinksInRectIncrementally(task.links, selectionRect, task);
+                const finalLinks = task.previewTruncated
+                    ? await this.#rescanSelectedLinksIncrementally(selectionRect, task)
+                    : await this.#getLinksInRectIncrementally(task.links, selectionRect, task);
                 if (finalLinks && this.#isLinkScanTaskUsable(task)) {
                     task.actionStarted = true;
-                    await this.#performAction(finalLinks, modifier);
+                    await this.#performAction(finalLinks, modifier, {
+                        limitCountIsMinimum: task.rescanStoppedAtLimit === true
+                    });
                 }
             } catch (_) {
             } finally {
@@ -663,9 +722,10 @@
             const count = this.#highlightedLinks.size;
             const maxUrls = DragSelector.CONFIG.LIMITS.MAX_URLS_PER_ACTION;
             if (this.#indicatorLabel) {
-                this.#indicatorLabel.textContent = count > maxUrls
+                const text = count > maxUrls
                     ? `${count}개 선택됨 · 최대 ${maxUrls}개 ${config.label}`
                     : count > 0 ? `${count}개 ${config.label}` : config.label;
+                this.#indicatorLabel.textContent = text + (this.#activeLinkScanTask?.previewTruncated ? ' · 일부만 표시' : '');
             }
         }
 
@@ -770,14 +830,15 @@
             });
         }
 
-        async #performAction(links, modifier = this.#modifier) {
+        async #performAction(links, modifier = this.#modifier, { limitCountIsMinimum = false } = {}) {
             if (links.size === 0 || !modifier) return;
             const { urls, invalid, overLimit } = this.#normalizeActionUrls(links);
             const safetySkipped = invalid + overLimit;
 
             // 같은 URL을 가리키는 여러 링크 요소는 흔한 페이지 구조이므로 조용히 중복 제거합니다.
             if (safetySkipped > 0) {
-                console.warn(`LunaTools: 선택한 링크 중 ${safetySkipped}개를 안전 제한으로 제외했습니다.`);
+                const skippedCountText = limitCountIsMinimum ? `${safetySkipped}개 이상을` : `${safetySkipped}개를`;
+                console.warn(`LunaTools: 선택한 링크 중 ${skippedCountText} 안전 제한으로 제외했습니다.`);
             }
             if (urls.length === 0) return;
 
