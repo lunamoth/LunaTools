@@ -2040,6 +2040,23 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!lists || loadGeneration !== savedListLoadGeneration) return false;
             const listNames = Object.keys(lists);
             const currentSelectionInDropdown = UI.savedListsDropdown ? UI.savedListsDropdown.value : '';
+            const loadedListWasRemoved = Boolean(state.loadedListName) && !listNames.includes(state.loadedListName);
+
+            if (loadedListWasRemoved) {
+                // A backup restore or another pending operation can remove the
+                // stored record while its old contents remain in this editor.
+                // Those contents are now an unsaved draft, even if the user had
+                // not typed since loading the list.
+                listEditorGeneration++;
+                listLoadGeneration++;
+                state.loadedListName = null;
+                state.originalLoadedListUrls = null;
+                const hasEditorContents = Boolean(UI.urlInput?.value);
+                state.isDirty = state.isDirty || hasEditorContents;
+                if (hasEditorContents) {
+                    Toast.show('저장된 목록이 없어 현재 입력을 저장되지 않은 새 목록으로 유지했습니다.', 'info', 7000);
+                }
+            }
 
             if (UI.savedListsDropdown) {
                 UI.savedListsDropdown.replaceChildren(new Option(CONFIG.TEXT.SELECT_LIST_PLACEHOLDER, ''));
@@ -2053,13 +2070,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 if (state.loadedListName && listNames.includes(state.loadedListName)) {
                     UI.savedListsDropdown.value = state.loadedListName;
-                } else if (listNames.includes(currentSelectionInDropdown)) {
+                } else if (!loadedListWasRemoved && listNames.includes(currentSelectionInDropdown)) {
                      UI.savedListsDropdown.value = currentSelectionInDropdown;
-                } else {
-                    if(state.loadedListName && !listNames.includes(state.loadedListName)) {
-                        state.loadedListName = null;
-                        state.originalLoadedListUrls = null;
-                    }
                 }
             }
             updateButtonState();
@@ -2434,13 +2446,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (mutationResult.saved) {
                 const wasCurrentlyLoaded = state.loadedListName === listName;
-                if (wasCurrentlyLoaded && isListEditorUnchanged(editorSnapshot)) {
+                if (wasCurrentlyLoaded && !state.isDirty && isListEditorUnchanged(editorSnapshot)) {
                     _switchToNewListState();
                     Toast.show(`'${listName}' 목록이 삭제되었고, 새 목록 상태로 전환합니다.`, 'success');
                 } else if (wasCurrentlyLoaded) {
-                    // The confirmed deletion applies to stored data. Input
-                    // entered or loaded while the write was pending remains
-                    // an unsaved draft, detached from the deleted list.
+                    // Deletion applies to the saved record. Preserve unsaved
+                    // edits made before or during deletion as a separate draft.
                     listEditorGeneration++;
                     listLoadGeneration++;
                     state.loadedListName = null;
@@ -2448,7 +2459,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     state.isDirty = true;
                     if (UI.savedListsDropdown) UI.savedListsDropdown.value = '';
                     updateButtonState();
-                    Toast.show(`'${listName}' 목록은 삭제했으며, 삭제 처리 중 변경된 입력은 저장되지 않은 새 목록으로 유지했습니다.`, 'info', 5000);
+                    Toast.show(`'${listName}' 목록은 삭제했으며, 편집 중인 입력은 저장되지 않은 새 목록으로 유지했습니다.`, 'info', 5000);
                 } else {
                     Toast.show(`'${listName}' 목록이 삭제되었습니다.`, 'success');
                 }
@@ -3599,10 +3610,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (runOptionRefreshNeeded) void loadOptions();
             });
             chrome.storage.onChanged.addListener((changes, area) => {
-                if (area !== 'local' || !Object.prototype.hasOwnProperty.call(changes, CONFIG.STORAGE_KEY)) return;
-                runOptionRefreshNeeded = true;
-                updateButtonState();
-                void loadOptions();
+                if (area !== 'local') return;
+                if (Object.prototype.hasOwnProperty.call(changes, CONFIG.URL_LISTS_KEY)) {
+                    // Refresh through the same storage queue/lock as writes so
+                    // a restored or removed list is reflected in the editor.
+                    void loadSavedLists();
+                }
+                if (Object.prototype.hasOwnProperty.call(changes, CONFIG.STORAGE_KEY)) {
+                    runOptionRefreshNeeded = true;
+                    updateButtonState();
+                    void loadOptions();
+                }
             });
 
             if (UI.saveListButton) {
