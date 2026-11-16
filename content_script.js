@@ -189,9 +189,11 @@ async function lunaToolsWriteTextToClipboard(text) {
     return String(value || '').trim().toLowerCase().replace(/\.+$/, '');
   }
 
-  function isLikelyHostRule(entry) {
+  function isLikelyHostRule(entry, allowSingleLabel = false) {
     let normalizedEntry = entry;
     const authority = entry.split(/[/?#]/u, 1)[0];
+    // Brackets distinguish IPv6 hosts from free-text URL keywords.
+    if (/^\[[0-9a-f:.]+\](?::\d+)?$/i.test(authority)) return true;
     // URL.hostname은 국제화 도메인을 ASCII로 반환합니다. 같은 URL 파서로
     // 호스트 부분을 먼저 정규화하되 기존 ASCII 규칙·키워드 판별은 유지합니다.
     if (/[^\x00-\x7F]/u.test(authority)) {
@@ -208,6 +210,7 @@ async function lunaToolsWriteTextToClipboard(text) {
     return (
       /^[a-z0-9.-]+(?::\d+)?(?:[/?#].*)?$/i.test(normalizedEntry) &&
       (
+        allowSingleLabel ||
         normalizedEntry.includes('.') ||
         /^localhost(?::|[/?#]|$)/i.test(normalizedEntry) ||
         /^\d{1,3}(?:\.\d{1,3}){3}(?::|[/?#]|$)/.test(normalizedEntry)
@@ -234,7 +237,8 @@ async function lunaToolsWriteTextToClipboard(text) {
     if (!entry) return null;
 
     const hasHttpScheme = /^https?:\/\//i.test(entry);
-    if (!hasHttpScheme && !isLikelyHostRule(entry)) return null;
+    // The lock field accepts hostnames. In the block field, a bare word is a keyword.
+    if (!hasHttpScheme && !isLikelyHostRule(entry, !allowPath)) return null;
 
     try {
       const parsed = new URL(hasHttpScheme ? entry : `https://${entry}`);
@@ -303,14 +307,29 @@ async function lunaToolsWriteTextToClipboard(text) {
     return true;
   }
 
+  function normalizeUrlEscapes(text) {
+    return text.includes('%') ? text.replace(/%[0-9a-f]{2}/gi, escape => escape.toUpperCase()) : text;
+  }
+
   function matchesBlockedSiteRule(currentUrl, rawRule) {
     const ruleText = String(rawRule || '').trim();
     if (!ruleText) return false;
 
     const structuredRule = parseSiteRule(ruleText, { allowPath: true });
     if (!structuredRule) {
-      // Backward compatibility: non-host entries still work as URL keywords.
-      return currentUrl.href.includes(ruleText);
+      if (currentUrl.href.includes(ruleText)) return true;
+      if (!/[^\x21-\x7e]|%[0-9a-f]{2}/i.test(ruleText)) return false;
+
+      // Compare the visible keyword with its UTF-8 spelling in the URL. Keep
+      // reserved delimiters and existing escapes intact (e.g. %2F is not /).
+      const keyword = normalizeUrlEscapes(ruleText.replace(/[^\x21-\x7e]+/gu,
+        part => encodeURIComponent(part.toWellFormed())));
+      if (normalizeUrlEscapes(currentUrl.href).includes(keyword)) return true;
+      // Only form-style query strings use a literal plus to represent a space.
+      if (!keyword.includes('%20') || !currentUrl.search.includes('+')) return false;
+      const formUrl = new URL(currentUrl.href);
+      formUrl.search = currentUrl.search.replace(/\+/g, '%20');
+      return normalizeUrlEscapes(formUrl.href).includes(keyword);
     }
 
     if (!matchesHostnameRule(currentUrl.hostname, structuredRule.hostname)) {
@@ -330,13 +349,13 @@ async function lunaToolsWriteTextToClipboard(text) {
     // 위의 호스트·스킴·포트 검사는 먼저 통과해야 하므로 다른 도메인을
     // 단순 부분 문자열만으로 차단하지 않습니다. 그 밖의 경우 기존의
     // 경로 경계·쿼리 순서 무관 매칭을 그대로 사용합니다.
-    if (structuredRule.literalMatchText && currentUrl.href.includes(structuredRule.literalMatchText)) {
+    if (structuredRule.literalMatchText && normalizeUrlEscapes(currentUrl.href).includes(normalizeUrlEscapes(structuredRule.literalMatchText))) {
       return true;
     }
 
     if (structuredRule.pathname) {
-      const currentPath = (currentUrl.pathname.replace(/\/+$/, '') || '/');
-      const expectedPath = structuredRule.pathname;
+      const currentPath = normalizeUrlEscapes(currentUrl.pathname.replace(/\/+$/, '') || '/');
+      const expectedPath = normalizeUrlEscapes(structuredRule.pathname);
       if (currentPath !== expectedPath && !currentPath.startsWith(`${expectedPath}/`)) {
         return false;
       }
@@ -349,8 +368,8 @@ async function lunaToolsWriteTextToClipboard(text) {
     }
 
     if (structuredRule.hash) {
-      const currentHash = currentUrl.hash.replace(/\/+$/, '');
-      const expectedHash = structuredRule.hash;
+      const currentHash = normalizeUrlEscapes(currentUrl.hash.replace(/\/+$/, ''));
+      const expectedHash = normalizeUrlEscapes(structuredRule.hash);
       if (currentHash !== expectedHash && !currentHash.startsWith(`${expectedHash}/`)) {
         return false;
       }
@@ -1906,6 +1925,37 @@ async function lunaToolsWriteTextToClipboard(text) {
         RESULT_TIME_SUFFIX: "(시간 변환)",
     };
 
+    const MONTH_NAME_SOURCE = [...Config.MONTH_NAMES_EN_FULL, ...Config.MONTH_NAMES_EN_SHORT, 'sept'].join('|');
+    const ENGLISH_WEEKDAY_SOURCE = String.raw`(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\.?`;
+    const WEEKDAY_SOURCE = String.raw`(?:\((?:${ENGLISH_WEEKDAY_SOURCE}|[월화수목금토일](?:요일)?)\)|${ENGLISH_WEEKDAY_SOURCE}|[월화수목금토일]요일)`;
+    // A two-digit count in "July 21, 10 seats left" is separate from the date.
+    const ENGLISH_YEAR_SOURCE = String.raw`(?:(?:,\s*|\s+)(\d{4}|\d{2}(?![\t\p{Zs}]+[\p{L}\p{M}-]+[\t\p{Zs}]+(?:left|remaining|available)\b)))?`;
+    // Both date positions use the same fields in the same order. Calendar validity
+    // and the source timezone's year are checked once, after matching the clock.
+    const CALENDAR_DATE_SOURCE = [
+        String.raw`(${MONTH_NAME_SOURCE})\.?\s+(\d{1,2})(?:st|nd|rd|th)?${ENGLISH_YEAR_SOURCE}`,
+        String.raw`(\d{1,2})(?:st|nd|rd|th)?\s+(${MONTH_NAME_SOURCE})\.?${ENGLISH_YEAR_SOURCE}`,
+        String.raw`(?:(\d{4})\s*년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일`,
+        String.raw`(\d{4})[-./][ \t]*(?![ \t])(\d{1,2})[-./][ \t]*(?![ \t])(\d{1,2})`,
+        String.raw`(\d{1,2})[-./][ \t]*(?![ \t])(\d{1,2})(?:[-./][ \t]*(?![ \t])(\d{4}|\d{2}))?`
+    ].join('|');
+    const POST_CLOCK_SEPARATOR = String.raw`(?:[\t\p{Zs}]+on[\t\p{Zs}]+|[\t\p{Zs}]*,[\t\p{Zs}]*|[\t\p{Zs}]+)`;
+    const POST_CLOCK_CALENDAR = String.raw`(?:${WEEKDAY_SOURCE}(?:[\t\p{Zs}]*,[\t\p{Zs}]*|[\t\p{Zs}]+))?(?:${CALENDAR_DATE_SOURCE})(?![\p{L}\p{M}\p{N}\p{Pc}/-]|[.]\d)`;
+    // Treat whitespace runs as one unit to avoid backtracking through a long gap.
+    const DATE_CLOCK_SEPARATOR = String.raw`(?:\.(?=\s|$))?\s*(?!\s)(?:,\s*(?!\s))?(?:${WEEKDAY_SOURCE}\s*(?!\s)(?:,\s*(?!\s))?)?`;
+    const ZONE_ABBREVIATIONS = [...Object.keys(Config.TIMEZONE_FIXED_OFFSETS), ...Object.keys(Config.TIMEZONE_LOOKUP)].join('|');
+    const CLOCK_WITH_ZONE_SOURCE =
+        '(?:at\\s+)?' +
+        '(?:(오전|오후)\\s*)?' +
+        '(\\d{1,2})(?::(\\d{2}))?(?::(\\d{2}))?' +
+        '\\s*(a\\.?m\\.?|p\\.?m\\.?)?' +
+        '\\s+((?:UTC|GMT)[+-]\\d{1,2}(?::?\\d{2})?|' + ZONE_ABBREVIATIONS +
+        '|\\b(?:Pacific|Mountain|Central|Eastern|Atlantic|Alaska|Hawaii|Greenwich Mean|Coordinated Universal)(?: Standard| Daylight| European)? Time\\b)' +
+        '(?:\\s+Time)?' +
+        // Do not truncate unsupported fractional offsets such as UTC+9.5
+        // or GMT+5,5 to whole hours. Sentence punctuation stays valid.
+        '(?![\\p{L}\\p{M}\\p{N}\\p{Pc}\\/×xX+\\-\\u2212\\uFE63\\uFF0D\\u2010-\\u2015~～]|:\\d|[.,]+\\d)';
+
     const REGEXES = {
         KOREAN_NUMERALS_REGEX_G: new RegExp(Object.keys(Config.KOREAN_NUMERALS_MAP).join('|'), 'gu'),
         KOREAN_NUMERIC_CLEANUP_REGEX_GI: /[^0-9\.\s천백십]/giu,
@@ -1915,47 +1965,15 @@ async function lunaToolsWriteTextToClipboard(text) {
         PLAIN_OZ_REGEX: new RegExp(`^(${NUMERIC_TOKEN_PATTERN_SOURCE})\\s*(oz|온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])$`, 'iu'),
         PURE_NUMBER_REGEX: new RegExp(`^(?:${NUMERIC_TOKEN_PATTERN_SOURCE})$`, 'iu'),
         TIME_EXTRACTION_PATTERN: new RegExp(
-            NUMERIC_TOKEN_START_BOUNDARY_SOURCE +
-            // 공백마다 선택적 날짜 뒤의 \\s*를 재시도하는 제곱 시간 탐색을 방지합니다.
-            '(?!\\s)' +
-            '(?<![\\p{L}\\p{M}\\p{N}\\p{Pc}])' +
-            '(?<!\\d:)' +
-            '(?:(?:' +
-                '(?:(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + '|sept)\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:(?:,\\s*|\\s+)(\\d{4}|\\d{2}))?)' +
-                '|' +
-                // Day-first English dates and Korean dates must remain attached
-                // to their time. Otherwise the time alone is silently converted
-                // using today's date, even when a different year was supplied.
-                '(\\d{1,2})(?:st|nd|rd|th)?\\s+(' + Config.MONTH_NAMES_EN_FULL.join('|') + '|' + Config.MONTH_NAMES_EN_SHORT.join('|') + '|sept)\\.?(?:(?:,\\s*|\\s+)(\\d{4}|\\d{2}))?' +
-                '|' +
-                '(?:(\\d{4})\\s*년\\s*)?(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일' +
-                '|' +
-                // Korean-style dates often contain spaces after each dot,
-                // e.g. 2030. 12. 31. Keep those parts with the time.
-                '(\\d{4})[-./][ \\t]*(?![ \\t])(\\d{1,2})[-./][ \\t]*(?![ \\t])(\\d{1,2})' +
-                '|' +
-                // Numeric month/day may omit the year, just like an English
-                // month name. Consume the whole date so it cannot be silently
-                // mistaken for a time on the current day.
-                '(\\d{1,2})[-./][ \\t]*(?![ \\t])(\\d{1,2})(?:[-./][ \\t]*(?![ \\t])(\\d{4}|\\d{2}))?' +
-                // Keep a date followed by a comma attached to its time. Otherwise
-                // the search can skip the date and silently use today's date.
-                // Make whitespace runs atomic via (?!\\s). Adjacent optional
-                // whitespace searches can otherwise retry a long gap many
-                // times and freeze a page on malformed selected text.
-                ')(?:\\.(?=\\s|$))?\\s*(?!\\s)(?:,\\s*(?!\\s))?' +
-                '(?:(?:\\((?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|[월화수목금토일](?:요일)?)\\)|[월화수목금토일]요일)\\s*(?!\\s)(?:,\\s*(?!\\s))?)?' +
-            ')?' +
-            '(?:at\\s+)?' +
-            '(?:(오전|오후)\\s*)?' +
-            '(\\d{1,2})(?::(\\d{2}))?(?::(\\d{2}))?' +
-            '\\s*(a\\.?m\\.?|p\\.?m\\.?)?' +
-            '\\s+((?:P[SDMCE]?T|E[SDC]?T|C[SDMCE]?T|M[SD]?T|A[KDEH]?ST|WET|WEST|CET|CEST|BST|GMT|UTC)(?:[+-]\\d{1,2}(?::?\\d{2})?)?|(?:\\b(?:Pacific|Mountain|Central|Eastern|Atlantic|Alaska|Hawaii|Greenwich Mean|Coordinated Universal)(?: Standard| Daylight| European)? Time\\b)|[A-Z]{3,5})' +
-            '(?:\\s+Time)?' +
-            // Do not truncate unsupported fractional offsets such as UTC+9.5
-            // or GMT+5,5 to whole hours. Sentence punctuation stays valid.
-            '(?![\\p{L}\\p{M}\\p{N}\\p{Pc}\\/×xX+\\-\\u2212\\uFE63\\uFF0D\\u2010-\\u2015~～]|:\\d|[.,]+\\d)',
-            'giu'
+            NUMERIC_TOKEN_START_BOUNDARY_SOURCE + String.raw`(?!\s)(?<![\p{L}\p{M}\p{N}\p{Pc}])(?<!\d:)` +
+            `(?:(?:${CALENDAR_DATE_SOURCE})${DATE_CLOCK_SEPARATOR})?${CLOCK_WITH_ZONE_SOURCE}`, 'giu'
+        ),
+        DATE_AFTER_CLOCK: new RegExp(`^${POST_CLOCK_SEPARATOR}${POST_CLOCK_CALENDAR}`, 'iu'),
+        WRAPPED_DATE_AFTER_CLOCK: new RegExp(
+            String.raw`^(?:${POST_CLOCK_SEPARATOR})?\([\t\p{Zs}]*${POST_CLOCK_CALENDAR}[\t\p{Zs}]*\)`, 'iu'
+        ),
+        DATE_BETWEEN_CLOCKS: new RegExp(
+            `^(?<calendar>${POST_CLOCK_SEPARATOR}${POST_CLOCK_CALENDAR})${DATE_CLOCK_SEPARATOR}${CLOCK_WITH_ZONE_SOURCE}`, 'iu'
         ),
         TZ_OFFSET_REGEX: /^(?:GMT|UTC)([+-])(\d{1,2})(?:(:)?(\d{2}))?$/i,
     };
@@ -2392,30 +2410,54 @@ async function lunaToolsWriteTextToClipboard(text) {
             return d.getFullYear() === year && d.getMonth() === monthIndex && d.getDate() === day;
         },
 
+        _readDateAfterClock: function(tail) {
+            const wrapped = REGEXES.WRAPPED_DATE_AFTER_CLOCK.exec(tail);
+            if (wrapped) return wrapped;
+            const date = REGEXES.DATE_AFTER_CLOCK.exec(tail);
+            if (!date) return null;
+
+            // Match the whole next clock before accepting a two-digit year.
+            // Otherwise the "10" in "July 21, 10:30 AM ET" becomes 2010.
+            const between = REGEXES.DATE_BETWEEN_CLOCKS.exec(tail);
+            if (!between) return date;
+            if (!/^[\t\p{Zs}]+on[\t\p{Zs}]+/iu.test(tail)) {
+                const afterNext = tail.slice(between[0].length);
+                if (!REGEXES.DATE_AFTER_CLOCK.test(afterNext) &&
+                    !REGEXES.WRAPPED_DATE_AFTER_CLOCK.test(afterNext)) return null;
+            }
+            return REGEXES.DATE_AFTER_CLOCK.exec(between.groups.calendar);
+        },
+
         parse: function(inputText) {
             const results = [];
             let match;
             REGEXES.TIME_EXTRACTION_PATTERN.lastIndex = 0;
 
             while ((match = REGEXES.TIME_EXTRACTION_PATTERN.exec(inputText)) !== null) {
-                const originalMatch = match[0];
+                let originalMatch = match[0];
+                let dateParts = match.slice(1, -6);
+                let [koreanAmPmStr, hourStr, minuteStr, secondStr, ampmStr, tzStr] = match.slice(-6);
+                if (!dateParts.some(Boolean)) {
+                    const tail = inputText.slice(REGEXES.TIME_EXTRACTION_PATTERN.lastIndex);
+                    const trailingDate = this._readDateAfterClock(tail);
+                    if (trailingDate) {
+                        dateParts = trailingDate.slice(1);
+                        originalMatch += trailingDate[0];
+                        REGEXES.TIME_EXTRACTION_PATTERN.lastIndex += trailingDate[0].length;
+                    }
+                }
                 // A numeric operand is not a standalone clock time (10^3 UTC).
                 if (COMPOUND_NUMERIC_LEFT_CONTEXT_REGEX.test(inputText.slice(0, match.index)) ||
-                    COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX.test(inputText.slice(match.index + originalMatch.length))) {
+                    COMPOUND_NUMERIC_RIGHT_CONTEXT_REGEX.test(inputText.slice(REGEXES.TIME_EXTRACTION_PATTERN.lastIndex))) {
                     continue;
                 }
-                let [
-                    ,
+                const [
                     monthNameStr, dayNameStr, yearNameStr,
                     dayFirstStr, monthFirstNameStr, yearDayFirstStr,
                     yearKoreanStr, monthKoreanStr, dayKoreanStr,
                     yearYMDStr, monthYMDStr, dayYMDStr,
-                    part1MDYStr, part2MDYStr, yearMDYStr,
-                    koreanAmPmStr,
-                    hourStr, minuteStr, secondStr,
-                    ampmStr,
-                    tzStr
-                ] = match;
+                    part1MDYStr, part2MDYStr, yearMDYStr
+                ] = dateParts;
 
                 let year, monthIndex, day;
                 let parsedDateSuccessfully = false;

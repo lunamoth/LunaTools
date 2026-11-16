@@ -5331,6 +5331,15 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const handleSaveAndCloseAll = async () => {
+        // Capture the panel window's active tab on invocation. Focus can move
+        // to another window while the confirmation or storage write is pending.
+        let originalTabId = null;
+        try {
+          const [originalTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (Number.isInteger(originalTab?.id) && originalTab.id >= 0) originalTabId = originalTab.id;
+        } catch (error) {
+          console.warn('LunaTools: 세션 정리를 시작한 탭을 확인하지 못했습니다.', error);
+        }
         const initialSnapshot = await getTabsSnapshot(CONSTANTS.SAVE_SCOPES.ALL_WINDOWS);
         if (initialSnapshot.captureFailed) return;
         if (initialSnapshot.tabs.length === 0) {
@@ -5398,16 +5407,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 renderSessions();
                 const name = savedSession.name;
+                if (originalTabId === null) {
+                  showToast(`⚠️ '${name}' 세션을 저장했습니다. 시작할 때의 현재 탭을 확인할 수 없어 모든 탭을 열어 두었습니다.`,
+                    CONSTANTS.UI.TOAST_DURATION * 1.5);
+                  return;
+                }
                 try {
                   const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-                  const protectedTabIds = new Set(Number.isInteger(activeTab?.id) ? [activeTab.id] : []);
+                  const protectedTabIds = new Set([originalTabId]);
+                  if (Number.isInteger(activeTab?.id)) protectedTabIds.add(activeTab.id);
                   const verifiedCandidates = [];
                   let changedCount = 0;
                   let protectedSplitViewCount = 0;
                   let protectedSharedGroupCount = 0;
 
                   for (const candidate of snapshot.closingCandidates) {
-                    if (protectedTabIds.has(candidate.id)) continue;
+                    if (protectedTabIds.has(candidate.id)) {
+                      if (candidate.id !== originalTabId) changedCount++;
+                      continue;
+                    }
                     if (getSessionTabSplitViewId(candidate) >= 0) {
                       protectedSplitViewCount++;
                       continue;
@@ -5435,15 +5453,12 @@ document.addEventListener('DOMContentLoaded', function() {
                   // a tab that was selected and then left before the live state read.
                   const [latestActiveTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
                   if (Number.isInteger(latestActiveTab?.id)) protectedTabIds.add(latestActiveTab.id);
-                  for (const candidate of verifiedCandidates) {
-                    if (!protectedTabIds.has(candidate.id) &&
-                        tabInteractionTracker.hasInteracted(candidate.id)) {
-                      protectedTabIds.add(candidate.id);
-                      changedCount++;
-                    }
-                  }
                   const candidatesToClose = verifiedCandidates
-                    .filter(candidate => !protectedTabIds.has(candidate.id))
+                    .filter(candidate => {
+                      if (!protectedTabIds.has(candidate.id) && !tabInteractionTracker.hasInteracted(candidate.id)) return true;
+                      changedCount++;
+                      return false;
+                    })
                     .sort((a, b) => {
                       if (a.windowId !== b.windowId) return a.windowId - b.windowId;
 

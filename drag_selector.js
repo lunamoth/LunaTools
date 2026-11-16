@@ -7,7 +7,7 @@
         let normalizedEntry = entry;
         const authority = entry.split(/[/?#]/u, 1)[0];
         // URL.hostname은 국제화 도메인을 ASCII로 반환합니다. 같은 URL 파서로
-        // 호스트 부분을 먼저 정규화하되 기존 ASCII 규칙·키워드 판별은 유지합니다.
+        // 호스트 부분을 먼저 정규화합니다.
         if (/[^\x00-\x7F]/u.test(authority)) {
             if (/[\s@\\]/u.test(authority)) return false;
             try {
@@ -19,14 +19,9 @@
             }
         }
 
-        return (
-            /^[a-z0-9.-]+(?::\d+)?(?:[/?#].*)?$/i.test(normalizedEntry) &&
-            (
-                normalizedEntry.includes('.') ||
-                /^localhost(?::|[/?#]|$)/i.test(normalizedEntry) ||
-                /^\d{1,3}(?:\.\d{1,3}){3}(?::|[/?#]|$)/.test(normalizedEntry)
-            )
-        );
+        // 이 설정은 호스트 전용입니다. 내부망의 단일 레이블과 IPv6도 URL
+        // 파서에 전달해야 브라우저가 반환하는 표준 호스트 이름과 비교할 수 있습니다.
+        return /^(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])(?::\d+)?(?:[/?#].*)?$/i.test(normalizedEntry);
     };
 
     const parseHostnameRule = (rawRule) => {

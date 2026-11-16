@@ -720,6 +720,16 @@ async function handleGestureAction(gesture, tabId) {
   }
 }
 
+function isSplitViewTab(tab) {
+  return Number.isInteger(tab.splitViewId) && tab.splitViewId >= 0;
+}
+
+async function mayMoveTabIndividually(id, sourceWindowId, expectedPinned) {
+  const tab = await chrome.tabs.get(id);
+  return tab.windowId === sourceWindowId && Boolean(tab.pinned) === expectedPinned &&
+    !(tab.groupId >= 0) && !isSplitViewTab(tab);
+}
+
 class TabManager {
   constructor() {
     this.urlCache = new Map();
@@ -928,7 +938,7 @@ class TabManager {
       // Chrome Split View의 두 탭은 하나의 레이아웃입니다. 개별 tabs.move()
       // 정렬은 쌍을 분리하여 Split View를 해제할 수 있으므로 원형을 보존합니다.
       // Split View API가 없는 이전 Chrome에서는 splitViewId가 undefined입니다.
-      if (allTabsInWindow.some(tab => Number.isInteger(tab.splitViewId) && tab.splitViewId >= 0)) {
+      if (allTabsInWindow.some(isSplitViewTab)) {
         console.warn('LunaTools: 분할 보기(Split View)를 유지하기 위해 이 창의 탭 정렬을 건너뜁니다.');
         return;
       }
@@ -1010,11 +1020,22 @@ class TabManager {
 
       let targetIndex = pinnedTabs.length;
       for (const unit of sortedUnits) {
+        // Omitting the destination keeps this a same-window reorder even if a
+        // user moves the tab or group after the last read but before dispatch.
+        let moved;
         if (unit.type === 'group') {
-          await chrome.tabGroups.move(unit.id, { windowId, index: targetIndex });
+          const members = await chrome.tabs.query({ windowId, groupId: unit.id });
+          const expectedMembers = new Set(unit.tabs.map(tab => tab.id));
+          // Membership changes invalidate the plan for this group and the later slots.
+          if (members.length !== expectedMembers.size ||
+              members.some(tab => isSplitViewTab(tab) || !expectedMembers.has(tab.id))) return;
+          moved = await chrome.tabGroups.move(unit.id, { index: targetIndex });
         } else if (typeof unit.id === 'number') {
-          await chrome.tabs.move(unit.id, { windowId, index: targetIndex });
+          if (!(await mayMoveTabIndividually(unit.id, windowId, false))) return;
+          moved = await chrome.tabs.move(unit.id, { index: targetIndex });
         }
+        const result = Array.isArray(moved) ? moved[0] : moved;
+        if (result && result.windowId !== windowId) return;
         targetIndex += unit.tabs.length;
       }
 
@@ -1368,7 +1389,7 @@ class TabManager {
 
   async mergeAllWindows(preferredTargetWindowId = null) {
     try {
-      const allWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+      const allWindows = await chrome.windows.getAll({ populate: false, windowTypes: ['normal'] });
       if (allWindows.length <= 1) {
         if (allWindows.length === 1 && typeof allWindows[0]?.id === 'number') {
           await this._sortAndMoveTabsInWindow(allWindows[0].id);
@@ -1377,35 +1398,24 @@ class TabManager {
       }
 
       const targetWindowId = await this._resolveTargetWindowId(preferredTargetWindowId);
-      if (targetWindowId == null) {
-        return;
-      }
+      const targetWindow = allWindows.find(win => win.id === targetWindowId);
+      if (!targetWindow) return;
+      // A normal and an incognito window cannot exchange tabs or tab groups.
+      const sourceWindowIds = new Set(allWindows
+        .filter(win => win.id !== targetWindowId && win.incognito === targetWindow.incognito)
+        .map(win => win.id));
 
       // 다른 창으로 분할 보기의 탭을 개별 이동하면 원래의 분할 화면이
       // 해제될 수 있습니다. 단 하나라도 있으면 일부만 합치는 대신 중단합니다.
       // getAll() 이후 변경된 분할 상태도 이동 전에 다시 조회합니다.
-      const sourceTabsBeforeMove = await chrome.tabs.query({ windowType: 'normal' });
-      if (sourceTabsBeforeMove.some(tab =>
-        tab.windowId !== targetWindowId &&
-        Number.isInteger(tab.splitViewId) && tab.splitViewId >= 0
-      )) {
+      const sourceTabsBeforeMove = (await chrome.tabs.query({ windowType: 'normal' }))
+        .filter(tab => sourceWindowIds.has(tab.windowId));
+      if (sourceTabsBeforeMove.some(isSplitViewTab)) {
         console.warn('LunaTools: 다른 창의 분할 보기(Split View)를 유지하기 위해 창 합치기를 중단합니다.');
         return;
       }
 
-      const tabsToMoveDetails = allWindows.flatMap(win =>
-        (win.id !== targetWindowId && win.tabs)
-          ? win.tabs
-              .filter(tab => typeof tab.id === 'number')
-              .map(tab => ({
-                id: tab.id,
-                windowId: win.id,
-                pinned: !!tab.pinned,
-                groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1,
-                index: typeof tab.index === 'number' ? tab.index : 0
-              }))
-          : []
-      );
+      const tabsToMoveDetails = sourceTabsBeforeMove.filter(tab => Number.isInteger(tab.id));
       
       if (tabsToMoveDetails.length > 0) {
           const sortBySourceWindowAndIndex = (a, b) => {
@@ -1452,9 +1462,11 @@ class TabManager {
 
           const targetTabsBeforeMove = await chrome.tabs.query({ windowId: targetWindowId });
           let nextPinnedInsertIndex = targetTabsBeforeMove.filter(tab => tab.pinned).length;
-
+          // Another move can take long enough for the user to regroup or split
+          // the next tab. Recheck before moving it out of its source window.
           for (const tabDetail of pinnedTabsToMove) {
               try {
+                  if (!(await mayMoveTabIndividually(tabDetail.id, tabDetail.windowId, true))) continue;
                   let movedTab = await chrome.tabs.move(tabDetail.id, { windowId: targetWindowId, index: nextPinnedInsertIndex });
                   if (movedTab?.pinned === false && typeof movedTab.id === 'number') {
                       const repinnedTab = await chrome.tabs.update(movedTab.id, { pinned: true });
@@ -1469,8 +1481,11 @@ class TabManager {
           for (const moveUnit of unpinnedMoveUnits) {
               try {
                   if (moveUnit.type === 'group') {
+                      const members = await chrome.tabs.query({ windowId: moveUnit.windowId, groupId: moveUnit.id });
+                      if (members.length === 0 || members.some(isSplitViewTab)) continue;
                       await chrome.tabGroups.move(moveUnit.id, { windowId: targetWindowId, index: -1 });
                   } else {
+                      if (!(await mayMoveTabIndividually(moveUnit.id, moveUnit.windowId, false))) continue;
                       await chrome.tabs.move(moveUnit.id, { windowId: targetWindowId, index: -1 });
                   }
               } catch (err) {
@@ -1487,10 +1502,9 @@ class TabManager {
       }
 
       const remainingWindows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-      const windowsToClose = remainingWindows.filter(win => {
-        if (win.id === targetWindowId) return false;
-        return !win.tabs || win.tabs.length === 0;
-      });
+      const windowsToClose = remainingWindows.filter(win =>
+        sourceWindowIds.has(win.id) && win.tabs?.length === 0
+      );
 
       if (windowsToClose.length > 0) {
           const closePromises = windowsToClose.map(win =>
