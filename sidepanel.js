@@ -485,6 +485,8 @@ document.addEventListener('DOMContentLoaded', function() {
             isTransitioning: false,
             isInitialLoad: true,
             currentRunId: 0,
+            // Keep every tab of one run in the browser window that owns this panel.
+            targetWindowId: null,
             isPreparingRun: false,
             runOptionsReady: false,
             processingRunId: null,
@@ -3033,7 +3035,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 hasSafeNavigationState;
         };
 
-        async function createAndDiscardTab(url, interactionTracker = null) {
+        async function createAndDiscardTab(url, targetWindowId, interactionTracker = null) {
             const normalizedUrl = normalizeUrlForOpening(url);
             if (!normalizedUrl) {
                 throw new Error('지원하지 않는 URL 형식입니다.');
@@ -3042,7 +3044,9 @@ document.addEventListener('DOMContentLoaded', function() {
             let createdTab = null;
 
             try {
-                const newTab = await chrome.tabs.create({ url: normalizedUrl, active: false });
+                const newTab = await chrome.tabs.create({
+                    windowId: targetWindowId, url: normalizedUrl, active: false
+                });
                 if (!Number.isInteger(newTab?.id)) {
                     throw new Error('새 탭의 식별자를 확인할 수 없습니다.');
                 }
@@ -3177,11 +3181,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 let allowRedirectedCleanup = false;
 
                 if (UI.delayLoadingCheckbox && UI.delayLoadingCheckbox.checked) {
-                    const creationResult = await createAndDiscardTab(urlToOpen, tabInteractionTracker);
+                    const creationResult = await createAndDiscardTab(
+                        urlToOpen, state.targetWindowId, tabInteractionTracker
+                    );
                     createdTab = creationResult.tab;
                     allowRedirectedCleanup = creationResult.allowRedirectedCleanup === true;
                 } else {
-                    createdTab = await chrome.tabs.create({ url: urlToOpen, active: (UI.focusLockCheckbox ? !UI.focusLockCheckbox.checked : true) });
+                    createdTab = await chrome.tabs.create({
+                        windowId: state.targetWindowId,
+                        url: urlToOpen,
+                        active: (UI.focusLockCheckbox ? !UI.focusLockCheckbox.checked : true)
+                    });
                     tabInteractionTracker.watchMovement(createdTab);
                 }
 
@@ -3272,10 +3282,30 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 showSkippedUrlNotice(prepared);
 
+                // Resolve this panel's current browser window explicitly, rather
+                // than relying on implicit current-window resolution inside each
+                // asynchronous tab creation. Keep a long or paused run bound to
+                // the same window, even if that window is closed mid-run.
+                let targetWindow;
+                try {
+                    targetWindow = await chrome.windows.getCurrent({ populate: false });
+                } catch (error) {
+                    console.warn('LunaTools: URL 실행 대상 창 조회 실패', error);
+                }
+                if (preparationCancelled()) {
+                    Toast.show('입력 목록이 변경되어 실행 준비를 취소했습니다. 다시 실행해 주세요.', 'info');
+                    return;
+                }
+                if (!Number.isInteger(targetWindow?.id) || targetWindow.type !== 'normal') {
+                    Toast.show('URL을 열 일반 브라우저 창을 확인하지 못했습니다. 다시 시도해 주세요.', 'error', 5000);
+                    return;
+                }
+
                 clearTimeout(state.intervalId);
                 state.intervalId = null;
                 Object.assign(state, {
                     currentUrlIndex: 0, isPaused: false, errorCount: 0,
+                    targetWindowId: targetWindow.id,
                     processingRunId: null, completionRunId: null
                 });
                 state.currentRunId += 1;
