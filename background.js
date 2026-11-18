@@ -309,8 +309,10 @@ function isExchangeRateDataCurrent(table, now = Date.now()) {
 
 function wasExchangeRateTableCheckedRecently(table, now = Date.now()) {
   if (!table || !Number.isFinite(table.timestamp)) return false;
-  const age = Math.max(0, now - table.timestamp);
-  return age < EXCHANGE_RATE_STALE_RETRY_INTERVAL_MS;
+  // 시스템 시계를 뒤로 돌리거나 다른 장치에서 미래의 타임스탬프가 저장되면
+  // 해당 데이터를 방금 확인한 것으로 오인해서 환율 갱신을 장기간 억제할 수 있습니다.
+  const age = now - table.timestamp;
+  return age >= 0 && age < EXCHANGE_RATE_STALE_RETRY_INTERVAL_MS;
 }
 
 function normalizeExchangeRateTable(candidate) {
@@ -357,8 +359,9 @@ function normalizeExchangeRateTable(candidate) {
 
 function isExchangeRateTableFresh(table, now = Date.now()) {
   if (!table || !Number.isFinite(table.timestamp)) return false;
-  const age = Math.max(0, now - table.timestamp);
-  return age < EXCHANGE_RATE_CACHE_DURATION_MS && isExchangeRateDataCurrent(table, now);
+  // 음수 경과시간은 유효한 캐시 사용기간이 아닙니다. 시계 변경 시 재검증합니다.
+  const age = now - table.timestamp;
+  return age >= 0 && age < EXCHANGE_RATE_CACHE_DURATION_MS && isExchangeRateDataCurrent(table, now);
 }
 
 function calculateExchangeRate(table, fromCurrency, toCurrency) {

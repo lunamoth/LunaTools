@@ -3692,8 +3692,9 @@ async function lunaToolsWriteTextToClipboard(text) {
         },
         _isFreshTimestamp: function(timestamp, now = Date.now()) {
             if (!Number.isFinite(timestamp) || timestamp <= 0) return false;
-            const age = Math.max(0, now - timestamp);
-            return age < Config.EXCHANGE_RATE_CACHE_DURATION_MS;
+            // 시스템 시계가 이전으로 바뀐 경우 미래 타임스탬프를 최신으로 취급하지 않습니다.
+            const age = now - timestamp;
+            return age >= 0 && age < Config.EXCHANGE_RATE_CACHE_DURATION_MS;
         },
         _normalizeExchangeRateTable: function(candidate) {
             if (!candidate || typeof candidate !== 'object') return null;
