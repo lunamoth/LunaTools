@@ -1621,6 +1621,13 @@ async function lunaToolsWriteTextToClipboard(text) {
           } else {
           }
         } finally {
+          if (enteredPictureInPicture && overrideState.playbackChanged) {
+            // A small paused video may need a temporary muted play() to make
+            // PiP available. Restore its original sound state as soon as PiP
+            // starts; otherwise the entire PiP session stays unintentionally
+            // silent until the user closes the floating player.
+            try { targetVideo.muted = overrideState.muted; } catch (_) {}
+          }
           if (!enteredPictureInPicture) {
             this._restoreVideoState(targetVideo, overrideState);
           }

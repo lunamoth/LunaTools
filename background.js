@@ -1485,7 +1485,12 @@ class TabManager {
               try {
                   if (moveUnit.type === 'group') {
                       const members = await chrome.tabs.query({ windowId: moveUnit.windowId, groupId: moveUnit.id });
-                      if (members.length === 0 || members.some(isSplitViewTab)) continue;
+                      // A user may regroup tabs while other units are moving.
+                      // Never pull newly added tabs into a different window or
+                      // move a partially changed group based on a stale snapshot.
+                      const expectedMembers = new Set(moveUnit.tabs.map(tab => tab.id));
+                      if (members.length !== expectedMembers.size ||
+                          members.some(tab => isSplitViewTab(tab) || !expectedMembers.has(tab.id))) continue;
                       await chrome.tabGroups.move(moveUnit.id, { windowId: targetWindowId, index: -1 });
                   } else {
                       if (!(await mayMoveTabIndividually(moveUnit.id, moveUnit.windowId, false))) continue;
