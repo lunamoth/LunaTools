@@ -959,12 +959,16 @@ class TabManager {
       const groupedUnitsById = new Map();
 
       for (const tab of unpinnedTabs) {
+        // 탭 조회 결과의 현재 URL을 우선합니다. 탭 갱신 이벤트 처리보다
+        // 사용자가 정렬을 먼저 요청할 수 있으므로, 기존 캐시가 있더라도
+        // 이전 주소를 정렬 키로 사용해서는 안 됩니다.
+        const parsedUrl = this._tryParseUrl(this._getTabUrlString(tab));
         const cachedInfo = this.urlCache.get(tab.id);
-        let parsedUrl = cachedInfo?.url;
         if (!parsedUrl) {
-          const urlString = this._getTabUrlString(tab);
-          parsedUrl = this._tryParseUrl(urlString);
-          if (parsedUrl && this._isValidTabForProcessing(tab)) {
+          if (cachedInfo) this._removeUrlFromCache(tab.id, cachedInfo.url);
+        } else if (!cachedInfo || cachedInfo.url.href !== parsedUrl.href || cachedInfo.windowId !== tab.windowId) {
+          if (cachedInfo) this._removeUrlFromCache(tab.id, cachedInfo.url);
+          if (this._isValidTabForProcessing(tab)) {
             this._addUrlToCache(tab.id, parsedUrl, tab.windowId);
           }
         }
