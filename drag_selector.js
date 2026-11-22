@@ -107,7 +107,6 @@
         #indicatorLabel = null;
         #isTrustedSequence = false;
         #activeDelayedOpenController = null;
-        #lastObservedScrollY = null;
         #dragBody = null;
         #mouseDownEvent = null;
         #pointerReleaseTimer = null;
@@ -327,23 +326,19 @@
             if (performance.now() >= deadline) throw DRAG_WORK_BUDGET_EXCEEDED;
         }
 
-        #isElementIntersecting(element, selectionRect, deadline) {
-            const clientRects = element.getClientRects();
-            for (let i = 0; i < clientRects.length; i++) {
-                this.#checkWorkBudget(deadline);
-                if (this.#isRectIntersecting(clientRects[i], selectionRect)) return true;
-            }
-            return false;
-        }
+        #hasVisibleLinkRect(element, selectionRect = null, deadline = null) {
+            if (!element?.isConnected) return false;
+            for (const rect of element.getClientRects()) {
+                if (deadline !== null) this.#checkWorkBudget(deadline);
+                if (rect.width <= 0 || rect.height <= 0 ||
+                    (selectionRect && !this.#isRectIntersecting(rect, selectionRect))) continue;
 
-        #isElementVisible(element, deadline) {
-            const clientRects = element.getClientRects();
-            if (!clientRects || clientRects.length === 0) return false;
-            const style = window.getComputedStyle(element);
-            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-            for (let i = 0; i < clientRects.length; i++) {
-                this.#checkWorkBudget(deadline);
-                if (clientRects[i].width > 0 && clientRects[i].height > 0) return true;
+                if (typeof element.checkVisibility === 'function') {
+                    return element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+                }
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none' && style.visibility !== 'hidden' &&
+                    style.visibility !== 'collapse' && style.opacity !== '0';
             }
             return false;
         }
@@ -379,25 +374,6 @@
             return new Promise(resolve => {
                 setTimeout(() => resolve(this.#isLinkScanTaskUsable(task)), 0);
             });
-        }
-
-        #isElementVisibleWithoutBudget(element) {
-            const clientRects = element.getClientRects();
-            if (!clientRects || clientRects.length === 0) return false;
-            const style = window.getComputedStyle(element);
-            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-            for (let i = 0; i < clientRects.length; i++) {
-                if (clientRects[i].width > 0 && clientRects[i].height > 0) return true;
-            }
-            return false;
-        }
-
-        #isElementIntersectingWithoutBudget(element, selectionRect) {
-            const clientRects = element.getClientRects();
-            for (let i = 0; i < clientRects.length; i++) {
-                if (this.#isRectIntersecting(clientRects[i], selectionRect)) return true;
-            }
-            return false;
         }
 
         #startLinkScan(rootNode) {
@@ -451,7 +427,7 @@
                         }
                         const url = this.#getLinkUrl(element);
                         if (url && !url.href.startsWith(window.location.href + '#') &&
-                            ['http:', 'https:'].includes(url.protocol) && this.#isElementVisibleWithoutBudget(element)) {
+                            ['http:', 'https:'].includes(url.protocol) && this.#hasVisibleLinkRect(element)) {
                             task.links.push(element);
                         }
                     }
@@ -474,7 +450,7 @@
             const { MAX_SCAN_SLICE_MS, MAX_SCAN_SLICE_ELEMENTS } = DragSelector.CONFIG.TIMING;
             for (const link of links) {
                 if (!this.#isLinkScanTaskUsable(task)) return null;
-                if (link?.isConnected && this.#isElementIntersectingWithoutBudget(link, selectionRect)) {
+                if (this.#hasVisibleLinkRect(link, selectionRect)) {
                     selected.add(link);
                 }
                 sliceElements += 1;
@@ -513,8 +489,7 @@
                             ['http:', 'https:'].includes(url.protocol) &&
                             !url.username && !url.password && url.hostname &&
                             url.href.length <= MAX_URL_LENGTH && !seenUrls.has(url.href) &&
-                            this.#isElementVisibleWithoutBudget(element) &&
-                            this.#isElementIntersectingWithoutBudget(element, selectionRect)) {
+                            this.#hasVisibleLinkRect(element, selectionRect)) {
                             seenUrls.add(url.href);
                             selected.add(element);
                             if (selected.size > MAX_URLS_PER_ACTION) {
@@ -613,39 +588,22 @@
         #handleAutoScroll() {
             const { clientY } = this.#lastMouseEvent;
             const C = DragSelector.CONFIG.BEHAVIOR;
-            const scrollYBeforeRequest = window.scrollY;
-
-            // 이전 프레임 이후 실제로 이동한 만큼만 원점을 보정합니다.
-            // 경계에서 scrollBy()가 0px 이동하거나 smooth-scroll이 지연되어도 오차가 누적되지 않습니다.
-            if (Number.isFinite(this.#lastObservedScrollY)) {
-                this.#startPos.y -= scrollYBeforeRequest - this.#lastObservedScrollY;
-            }
-
             let scrollAmount = 0;
             if (clientY < C.AUTO_SCROLL_ZONE) scrollAmount = -C.AUTO_SCROLL_SPEED;
             else if (clientY > window.innerHeight - C.AUTO_SCROLL_ZONE) scrollAmount = C.AUTO_SCROLL_SPEED;
             if (scrollAmount !== 0) {
                 window.scrollBy(0, scrollAmount);
             }
-
-            const scrollYAfterRequest = window.scrollY;
-            this.#startPos.y -= scrollYAfterRequest - scrollYBeforeRequest;
-            this.#lastObservedScrollY = scrollYAfterRequest;
         }
 
         #updateVisuals() {
             const { clientX, clientY } = this.#lastMouseEvent;
-            const { x: startX, y: startY } = this.#startPos;
-            const left = Math.min(startX, clientX);
-            const top = Math.min(startY, clientY);
-            const width = Math.abs(clientX - startX);
-            const height = Math.abs(clientY - startY);
-            
+            const { left, right, top, bottom } = this.#getSelectionRect();
             this.#selectionBox.style.left = `${left}px`;
             this.#selectionBox.style.top = `${top}px`;
-            this.#selectionBox.style.width = `${width}px`;
-            this.#selectionBox.style.height = `${height}px`;
-            
+            this.#selectionBox.style.width = `${right - left}px`;
+            this.#selectionBox.style.height = `${bottom - top}px`;
+
             this.#actionIndicator.style.left = `${clientX}px`;
             this.#actionIndicator.style.top = `${clientY}px`;
         }
@@ -656,15 +614,13 @@
 
         #getSelectionRect() {
             const { clientX, clientY } = this.#lastMouseEvent;
-            // 선택 상자의 테두리·확대 애니메이션·렌더링 시점은 실행 범위에
-            // 영향을 주지 않습니다. 마지막 프레임 이후의 스크롤도 반영합니다.
-            const scrollDeltaY = Number.isFinite(this.#lastObservedScrollY)
-                ? window.scrollY - this.#lastObservedScrollY
-                : 0;
-            const startY = this.#startPos.y - scrollDeltaY;
+            // The press belongs to a point in the document. Hit testing and
+            // the fixed overlay both use its current viewport coordinates.
+            const startX = this.#startPos.x - window.scrollX;
+            const startY = this.#startPos.y - window.scrollY;
             return {
-                left: Math.min(this.#startPos.x, clientX),
-                right: Math.max(this.#startPos.x, clientX),
+                left: Math.min(startX, clientX),
+                right: Math.max(startX, clientX),
                 top: Math.min(startY, clientY),
                 bottom: Math.max(startY, clientY)
             };
@@ -675,7 +631,7 @@
             const deadline = performance.now() + DragSelector.CONFIG.TIMING.MAX_SYNC_WORK_MS;
             for (const link of this.#allLinksOnPage) {
                 this.#checkWorkBudget(deadline);
-                if (this.#isElementIntersecting(link, selectionRect, deadline)) {
+                if (this.#hasVisibleLinkRect(link, selectionRect, deadline)) {
                     linksInRect.add(link);
                 }
             }
@@ -889,7 +845,6 @@
             this.#lastMouseEvent = null;
             this.#indicatorLabel = null;
             this.#isTrustedSequence = false;
-            this.#lastObservedScrollY = null;
             this.#dragBody = null;
             this.#mouseDownEvent = null;
             this.#pointerReleaseTimer = null;
@@ -963,7 +918,6 @@
                     clearTimeout(this.#outsideDocumentTimer);
                     this.#outsideDocumentTimer = null;
                 }
-                this.#lastObservedScrollY = window.scrollY;
             }
 
             // Chromium/사이트가 compatibility mousemove를 전달하지 못하는
@@ -991,7 +945,6 @@
                 cancelAnimationFrame(this.#animationFrameId);
                 this.#animationFrameId = null;
             }
-            this.#lastObservedScrollY = window.scrollY;
 
             if (this.#outsideDocumentTimer !== null) clearTimeout(this.#outsideDocumentTimer);
             const startEvent = this.#mouseDownEvent;
@@ -1019,7 +972,6 @@
             }
 
             this.#lastMouseEvent = e;
-            this.#lastObservedScrollY = window.scrollY;
             if (this.#isDragging && this.#animationFrameId === null) this.#updateOnFrame();
         }
 
@@ -1054,9 +1006,8 @@
             this.#mouseDownEvent = e;
             this.#gestureStartedAt = Date.now();
             this.#armGestureWatchdog();
-            this.#startPos = { x: e.clientX, y: e.clientY };
+            this.#startPos = { x: e.clientX + window.scrollX, y: e.clientY + window.scrollY };
             this.#lastMouseEvent = e;
-            this.#lastObservedScrollY = window.scrollY;
         }
 
         #handleMouseMove(e) {
@@ -1073,7 +1024,7 @@
                 return;
             }
             
-            const dragDistance = Math.hypot(e.clientX - this.#startPos.x, e.clientY - this.#startPos.y);
+            const dragDistance = Math.hypot(e.clientX - this.#mouseDownEvent.clientX, e.clientY - this.#mouseDownEvent.clientY);
             if (dragDistance > DragSelector.CONFIG.BEHAVIOR.MIN_DRAG_DISTANCE) {
                 try {
                     // 링크가 많은 페이지에서도 한 이벤트 턴을 32ms 이상 점유하거나

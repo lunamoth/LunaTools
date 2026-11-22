@@ -1660,7 +1660,8 @@ async function lunaToolsWriteTextToClipboard(text) {
 
     _handleKeyDown(event) {
       if (!event.isTrusted || event.repeat || event.defaultPrevented || event.isComposing || event.altKey || event.metaKey) return;
-      if (!(event.ctrlKey && event.shiftKey && event.key.toUpperCase() === PictureInPictureHandler.PIP_KEY)) {
+      if (!(event.ctrlKey && event.shiftKey &&
+          (event.code === 'KeyP' || event.key?.toUpperCase() === PictureInPictureHandler.PIP_KEY))) {
         return;
       }
       if (lunaToolsIsProtectedInputEvent(event, { allowNonEditableControls: true })) {
@@ -1745,7 +1746,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                 { names: ['kg', '킬로그램'], target_unit_code: 'lb', factor: 1/0.453592, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(kg|킬로그램)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, is_metric: true, target_unit_name: '파운드', category: 'mass' },
             ],
             volume: [
-                { names: ['fluid ounce', '액량온스', 'fl oz'], target_unit_code: 'mL', factor: 29.5735, to_base_unit_factor: 0.0295735, regex: /([\d\.,]+)\s*(fl(?:uid)?\s*oz\.?|액량온스|플루이드온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume', target_precision: 0 },
+                { names: ['fluid ounce', '액량온스', 'fl oz'], target_unit_code: 'mL', factor: 29.5735, to_base_unit_factor: 0.0295735, regex: /([\d\.,]+)\s*(fluid\s+ounces?|fl(?:uid)?\.?\s*oz\.?|액량온스|플루이드온스)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume', target_precision: 0 },
                 { names: ['pint', 'pints', 'pt', '파인트'], target_unit_code: 'L', factor: 0.473176, to_base_unit_factor: 0.473176, regex: /([\d\.,]+)\s*(pint(?:s)?|pt|파인트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume' },
                 { names: ['quart', 'quarts', 'qt', '쿼트'], target_unit_code: 'L', factor: 0.946353, to_base_unit_factor: 0.946353, regex: /([\d\.,]+)\s*(quart(?:s)?|qt|쿼트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume' },
                 { names: ['gallon', 'gallons', 'gal', '갤런'], target_unit_code: 'L', factor: 3.78541, to_base_unit_factor: 3.78541, regex: /([\d\.,]+)\s*(gallon(?:s)?|gal|갤런)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'volume' },
@@ -1753,8 +1754,8 @@ async function lunaToolsWriteTextToClipboard(text) {
                 { names: ['L', '리터'], target_unit_code: 'gallon', factor: 1/3.78541, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(L|l|리터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!b)(?!k)(?!s)/giu, is_metric: true, target_unit_name: '갤런', category: 'volume' },
             ],
             temperature: [
-                { names: ['Fahrenheit', 'F', '화씨'], target_unit_code: '°C', regex: /(-?[\d\.,]+)\s*(°F\b|F\b(?!t|l\b|r\b|o\b)|화씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val - 32) * 5 / 9, target_unit_name: '섭씨', category: 'temperature' },
-                { names: ['Celsius', 'C', '섭씨'], target_unit_code: '°F', regex: /(-?[\d\.,]+)\s*(°C\b|\bC\b(?![a-zA-Z])|섭씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val * 9 / 5) + 32, target_unit_name: '화씨', category: 'temperature' }
+                { names: ['Fahrenheit', 'F', '화씨'], target_unit_code: '°C', regex: /(-?[\d\.,]+)\s*((?:degrees?\s+)?Fahrenheit\b|°?F\b|화씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val - 32) * 5 / 9, target_unit_name: '섭씨', category: 'temperature' },
+                { names: ['Celsius', 'C', '섭씨'], target_unit_code: '°F', regex: /(-?[\d\.,]+)\s*((?:degrees?\s+)?Celsius\b|°?C\b|섭씨(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣]))/giu, convert_func: (val) => (val * 9 / 5) + 32, target_unit_name: '화씨', category: 'temperature' }
             ],
             area: [
                 { names: ['m²', 'm2', '㎡', 'sq m', 'sqm', '제곱미터'], target_unit_code: '평', factor: 0.3025, to_base_unit_factor: 1, regex: /([\d\.,]+)\s*(㎡|m(?:²|2|\^\s*2)|sq\.?\s*m|sqm|square\s+met(?:er|re)s?|제곱미터)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: 'ft²', from_base_unit_factor: 1/0.09290304, precision: 2 }], category: 'area', target_precision: 2 },
@@ -1868,7 +1869,7 @@ async function lunaToolsWriteTextToClipboard(text) {
     );
     const LEADING_NUMERIC_SIGN_REGEX = /^[+\-\u2212\uFE63\uFF0D]/u;
     const NUMERIC_VALUE_BEFORE_SIGN_REGEX = new RegExp(
-        `(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})\\s*$`,
+        `(?:${NUMERIC_CONTEXT_VALUE_PATTERN_SOURCE})(?:[\\t\\p{Zs}]*(?:${CURRENCY_CONTEXT_TOKEN_PATTERN_SOURCE}))?[\\t\\p{Zs}]*$`,
         'iu'
     );
     const PHYSICAL_UNIT_REGEX_CACHE = new WeakMap();
@@ -3828,7 +3829,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                     throw new Error(UI_STRINGS.ERROR_FETCH_RATE_API_PROCESSING('Invalid or incomplete exchange-rate table from background.'));
                 }
 
-                // background.js가 chrome.storage.local.set() 완료 후 응답하므로 메모리 캐시만 비웁니다.
+                // 서비스 워커가 영구 저장 또는 메모리 보관을 담당하므로 이 문서의 캐시만 비웁니다.
                 AppState.exchangeRateCache.clear();
                 return table;
             }).finally(() => {
@@ -3873,7 +3874,7 @@ async function lunaToolsWriteTextToClipboard(text) {
                 rate: cached.rate,
                 date: cached.date,
                 stale,
-                refreshing: response.data.refreshing === true || stale
+                refreshing: response.data.refreshing === true
             };
         },
         _loadRateFromStorageOrBackground: async function(fromCurrency, toCurrency) {

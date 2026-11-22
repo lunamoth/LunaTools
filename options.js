@@ -82,7 +82,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const SESSION_URL_CONTROL_CHARACTER_REGEX = CONTROL_CHARACTER_REGEX;
     let statusHideTimer = null;
     let dataOperationInProgress = false;
-    let syncOptionsReady = false;
+    let loadedSiteSettings = null;
+    const siteFields = {
+        [STORAGE_KEYS.LOCKED]: lockedSitesTextarea,
+        [STORAGE_KEYS.BLOCKED]: blockedSitesTextarea,
+        [STORAGE_KEYS.DISABLED_DRAG]: disabledDragSitesTextarea
+    };
 
     // --- Helper Functions ---
 
@@ -210,7 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const setDataControlsDisabled = (disabled) => {
-        if (saveButton) saveButton.disabled = disabled || !syncOptionsReady;
+        if (saveButton) saveButton.disabled = disabled || !loadedSiteSettings;
         if (backupButton) backupButton.disabled = disabled;
         if (restoreButton) restoreButton.disabled = disabled;
     };
@@ -268,13 +273,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
-    const getValuesFromTextarea = (textarea, { lowercase = false } = {}) => {
+    const getValuesFromTextarea = (textarea) => {
         if (!textarea) return [];
         return textarea.value
             .split('\n')
             .map(s => s.trim())
-            .filter(Boolean)
-            .map(value => lowercase ? value.toLowerCase() : value);
+            .filter(Boolean);
     };
 
     const normalizeStringArray = (value) => {
@@ -657,71 +661,97 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     };
 
-    const replaceKnownStorageKeys = async (storageArea, knownKeys, desiredData) => {
-        const dataToSet = {};
+    const replaceKnownStorageKeys = async (storageArea, knownKeys, desiredData, previousData) => {
+        const changes = {};
+        const removals = [];
         for (const key of knownKeys) {
-            if (hasOwn(desiredData, key)) dataToSet[key] = desiredData[key];
+            if (hasOwn(desiredData, key)) {
+                if (JSON.stringify(desiredData[key]) !== JSON.stringify(previousData[key])) {
+                    changes[key] = desiredData[key];
+                }
+            } else if (hasOwn(previousData, key)) {
+                removals.push(key);
+            }
         }
 
-        const keysToRemove = knownKeys.filter(key => !hasOwn(desiredData, key));
-        if (keysToRemove.length > 0) {
-            await storageArea.remove(keysToRemove);
+        if (!Object.keys(changes).length) {
+            if (removals.length) await storageArea.remove(removals);
+            return { changed: removals.length > 0, retainedDefaults: false };
         }
 
-        // A full snapshot replaces the known-key set. Remove keys that are not
-        // in the snapshot before writing its data so the old and new large
-        // values do not temporarily coexist and exceed the storage quota.
-        // The caller keeps pre-restore snapshots and rolls them back on failure.
-        if (Object.keys(dataToSet).length > 0) {
-            await storageArea.set(dataToSet);
+        // Commit replacements and resets in one write. If the write is rejected,
+        // earlier sessions and settings are still intact, even at the quota limit.
+        for (const key of removals) {
+            changes[key] = SYNC_KEYS.includes(key) || key === STORAGE_KEYS.SESSIONS ? [] : {};
         }
-    };
-
-    const restoreStorageSnapshots = async (syncSnapshot, localSnapshot) => {
-        const rollbackResults = await Promise.allSettled([
-            replaceKnownStorageKeys(chrome.storage.sync, SYNC_KEYS, syncSnapshot),
-            replaceKnownStorageKeys(chrome.storage.local, LOCAL_KEYS, localSnapshot)
-        ]);
-        return rollbackResults.every(result => result.status === 'fulfilled');
+        await storageArea.set(changes);
+        let preservedSyncUpdate = false;
+        let retainedDefaults = false;
+        if (removals.length) {
+            try {
+                let keysToRemove = removals;
+                if (storageArea === chrome.storage.sync) {
+                    // Device sync can replace a just-written default before cleanup.
+                    const latest = await storageArea.get(removals);
+                    keysToRemove = removals.filter(key => {
+                        if (!hasOwn(latest, key)) return false;
+                        if (Array.isArray(latest[key]) && latest[key].length === 0) return true;
+                        preservedSyncUpdate = true;
+                        return false;
+                    });
+                }
+                if (keysToRemove.length) await storageArea.remove(keysToRemove);
+            } catch (error) {
+                // All consumers treat these empty lists/maps as the missing-key
+                // default. The requested data is already in place.
+                console.warn('LunaTools: 비어 있는 기본값의 키를 삭제하지 못했습니다.', error);
+                retainedDefaults = true;
+            }
+        }
+        return { changed: true, retainedDefaults, preservedSyncUpdate };
     };
 
     // --- Actions ---
 
-    const saveOptions = () => {
-        if (!beginDataOperation()) {
-            showStatus('다른 데이터 작업이 진행 중입니다.', true);
-            return;
-        }
+    const saveOptions = async () => {
+        if (!loadedSiteSettings || !beginDataOperation()) return;
 
-        const settingsToSave = {
-            [STORAGE_KEYS.LOCKED]: getValuesFromTextarea(lockedSitesTextarea, { lowercase: true }),
-            [STORAGE_KEYS.BLOCKED]: getValuesFromTextarea(blockedSitesTextarea),
-            [STORAGE_KEYS.DISABLED_DRAG]: getValuesFromTextarea(disabledDragSitesTextarea, { lowercase: true })
-        };
-
-        if (chrome && chrome.storage && chrome.storage.sync) {
-            try {
-                chrome.storage.sync.set(settingsToSave, () => {
-                    if (chrome.runtime.lastError) {
-                        showStatus(`저장 실패: ${chrome.runtime.lastError.message}`, true);
-                    } else {
-                        showStatus('설정이 저장되었습니다.');
+        // Keep the raw draft so an edit made during an asynchronous write stays visible.
+        const draft = Object.fromEntries(SYNC_KEYS.map(key => [key, siteFields[key].value]));
+        const formValues = Object.fromEntries(SYNC_KEYS.map(key => [key, getValuesFromTextarea(siteFields[key])]));
+        try {
+            const saved = await runWithLocalDataStorageLock(async () => {
+                const stored = await chrome.storage.sync.get(SYNC_KEYS);
+                const current = Object.fromEntries(SYNC_KEYS.map(key => [key, normalizeStringArray(stored[key])]));
+                const changes = {};
+                for (const key of SYNC_KEYS) {
+                    const baseline = JSON.stringify(loadedSiteSettings[key]);
+                    if (JSON.stringify(formValues[key]) === baseline) continue;
+                    const requested = key === STORAGE_KEYS.BLOCKED ? formValues[key] : formValues[key].map(s => s.toLowerCase());
+                    const latest = JSON.stringify(current[key]);
+                    if (latest === JSON.stringify(requested)) continue;
+                    if (latest !== baseline) {
+                        throw new Error('편집한 사이트 목록이 동기화 중에 변경되었습니다. 입력 내용을 복사한 뒤 설정을 다시 열어 비교해주세요.');
                     }
-                    finishDataOperation();
-                });
-            } catch (error) {
-                showStatus(`저장 실패: ${error.message}`, true);
-                finishDataOperation();
+                    changes[key] = requested;
+                }
+                if (Object.keys(changes).length) await chrome.storage.sync.set(changes);
+                return { ...current, ...changes };
+            });
+            loadedSiteSettings = saved;
+            for (const key of SYNC_KEYS) {
+                if (siteFields[key].value === draft[key]) siteFields[key].value = saved[key].join('\n');
             }
-        } else {
-            console.error('Chrome Storage API is not available.');
-            showStatus('저장 기능을 사용할 수 없습니다.', true);
+            showStatus('설정이 저장되었습니다.');
+        } catch (error) {
+            showStatus(`저장 실패: ${error.message}`, true);
+        } finally {
             finishDataOperation();
         }
     };
 
     const restoreOptions = () => {
-        syncOptionsReady = false;
+        loadedSiteSettings = null;
         setDataControlsDisabled(true);
 
         if (chrome && chrome.storage && chrome.storage.sync) {
@@ -740,21 +770,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         // Validate every value before touching the form. A partial update
                         // could otherwise be saved back over settings that failed to load.
-                        const lockedSites = normalizeStringArray(items[STORAGE_KEYS.LOCKED]);
-                        const blockedSites = normalizeStringArray(items[STORAGE_KEYS.BLOCKED]);
-                        const disabledDragSites = normalizeStringArray(items[STORAGE_KEYS.DISABLED_DRAG]);
-                        syncOptionsReady = true;
+                        loadedSiteSettings = Object.fromEntries(
+                            SYNC_KEYS.map(key => [key, normalizeStringArray(items[key])])
+                        );
+                        for (const key of SYNC_KEYS) siteFields[key].value = loadedSiteSettings[key].join('\n');
                         setDataControlsDisabled(false);
-
-                        if (lockedSitesTextarea) {
-                            lockedSitesTextarea.value = lockedSites.join('\n');
-                        }
-                        if (blockedSitesTextarea) {
-                            blockedSitesTextarea.value = blockedSites.join('\n');
-                        }
-                        if (disabledDragSitesTextarea) {
-                            disabledDragSitesTextarea.value = disabledDragSites.join('\n');
-                        }
                     } catch (error) {
                         console.error('Failed to restore options:', error);
                         setDataControlsDisabled(false);
@@ -865,7 +885,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
-                await runWithLocalDataStorageLock(async () => {
+                const restoreResult = await runWithLocalDataStorageLock(async () => {
                     const syncSnapshot = await chrome.storage.sync.get(SYNC_KEYS);
                     const localSnapshot = await chrome.storage.local.get(LOCAL_KEYS);
 
@@ -874,18 +894,51 @@ document.addEventListener('DOMContentLoaded', () => {
                         throw new Error('확인하는 동안 설정 또는 데이터가 변경되어 복원을 중단했습니다. 현재 상태를 확인한 뒤 다시 시도해주세요.');
                     }
 
+                    // Commit sync last. A sync rate/size rejection cannot leave
+                    // changed remote settings that would need another quota-limited write.
+                    const localKeys = backupData.localKeysToReplace;
+                    const localResult = await replaceKnownStorageKeys(
+                        chrome.storage.local, localKeys, backupData.local, localSnapshot
+                    );
                     try {
-                        await replaceKnownStorageKeys(chrome.storage.sync, backupData.syncKeysToReplace, backupData.sync);
-                        await replaceKnownStorageKeys(chrome.storage.local, backupData.localKeysToReplace, backupData.local);
+                        const syncKeys = backupData.syncKeysToReplace;
+                        if (localResult.changed && syncKeys.length) {
+                            // Device sync can update these keys while local data is being written.
+                            const latestSync = await chrome.storage.sync.get(syncKeys);
+                            if (syncKeys.some(key => JSON.stringify(latestSync[key]) !== JSON.stringify(syncSnapshot[key]))) {
+                                throw new Error('로컬 데이터를 복원하는 동안 동기화 설정이 변경되었습니다. 현재 상태를 확인한 뒤 다시 시도해주세요.');
+                            }
+                        }
+                        const syncResult = await replaceKnownStorageKeys(
+                            chrome.storage.sync, syncKeys, backupData.sync, syncSnapshot
+                        );
+                        return {
+                            retainedDefaults: localResult.retainedDefaults || syncResult.retainedDefaults,
+                            preservedSyncUpdate: syncResult.preservedSyncUpdate
+                        };
                     } catch (restoreWriteError) {
-                        rollbackAttempted = true;
-                        rollbackSucceeded = await restoreStorageSnapshots(syncSnapshot, localSnapshot);
+                        if (localResult.changed) {
+                            rollbackAttempted = true;
+                            try {
+                                const localAfterWrite = await chrome.storage.local.get(localKeys);
+                                const result = await replaceKnownStorageKeys(
+                                    chrome.storage.local, localKeys, localSnapshot, localAfterWrite
+                                );
+                                rollbackSucceeded = !result.retainedDefaults;
+                            } catch (rollbackError) {
+                                console.error('LunaTools: 복원 전 로컬 데이터 복구 실패', rollbackError);
+                            }
+                        }
                         throw restoreWriteError;
                     }
                 }, { requireLock: true });
-                
-                showStatus('데이터를 성공적으로 복원했습니다. 페이지가 새로고침됩니다.');
-                
+
+                const messages = ['데이터를 복원했습니다.'];
+                if (restoreResult.preservedSyncUpdate) messages.push('복원 중 새로 동기화된 사이트 목록을 유지했습니다.');
+                if (restoreResult.retainedDefaults) messages.push('일부 빈 항목은 기본값으로 저장되었습니다.');
+                messages.push('페이지가 새로고침됩니다.');
+                showStatus(messages.join(' '));
+
                 // 페이지를 새로고침하여 모든 변경사항을 완전히 적용
                 setTimeout(() => {
                     location.reload();

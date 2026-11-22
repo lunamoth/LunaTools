@@ -41,6 +41,7 @@ const DUPLICATE_TAB_REMOVED_ACTION = 'duplicateTabRemoved';
 const MAX_RECONCILE_TAB_REFERENCES = 300;
 
 let exchangeRateRefreshPromise = null;
+let unsavedExchangeRateTable = null;
 let tabCountBadgeUpdatePromise = null;
 let tabCountBadgeUpdateRequested = false;
 let tabMuteCommandQueue = Promise.resolve();
@@ -395,8 +396,18 @@ function calculateExchangeRate(table, fromCurrency, toCurrency) {
 }
 
 async function getStoredExchangeRateTable() {
-  const stored = await chrome.storage.local.get([EXCHANGE_RATE_STORAGE_KEY]);
-  return normalizeExchangeRateTable(stored[EXCHANGE_RATE_STORAGE_KEY]);
+  try {
+    const stored = await chrome.storage.local.get([EXCHANGE_RATE_STORAGE_KEY]);
+    const table = normalizeExchangeRateTable(stored[EXCHANGE_RATE_STORAGE_KEY]);
+    if (unsavedExchangeRateTable && (!table || unsavedExchangeRateTable.date > table.date ||
+        (unsavedExchangeRateTable.date === table.date && unsavedExchangeRateTable.timestamp > table.timestamp))) {
+      return unsavedExchangeRateTable;
+    }
+    return table;
+  } catch (error) {
+    console.warn('LunaTools: 환율 캐시를 읽지 못했습니다.', error);
+    return unsavedExchangeRateTable;
+  }
 }
 
 function normalizeExchangeRateError(error) {
@@ -456,8 +467,14 @@ async function fetchAndStoreExchangeRateTable() {
         throw new Error('API response error: Invalid or incomplete exchange-rate table.');
       }
 
-      // 저장이 끝난 뒤에만 호출자에게 성공을 반환합니다.
-      await chrome.storage.local.set({ [EXCHANGE_RATE_STORAGE_KEY]: table });
+      // The cache is optional. A full storage area must not discard a valid quote.
+      try {
+        await chrome.storage.local.set({ [EXCHANGE_RATE_STORAGE_KEY]: table });
+        unsavedExchangeRateTable = null;
+      } catch (error) {
+        unsavedExchangeRateTable = table;
+        console.warn('LunaTools: 새 환율표를 현재 서비스 워커 메모리에 보관합니다.', error);
+      }
       return table;
     } catch (error) {
       throw normalizeExchangeRateError(error);
@@ -1364,6 +1381,7 @@ class TabManager {
           console.warn("LunaTools: 대상 창 확인 중 오류 발생", error);
         }
       }
+      return null;
     }
 
     try {
@@ -1397,16 +1415,14 @@ class TabManager {
   async mergeAllWindows(preferredTargetWindowId = null) {
     try {
       const allWindows = await chrome.windows.getAll({ populate: false, windowTypes: ['normal'] });
-      if (allWindows.length <= 1) {
-        if (allWindows.length === 1 && typeof allWindows[0]?.id === 'number') {
-          await this._sortAndMoveTabsInWindow(allWindows[0].id);
-        }
-        return;
-      }
-
+      if (!allWindows.length) return;
       const targetWindowId = await this._resolveTargetWindowId(preferredTargetWindowId);
       const targetWindow = allWindows.find(win => win.id === targetWindowId);
       if (!targetWindow) return;
+      if (allWindows.length === 1) {
+        await this._sortAndMoveTabsInWindow(targetWindowId);
+        return;
+      }
       // A normal and an incognito window cannot exchange tabs or tab groups.
       const sourceWindowIds = new Set(allWindows
         .filter(win => win.id !== targetWindowId && win.incognito === targetWindow.incognito)

@@ -1874,6 +1874,7 @@ document.addEventListener('DOMContentLoaded', function() {
             setView('input');
             setControlsEnabled(true);
             if (runOptionRefreshNeeded) void loadOptions();
+            void loadSavedLists();
         };
 
         const updateCurrentListIndicator = () => {
@@ -2057,6 +2058,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 state.isDirty = state.isDirty || hasEditorContents;
                 if (hasEditorContents) {
                     Toast.show('저장된 목록이 없어 현재 입력을 저장되지 않은 새 목록으로 유지했습니다.', 'info', 7000);
+                }
+            } else if (state.loadedListName && UI.urlInput && state.currentView === 'input' && !state.isDirty) {
+                const storedUrls = lists[state.loadedListName].urls;
+                if (storedUrls !== state.originalLoadedListUrls) {
+                    listEditorGeneration++;
+                    listLoadGeneration++;
+                    UI.urlInput.value = storedUrls;
+                    state.originalLoadedListUrls = storedUrls;
                 }
             }
 
@@ -3247,6 +3256,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!UI.urlInput || !state.runOptionsReady || runOptionRefreshNeeded ||
                 pendingRunOptionWrites > 0 || state.isPreparingRun || state.currentView !== 'input') return;
             const editorSnapshot = captureListEditorState();
+            const verifyStoredList = Boolean(editorSnapshot.loadedListName) && !state.isDirty;
+            const expectedStoredUrls = state.originalLoadedListUrls;
             const initialRunId = state.currentRunId;
             const sortAtStart = Boolean(UI.sortUrlsBeforeRunCheckbox?.checked);
             const deduplicateAtStart = Boolean(UI.removeDuplicatesCheckbox?.checked);
@@ -3299,6 +3310,23 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!Number.isInteger(targetWindow?.id) || targetWindow.type !== 'normal') {
                     Toast.show('URL을 열 일반 브라우저 창을 확인하지 못했습니다. 다시 시도해 주세요.', 'error', 5000);
                     return;
+                }
+
+                // A restored list can change before its storage event reaches this panel.
+                if (verifyStoredList) {
+                    let stored;
+                    try {
+                        stored = await readSavedListSnapshotAfterPendingOperations(editorSnapshot.loadedListName);
+                    } catch (error) {
+                        console.warn('LunaTools: 실행 전 저장 목록 확인 실패', error);
+                        Toast.show('저장된 URL 목록을 확인할 수 없어 실행을 중단했습니다.', 'error', 5000);
+                        return;
+                    }
+                    if (preparationCancelled() || !stored || stored.urls !== expectedStoredUrls) {
+                        if (!preparationCancelled()) await loadSavedLists();
+                        Toast.show('목록이 변경되어 실행을 중단했습니다. 현재 내용을 확인한 뒤 다시 실행해 주세요.', 'info', 5000);
+                        return;
+                    }
                 }
 
                 clearTimeout(state.intervalId);
@@ -4139,6 +4167,10 @@ document.addEventListener('DOMContentLoaded', function() {
           hasPendingUrl
         };
       };
+
+      const isRestorePlaceholder = (tab) =>
+        (tab?.pendingUrl || tab?.url) === CONSTANTS.RESTORE.PLACEHOLDER_URL &&
+        (!tab.url || tab.url === CONSTANTS.RESTORE.PLACEHOLDER_URL);
 
       const getSessionTabGroupId = (tab) => Number.isInteger(tab?.groupId) ? tab.groupId : -1;
       const getSessionTabGroupShared = (tab) =>
@@ -5058,22 +5090,16 @@ document.addEventListener('DOMContentLoaded', function() {
             for (const restoreTab of windowRestoreTabs) {
               try {
                 const livePlaceholderTab = await chrome.tabs.get(restoreTab.tabId);
-                const rawPendingUrl = typeof livePlaceholderTab.pendingUrl === 'string'
-                  ? livePlaceholderTab.pendingUrl.trim()
-                  : '';
-                const rawCommittedUrl = typeof livePlaceholderTab.url === 'string'
-                  ? livePlaceholderTab.url.trim()
-                  : '';
-                const effectiveRawUrl = rawPendingUrl || rawCommittedUrl;
                 const placeholderStateIsSafe =
                   livePlaceholderTab.windowId === restoreTab.windowId &&
                   Boolean(livePlaceholderTab.pinned) === restoreTab.expectedPinned &&
                   getSessionTabGroupId(livePlaceholderTab) === restoreTab.expectedGroupId &&
                   getSessionTabSplitViewId(livePlaceholderTab) < 0 &&
-                  effectiveRawUrl === CONSTANTS.RESTORE.PLACEHOLDER_URL &&
+                  isRestorePlaceholder(livePlaceholderTab) &&
                   !tabInteractionTracker.hasInteracted(restoreTab.tabId);
 
                 if (!placeholderStateIsSafe) {
+                  restoreTab.changedBeforeNavigation = true;
                   throw new Error('복원 중 탭 상태가 변경되어 URL 적용을 중단했습니다.');
                 }
 
@@ -5083,6 +5109,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!Number.isInteger(navigatedTab?.id) || navigatedTab.id !== restoreTab.tabId) {
                   throw new Error('복원된 탭에 URL을 적용하지 못했습니다.');
                 }
+                restoreTab.navigationApplied = true;
               } catch (navigationError) {
                 const message = String(navigationError?.message || '').toLowerCase();
                 const tabAlreadyGone = message.includes('no tab with id') ||
@@ -5141,8 +5168,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
           // 창 전체를 닫으면 복원 도중 사용자가 그 창에 추가하거나 이동한 탭까지
           // 함께 사라질 수 있습니다. 이번 복원에서 만든 탭만, 사용 흔적과 구조가 그대로일 때만 정리합니다.
-          // URL 일치는 소유권 판단에 사용하지 않습니다. 복원된 페이지가 자동 리디렉션된 뒤
-          // 후속 단계가 실패해도, 사용자 조작이 없는 복원 탭은 롤백되어야 합니다.
+          // Before we have assigned the saved URL, any other destination belongs
+          // to a different navigation. After assignment, ordinary redirects are expected.
           const processedRollbackTabIds = new Set();
           while (true) {
             // onReplaced can fire while an awaited rollback API call is pending.
@@ -5183,10 +5210,12 @@ document.addEventListener('DOMContentLoaded', function() {
                   }
                 }
                 const hasUserInteraction = restoreTab.preserveFromRollback === true ||
+                  restoreTab.changedBeforeNavigation === true ||
                   restoreTab.interactedBeforeReplacement === true ||
                   tabInteractionTracker.hasInteracted(ownedTabId);
 
-                if (!isStillInRestoreWindow ||
+                if ((!restoreTab.navigationApplied && !isRestorePlaceholder(liveTab)) ||
+                    !isStillInRestoreWindow ||
                     isSelectedInFocusedWindow ||
                     hasUserInteraction ||
                     wasAccessedAfterCreation ||
@@ -5206,6 +5235,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // while waiting cannot be erased by this rollback.
                 const finalLiveTab = await chrome.tabs.get(ownedTabId);
                 const finalStateIsSafe =
+                  (restoreTab.navigationApplied || isRestorePlaceholder(finalLiveTab)) &&
                   finalLiveTab.windowId === restoreTab.windowId &&
                   Boolean(finalLiveTab.pinned) === restoreTab.expectedPinned &&
                   getSessionTabGroupId(finalLiveTab) === expectedGroupId &&
