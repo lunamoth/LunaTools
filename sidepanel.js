@@ -1964,10 +1964,11 @@ document.addEventListener('DOMContentLoaded', function() {
             updateCurrentListIndicator();
         };
 
-        const getSavedLists = async () => {
+        const getSavedListData = async () => {
             try {
                 const data = await chrome.storage.local.get(CONFIG.URL_LISTS_KEY);
-                return parseStoredListMap(data[CONFIG.URL_LISTS_KEY]);
+                const rawLists = data[CONFIG.URL_LISTS_KEY];
+                return { lists: parseStoredListMap(rawLists), rawLists };
             } catch (e) {
                 console.error('Error getting saved lists:', e);
                 Toast.show('저장된 목록을 불러오지 못했습니다. 기존 데이터를 보호하기 위해 작업을 중단했습니다.', 'error', 5000);
@@ -2000,10 +2001,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const mutateSavedLists = (mutator) => enqueueSavedListMutation(() =>
             runWithLocalDataStorageLock(async () => {
-                const lists = await getSavedLists();
-                if (!lists) return { saved: false, unavailable: true, lists: null };
+                const data = await getSavedListData();
+                if (!data) return { saved: false, unavailable: true, lists: null };
+                const { lists, rawLists } = data;
 
-                const result = await mutator(lists) || {};
+                const result = await mutator(lists, rawLists) || {};
                 if (result.skipSave) {
                     return { ...result, saved: false, lists };
                 }
@@ -2013,8 +2015,52 @@ document.addEventListener('DOMContentLoaded', function() {
             })
         );
 
-        const readSavedListsAfterPendingOperations = () =>
-            enqueueSavedListMutation(() => runWithLocalDataStorageLock(getSavedLists));
+        const readSavedListsAfterPendingOperations = async () => {
+            const data = await enqueueSavedListMutation(() => runWithLocalDataStorageLock(getSavedListData));
+            return data?.lists ?? null;
+        };
+
+        const mergeIncomingLists = async (incoming, askAboutConflicts, editingName = null, expectedUrls = null) => {
+            const names = Object.keys(incoming);
+            const targetNames = new Set(names);
+            targetNames.delete(editingName);
+            let confirmedConflicts;
+            let choice;
+
+            const merge = (lists, rawLists) => {
+                if (editingName !== null && lists[editingName]?.urls !== expectedUrls) {
+                    return { skipSave: true, changed: true };
+                }
+                const conflicts = new Map();
+                for (const rawName of Object.keys(rawLists || {})) {
+                    const name = normalizeListName(rawName);
+                    if (targetNames.has(name)) {
+                        // Use the stored record so a missing legacy timestamp stays stable across reads.
+                        conflicts.set(name, JSON.stringify([rawName, rawLists[rawName]]));
+                    }
+                }
+                if (!confirmedConflicts && conflicts.size) return { skipSave: true, conflicts };
+                if (choice === 'overwrite' && (conflicts.size !== confirmedConflicts.size ||
+                    [...conflicts].some(([name, signature]) => confirmedConflicts.get(name) !== signature))) {
+                    return { skipSave: true, changed: true };
+                }
+                let anySaved = false;
+                for (const name of names) {
+                    if (choice === 'skip' && (confirmedConflicts.has(name) || conflicts.has(name))) continue;
+                    lists[name] = incoming[name];
+                    anySaved = true;
+                }
+                return anySaved ? {} : { skipSave: true, skippedAll: true };
+            };
+
+            const first = await mutateSavedLists(merge);
+            if (!first.conflicts) return first;
+            // Waiting for the user's choice must leave both the panel queue and the shared data lock free.
+            confirmedConflicts = first.conflicts;
+            choice = await askAboutConflicts([...confirmedConflicts.keys()]);
+            if (choice !== 'overwrite' && choice !== 'skip') return { saved: false, cancelled: true };
+            return mutateSavedLists(merge);
+        };
 
         // Capture the actual stored record, including its original key and
         // metadata. parseStoredListMap() supplies a current timestamp for
@@ -2283,12 +2329,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const urlsToSave = editorSnapshot.urls.trim();
             const loadedListName = editorSnapshot.loadedListName;
             const expectedSavedUrls = state.originalLoadedListUrls;
-            const mutationResult = await mutateSavedLists(async (lists) => {
-                if (hasOwnListKey(lists, listName) && listName === loadedListName &&
-                    (typeof expectedSavedUrls !== 'string' || lists[listName].urls !== expectedSavedUrls)) {
-                    return { skipSave: true, changed: true };
-                }
-                if (hasOwnListKey(lists, listName) && listName !== loadedListName) {
+            const mutationResult = await mergeIncomingLists(
+                { [listName]: { urls: urlsToSave, createdAt: new Date().toISOString() } },
+                async () => {
                     const safeListName = escapeHtml(listName);
                     const overwrite = await Modal.show({
                         title: '덮어쓰기 확인',
@@ -2296,12 +2339,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         danger: true,
                         confirmText: '덮어쓰기'
                     });
-                    if (!overwrite) return { skipSave: true, cancelled: true };
-                }
-
-                lists[listName] = { urls: urlsToSave, createdAt: new Date().toISOString() };
-                return {};
-            });
+                    return overwrite ? 'overwrite' : null;
+                },
+                listName === loadedListName ? listName : null,
+                expectedSavedUrls
+            );
 
             if (mutationResult.saved) {
                 applySavedListToEditor(editorSnapshot, listName, urlsToSave);
@@ -2781,40 +2823,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
-            const mutationResult = await mutateSavedLists(async (currentLists) => {
-                const conflicts = Object.keys(validImportedLists)
-                    .filter(key => hasOwnListKey(currentLists, key));
-
-                if (conflicts.length > 0) {
-                    const safeConflicts = conflicts.map(name => escapeHtml(name)).join(', ');
-                    const choice = await Modal.show({
-                        title: '목록 충돌 발생',
-                        body: `다음 목록이 이미 존재합니다: <strong>${safeConflicts}</strong>.<br>충돌하는 목록을 덮어쓰시겠습니까, 건너뛰시겠습니까? (충돌하지 않는 목록은 항상 추가됩니다)`,
-                        buttons: [
-                            { text: '가져오기 취소', value: 'cancel_import', isDefaultCancel: true },
-                            { text: '모두 건너뛰기', value: 'skip_all_conflicts' },
-                            { text: '모두 덮어쓰기', value: 'overwrite_all_conflicts', isDanger: true },
-                        ]
-                    });
-
-                    if (choice === 'overwrite_all_conflicts') {
-                        for (const key in validImportedLists) currentLists[key] = validImportedLists[key];
-                    } else if (choice === 'skip_all_conflicts') {
-                        // Index the original conflicts once. Repeated array scans
-                        // become quadratic for large backups and block the panel
-                        // even when every imported list is simply being skipped.
-                        const conflictNames = new Set(conflicts);
-                        for (const key in validImportedLists) {
-                            if (!conflictNames.has(key)) currentLists[key] = validImportedLists[key];
-                        }
-                    } else {
-                        return { skipSave: true, cancelled: true };
-                    }
-                } else {
-                    for (const key in validImportedLists) currentLists[key] = validImportedLists[key];
-                }
-
-                return {};
+            const mutationResult = await mergeIncomingLists(validImportedLists, conflicts => {
+                const safeConflicts = conflicts.map(name => escapeHtml(name)).join(', ');
+                return Modal.show({
+                    title: '목록 충돌 발생',
+                    body: `다음 목록이 이미 존재합니다: <strong>${safeConflicts}</strong>.<br>충돌하는 목록을 덮어쓰시겠습니까, 건너뛰시겠습니까? (충돌하지 않는 목록은 항상 추가됩니다)`,
+                    buttons: [
+                        { text: '가져오기 취소', value: 'cancel_import', isDefaultCancel: true },
+                        { text: '모두 건너뛰기', value: 'skip' },
+                        { text: '모두 덮어쓰기', value: 'overwrite', isDanger: true },
+                    ]
+                });
             });
 
             if (mutationResult.saved) {
@@ -2841,6 +2860,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
                 await loadSavedLists();
+            } else if (mutationResult.changed) {
+                Toast.show('확인하는 동안 대상 목록이 변경되어 가져오기를 중단했습니다. 저장된 목록을 확인한 뒤 다시 시도해주세요.', 'error', 7000);
+            } else if (mutationResult.skippedAll) {
+                Toast.show('모든 목록을 건너뛰었습니다.', 'info');
             } else if (mutationResult.cancelled) {
                 Toast.show('JSON 가져오기가 취소되었거나 변경사항이 없습니다.', 'info');
             }

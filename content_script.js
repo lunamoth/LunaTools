@@ -875,8 +875,7 @@ async function lunaToolsWriteTextToClipboard(text) {
           day,
           monthWidth: match[2].length,
           dayWidth: match[3].length,
-          trailingSlash: match[4],
-          originalMatch: match[0]
+          trailingSlash: match[4]
         };
       }
       findPagePattern(url) {
@@ -959,7 +958,7 @@ async function lunaToolsWriteTextToClipboard(text) {
         }
 
         if (patternInfo.kind === 'date') {
-          const { year, month, day, monthWidth, dayWidth, trailingSlash, originalMatch } = patternInfo;
+          const { year, month, day, monthWidth, dayWidth, trailingSlash } = patternInfo;
           const nextDate = new Date(Date.UTC(year, month - 1, day));
           nextDate.setUTCDate(nextDate.getUTCDate() + direction);
 
@@ -969,7 +968,7 @@ async function lunaToolsWriteTextToClipboard(text) {
           const nextMonth = String(nextDate.getUTCMonth() + 1).padStart(monthWidth, '0');
           const nextDay = String(nextDate.getUTCDate()).padStart(dayWidth, '0');
           const nextDatePath = `/${String(nextYear).padStart(4, '0')}/${nextMonth}/${nextDay}${trailingSlash}`;
-          parsedUrl.pathname = parsedUrl.pathname.replace(originalMatch, nextDatePath);
+          parsedUrl.pathname = parsedUrl.pathname.replace(KB_NAV_CONFIG.patterns.datePath, nextDatePath);
           return parsedUrl.href;
         }
 
@@ -981,7 +980,21 @@ async function lunaToolsWriteTextToClipboard(text) {
           );
           if (newPage === currentPage) return currentUrl;
 
-          parsedUrl.searchParams.set(queryKey, String(newPage).padStart(pageWidth, '0'));
+          // Preserve unrelated fields exactly, including a bare flag, %20 and
+          // repeated filters. Replace the selected key once, as searchParams.set did.
+          const fields = [];
+          let replaced = false;
+          for (const field of parsedUrl.search.slice(1).split('&')) {
+            const rawKey = field.split('=', 1)[0];
+            const key = rawKey.includes('%') ? new URLSearchParams('?' + rawKey).keys().next().value : rawKey;
+            if (key !== queryKey) {
+              fields.push(field);
+            } else if (!replaced) {
+              fields.push(rawKey + '=' + String(newPage).padStart(pageWidth, '0'));
+              replaced = true;
+            }
+          }
+          parsedUrl.search = '?' + fields.join('&');
           return parsedUrl.href;
         }
 
@@ -995,11 +1008,12 @@ async function lunaToolsWriteTextToClipboard(text) {
         // A terminal path such as /192 can also occur at the start of an IP
         // address. Restrict replacement to pathname so pagination cannot alter
         // the host, port, query, or fragment.
-        parsedUrl.pathname = parsedUrl.pathname.replace(originalMatch, newPageStringInMatch);
+        parsedUrl.pathname = parsedUrl.pathname.replace(patternInfo.regex, newPageStringInMatch);
         return parsedUrl.href;
       }
       shouldIgnoreUrl(url) {
-        return KB_NAV_CONFIG.patterns.ignore.some(pattern => pattern.test(url));
+        const pathname = new URL(url).pathname;
+        return KB_NAV_CONFIG.patterns.ignore.some(pattern => pattern.test(pathname));
       }
       clearCache() { this.urlPatternCache.clear(); }
       destroy() {

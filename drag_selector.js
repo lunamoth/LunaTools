@@ -410,7 +410,7 @@
                 const walker = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
                 let element = node.nodeType === Node.ELEMENT_NODE ? node : walker.nextNode();
                 while (element) {
-                    if (!this.#isLinkScanTaskUsable(task)) return task.links;
+                    if (task.selectionViewport || !this.#isLinkScanTaskUsable(task)) return task.links;
                     if (++visitedElements > DragSelector.CONFIG.LIMITS.MAX_SCAN_ELEMENTS) {
                         // 미리보기의 메모리·작업량은 제한하되, 큰 페이지라는
                         // 이유만으로 사용자가 선택한 작업을 취소하지 않습니다.
@@ -443,30 +443,9 @@
             return task.links;
         }
 
-        async #getLinksInRectIncrementally(links, selectionRect, task) {
-            const selected = new Set();
-            let sliceStartedAt = performance.now();
-            let sliceElements = 0;
-            const { MAX_SCAN_SLICE_MS, MAX_SCAN_SLICE_ELEMENTS } = DragSelector.CONFIG.TIMING;
-            for (const link of links) {
-                if (!this.#isLinkScanTaskUsable(task)) return null;
-                if (this.#hasVisibleLinkRect(link, selectionRect)) {
-                    selected.add(link);
-                }
-                sliceElements += 1;
-                if (sliceElements >= MAX_SCAN_SLICE_ELEMENTS || performance.now() - sliceStartedAt >= MAX_SCAN_SLICE_MS) {
-                    if (!(await this.#yieldLinkScanTask(task))) return null;
-                    sliceElements = 0;
-                    sliceStartedAt = performance.now();
-                }
-            }
-            return selected;
-        }
-
         async #rescanSelectedLinksIncrementally(selectionRect, task) {
-            // 미리보기가 제한에 도달했을 때만 전체 DOM을 다시 순회합니다.
-            // 실행에 쓰일 최대 100개와 초과 여부를 알리는 1개만 보관하므로
-            // 거대한 페이지에서도 링크 배열이 무한히 커지지 않습니다.
+            // Final hit testing uses the live document. Infinite scrolling can add or replace
+            // visible anchors after the initial preview. Keep at most the action limit plus one.
             const selected = new Set();
             const seenUrls = new Set();
             const queue = [task.body];
@@ -515,9 +494,7 @@
             try {
                 await task.promise;
                 if (!this.#isLinkScanTaskUsable(task)) return;
-                const finalLinks = task.previewTruncated
-                    ? await this.#rescanSelectedLinksIncrementally(selectionRect, task)
-                    : await this.#getLinksInRectIncrementally(task.links, selectionRect, task);
+                const finalLinks = await this.#rescanSelectedLinksIncrementally(selectionRect, task);
                 if (finalLinks && this.#isLinkScanTaskUsable(task)) {
                     task.actionStarted = true;
                     await this.#performAction(finalLinks, modifier, {
@@ -1092,8 +1069,8 @@
             } catch (_) {
                 finalSelectionRect = null;
             } finally {
-                // 정상 mouseup에서는 진행 중인 링크 스캔을 보존해 남은 조각을 완료한 뒤
-                // 최종 선택을 비동기로 판정합니다. blur/visibility/새 입력으로 정리되는
+                // 정상 mouseup에서는 스캔 작업을 보존해 해제 시점의 선택 영역을
+                // 현재 문서에서 다시 판정합니다. blur/visibility/새 입력으로 정리되는
                 // 경로는 기존처럼 task를 취소합니다.
                 this.#resetState(finalSelectionRect ? linkScanTask : null);
             }
