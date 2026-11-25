@@ -906,7 +906,7 @@ async function lunaToolsWriteTextToClipboard(text) {
             kind: 'query',
             queryKey,
             currentPage,
-            pageWidth: rawPageNumber.length
+            pageWidth: /^0\d/.test(rawPageNumber) ? rawPageNumber.length : 0
           };
           this.urlPatternCache.set(url, patternInfo);
           return patternInfo;
@@ -1003,7 +1003,9 @@ async function lunaToolsWriteTextToClipboard(text) {
         newPage = Math.max(KB_NAV_CONFIG.navigation.MIN_PAGE, newPage);
         newPage = Math.min(KB_NAV_CONFIG.navigation.MAX_PAGE, newPage);
         if (newPage === currentPage) return currentUrl;
-        const newPageText = String(newPage).padStart(originalPageText.length, '0');
+        // Preserve explicit zero padding, not the natural digit count (100 → 99).
+        const pageWidth = /^0\d/.test(originalPageText) ? originalPageText.length : 0;
+        const newPageText = String(newPage).padStart(pageWidth, '0');
         const newPageStringInMatch = originalMatch.replace(originalPageText, newPageText);
         // A terminal path such as /192 can also occur at the start of an IP
         // address. Restrict replacement to pathname so pagination cannot alter

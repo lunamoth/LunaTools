@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
     const LOCAL_DATA_STORAGE_LOCK = 'lunatools-local-data-storage';
+    const SESSION_RESTORE_PENDING_KEY = 'lunatools-session-restore-pending';
     const runWithLocalDataStorageLock = async (operation, { requireLock = false } = {}) => {
         const lockManager = globalThis.navigator?.locks;
         if (!lockManager || typeof lockManager.request !== 'function') {
@@ -3944,6 +3945,8 @@ document.addEventListener('DOMContentLoaded', function() {
       let toastCleanupTimer;
       let inputDebounce;
       let sessionMutationQueue = Promise.resolve();
+      // Keep action state independent of disposable rows and search results.
+      const activeSessionActions = new Set();
 
       const storage = {
         get: async (key, defaultValue = []) => {
@@ -4614,7 +4617,9 @@ document.addEventListener('DOMContentLoaded', function() {
           { action: CONSTANTS.ACTIONS.DELETE, title: '삭제', icon: '🗑️' },
         ];
         actions.forEach(({ action, title, icon }) => {
-          sessionActions.appendChild(createActionButton(action, title, icon));
+          const button = createActionButton(action, title, icon);
+          button.disabled = activeSessionActions.has(String(session.id));
+          sessionActions.appendChild(button);
         });
         const detailsList = item.querySelector('.session-details-list');
         const populateSessionDetails = () => {
@@ -5824,8 +5829,16 @@ document.addEventListener('DOMContentLoaded', function() {
       const handleExport = async () => {
         let sessionsToExport;
         try {
-          const storedSessions = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
-          const inspected = inspectStoredSessions(storedSessions);
+          // The options restore holds this lock through the local write, sync
+          // commit and any rollback. Never read its provisional session data.
+          const inspected = await runWithLocalDataStorageLock(async () => {
+            const pending = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
+            if (pending[SESSION_RESTORE_PENDING_KEY]) {
+              throw new Error('전체 복원 후 세션 데이터의 복구를 확인할 수 없습니다. 옵션에서 전체 복원을 다시 완료해주세요.');
+            }
+            const storedSessions = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
+            return inspectStoredSessions(storedSessions);
+          }, { requireLock: true });
           if (inspected.hasInvalidData) {
             showToast(CONSTANTS.MESSAGES.EXPORT_BLOCKED_CORRUPTED, CONSTANTS.UI.TOAST_DURATION * 2);
             return;
@@ -5964,23 +5977,37 @@ document.addEventListener('DOMContentLoaded', function() {
         reader.readAsText(file);
       };
 
-      const handleSessionAction = (e) => {
+      const handleSessionAction = async (e) => {
         const btn = e.target.closest('.beos-icon-button');
-        if (!btn) return;
+        if (!btn || btn.disabled) return;
         const sessionItem = btn.closest('.session-item');
         if (!sessionItem) return;
-        const sessionId = sessionItem.dataset.sessionId;
+        const sessionId = String(sessionItem.dataset.sessionId);
+        if (activeSessionActions.has(sessionId)) return;
         const allActionButtons = sessionItem.querySelectorAll('.beos-icon-button');
-        withLoadingState(allActionButtons, async () => {
-          switch (btn.dataset.action) {
-            case CONSTANTS.ACTIONS.RESTORE: await handleRestoreSession(sessionId); break;
-            case CONSTANTS.ACTIONS.COPY: await handleCopySessionUrls(sessionId); break;
-            case CONSTANTS.ACTIONS.UPDATE: await handleUpdateSession(sessionId); break;
-            case CONSTANTS.ACTIONS.RENAME: await handleRenameSession(sessionId); break;
-            case CONSTANTS.ACTIONS.PIN: await handlePinSession(sessionId); break;
-            case CONSTANTS.ACTIONS.DELETE: await handleDeleteSession(sessionId); break;
+        // Claim the ID before any await; a replacement DOM row cannot start
+        // another action on the same session while the first is in flight.
+        activeSessionActions.add(sessionId);
+        try {
+          await withLoadingState(allActionButtons, async () => {
+            switch (btn.dataset.action) {
+              case CONSTANTS.ACTIONS.RESTORE: await handleRestoreSession(sessionId); break;
+              case CONSTANTS.ACTIONS.COPY: await handleCopySessionUrls(sessionId); break;
+              case CONSTANTS.ACTIONS.UPDATE: await handleUpdateSession(sessionId); break;
+              case CONSTANTS.ACTIONS.RENAME: await handleRenameSession(sessionId); break;
+              case CONSTANTS.ACTIONS.PIN: await handlePinSession(sessionId); break;
+              case CONSTANTS.ACTIONS.DELETE: await handleDeleteSession(sessionId); break;
+            }
+          });
+        } finally {
+          activeSessionActions.delete(sessionId);
+          // The original row may have been replaced or filtered out. Restore
+          // the current row only, without a full render or losing its details.
+          for (const item of sessionListEl.querySelectorAll('.session-item')) {
+            if (item.dataset.sessionId !== sessionId) continue;
+            item.querySelectorAll('.beos-icon-button').forEach(button => { button.disabled = false; });
           }
-        });
+        }
       };
 
       const cleanup = () => {

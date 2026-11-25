@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const SYNC_KEYS = [STORAGE_KEYS.LOCKED, STORAGE_KEYS.BLOCKED, STORAGE_KEYS.DISABLED_DRAG];
     const LOCAL_KEYS = [STORAGE_KEYS.MULTI_URL_OPTIONS, STORAGE_KEYS.SAVED_URL_LISTS, STORAGE_KEYS.SESSIONS];
     const LOCAL_DATA_STORAGE_LOCK = 'lunatools-local-data-storage';
+    const SESSION_RESTORE_PENDING_KEY = 'lunatools-session-restore-pending';
 
     const runWithLocalDataStorageLock = async (operation, { requireLock = false } = {}) => {
         const lockManager = globalThis.navigator?.locks;
@@ -897,10 +898,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Commit sync last. A sync rate/size rejection cannot leave
                     // changed remote settings that would need another quota-limited write.
                     const localKeys = backupData.localKeysToReplace;
-                    const localResult = await replaceKnownStorageKeys(
-                        chrome.storage.local, localKeys, backupData.local, localSnapshot
-                    );
+                    const restoresSessions = localKeys.includes(STORAGE_KEYS.SESSIONS);
+                    let previouslyPending = false;
+                    if (restoresSessions) {
+                        // Shared across extension pages. If rollback itself fails,
+                        // session export must not treat provisional data as committed.
+                        const pending = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
+                        previouslyPending = Boolean(pending[SESSION_RESTORE_PENDING_KEY]);
+                        await chrome.storage.session.set({ [SESSION_RESTORE_PENDING_KEY]: true });
+                    }
+                    let localResult;
+                    let committed = false;
                     try {
+                        localResult = await replaceKnownStorageKeys(
+                            chrome.storage.local, localKeys, backupData.local, localSnapshot
+                        );
                         const syncKeys = backupData.syncKeysToReplace;
                         if (localResult.changed && syncKeys.length) {
                             // Device sync can update these keys while local data is being written.
@@ -912,12 +924,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         const syncResult = await replaceKnownStorageKeys(
                             chrome.storage.sync, syncKeys, backupData.sync, syncSnapshot
                         );
+                        committed = true;
                         return {
                             retainedDefaults: localResult.retainedDefaults || syncResult.retainedDefaults,
                             preservedSyncUpdate: syncResult.preservedSyncUpdate
                         };
                     } catch (restoreWriteError) {
-                        if (localResult.changed) {
+                        if (localResult?.changed) {
                             rollbackAttempted = true;
                             try {
                                 const localAfterWrite = await chrome.storage.local.get(localKeys);
@@ -930,6 +943,14 @@ document.addEventListener('DOMContentLoaded', () => {
                             }
                         }
                         throw restoreWriteError;
+                    } finally {
+                        // A rejected initial atomic write leaves old data intact.
+                        // An earlier unresolved restore is cleared only by a new
+                        // successful session restore, not by another failed attempt.
+                        if (restoresSessions && (committed ||
+                            (!previouslyPending && (!localResult?.changed || rollbackSucceeded)))) {
+                            await chrome.storage.session.remove(SESSION_RESTORE_PENDING_KEY);
+                        }
                     }
                 }, { requireLock: true });
 
