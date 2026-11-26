@@ -30,6 +30,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     };
 
+    const SESSION_RESTORE_UNRESOLVED_MESSAGE = '전체 복원 후 세션 데이터의 복구를 확인할 수 없습니다. 옵션에서 전체 복원을 다시 완료해주세요.';
+    const assertSessionRestoreSettled = async () => {
+        const pending = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
+        if (pending[SESSION_RESTORE_PENDING_KEY]) throw new Error(SESSION_RESTORE_UNRESOLVED_MESSAGE);
+    };
+
     const createDownloadInterruptedError = (reason) => new Error(
         reason
             ? `다운로드가 중단되었습니다. (${reason})`
@@ -3941,6 +3947,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const saveAndCloseBtn = pane.querySelector('#save-and-close-btn');
 
       let allSessions = [];
+      let sessionDataUnavailable = false;
+      let sessionRefreshGeneration = 0;
       let toastTimeout;
       let toastCleanupTimer;
       let inputDebounce;
@@ -4434,14 +4442,37 @@ document.addEventListener('DOMContentLoaded', function() {
         return inspected.sessions;
       };
 
-      chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local' && changes[CONSTANTS.STORAGE_KEYS.SESSIONS]) {
-          const inspected = inspectStoredSessions(changes[CONSTANTS.STORAGE_KEYS.SESSIONS].newValue);
-          allSessions = inspected.sessions;
+      // Storage events can expose provisional data written by a full restore.
+      // Read the final snapshot under the same lock, never from event.newValue.
+      const refreshCommittedSessions = async () => {
+        const generation = ++sessionRefreshGeneration;
+        try {
+          await runWithLocalDataStorageLock(async () => {
+            if (generation !== sessionRefreshGeneration) return;
+            await assertSessionRestoreSettled();
+            const stored = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
+            if (generation !== sessionRefreshGeneration) return;
+            const inspected = inspectStoredSessions(stored);
+            allSessions = inspected.sessions;
+            sessionDataUnavailable = false;
+            renderSessions();
+            if (inspected.hasInvalidData) {
+              showToast(CONSTANTS.MESSAGES.SESSION_DATA_WARNING, CONSTANTS.UI.TOAST_DURATION * 2);
+            }
+          }, { requireLock: true });
+        } catch (error) {
+          if (generation !== sessionRefreshGeneration) return;
+          sessionDataUnavailable = true;
+          allSessions = [];
           renderSessions();
-          if (inspected.hasInvalidData) {
-            showToast(CONSTANTS.MESSAGES.SESSION_DATA_WARNING, CONSTANTS.UI.TOAST_DURATION * 2);
-          }
+          showToast(`❌ 세션 목록 확인 실패: ${error.message}`, CONSTANTS.UI.TOAST_DURATION * 2);
+        }
+      };
+
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if ((area === 'local' && changes[CONSTANTS.STORAGE_KEYS.SESSIONS]) ||
+            (area === 'session' && changes[SESSION_RESTORE_PENDING_KEY])) {
+          void refreshCommittedSessions();
         }
       });
 
@@ -4575,6 +4606,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const renderSessions = () => {
         const fragment = document.createDocumentFragment();
+        if (sessionDataUnavailable) {
+          const p = document.createElement('p');
+          p.style.cssText = 'text-align:center;padding:20px 0;';
+          p.textContent = '세션 데이터의 안전한 상태를 확인하지 못했습니다. 옵션의 전체 복원 상태를 확인하거나 패널을 다시 열어주세요.';
+          sessionListEl.replaceChildren(p);
+          return;
+        }
         const searchTerm = sessionInput.value.trim().toLowerCase();
         const { sessions: sessionsToRender, matchCount } = selectSessionsForRender(searchTerm);
 
@@ -4653,8 +4691,9 @@ document.addEventListener('DOMContentLoaded', function() {
         return queuedOperation;
       };
 
-      const mutateAndPersistSessions = (mutator, { afterPersist = null, requireLock = false } = {}) => enqueueSessionMutation(() =>
+      const mutateAndPersistSessions = (mutator, { afterPersist = null } = {}) => enqueueSessionMutation(() =>
         runWithLocalDataStorageLock(async () => {
+          await assertSessionRestoreSettled();
           const persistedSessions = parseSessionsForMutation(
             await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, [])
           );
@@ -4665,6 +4704,7 @@ document.addEventListener('DOMContentLoaded', function() {
           // individual mutators use copy-on-write before changing an existing record.
           const workingSessions = persistedSessions.slice();
           let persisted = false;
+          sessionDataUnavailable = false;
 
           try {
             const result = await mutator(workingSessions);
@@ -4702,7 +4742,7 @@ document.addEventListener('DOMContentLoaded', function() {
             renderSessions();
             throw error;
           }
-        }, { requireLock })
+        }, { requireLock: true })
       );
 
       const updateAndSaveSessions = async (updateFunction, {
@@ -5488,7 +5528,6 @@ document.addEventListener('DOMContentLoaded', function() {
               // Keep the shared storage lock until every verified tab has been
               // handled. A backup restore must not replace this session while
               // the tabs that depend on it are still being closed.
-              requireLock: true,
               afterPersist: async (savedSession) => {
                 if (sessionInput.value.trim() === requestedName) {
                   sessionInput.value = '';
@@ -5641,8 +5680,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       };
       
-      const handleRestoreSession = async (sessionId) => {
-        const session = findSessionById(sessionId);
+      const handleRestoreSession = async (session) => {
         if (!session) {
           showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
           return;
@@ -5750,6 +5788,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!sessionData) return;
         const { session } = sessionData;
         const originalName = session.name;
+        const expectedSessionSignature = JSON.stringify(session);
         const newName = prompt('새 세션 이름을 입력하세요:', originalName);
         if (newName === null) return;
         const trimmedNewName = newName.trim();
@@ -5774,6 +5813,10 @@ document.addEventListener('DOMContentLoaded', function() {
               showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
               return null;
             }
+            if (JSON.stringify(sessions[sessionIndex]) !== expectedSessionSignature) {
+              showToast('⚠️ 확인하는 동안 세션이 변경되어 이름 변경을 중단했습니다. 다시 시도해주세요.');
+              return null;
+            }
             if (isDuplicateSessionName(trimmedNewName, sessionId, sessions)) {
               showToast(CONSTANTS.MESSAGES.createNameAlreadyExistsMessage(trimmedNewName));
               return null;
@@ -5790,15 +5833,21 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const handlePinSession = async (sessionId) => {
-        if (!findSessionById(sessionId)) {
+        const selectedSession = findSessionById(sessionId);
+        if (!selectedSession) {
           showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
           return;
         }
+        const expectedSessionSignature = JSON.stringify(selectedSession);
         await updateAndSaveSessions(
           (sessions) => {
             const sessionIndex = sessions.findIndex(s => String(s.id) === String(sessionId));
             if (sessionIndex === -1) {
               showToast(CONSTANTS.MESSAGES.SESSION_NOT_FOUND);
+              return null;
+            }
+            if (JSON.stringify(sessions[sessionIndex]) !== expectedSessionSignature) {
+              showToast('⚠️ 확인하는 동안 세션이 변경되어 고정 상태 변경을 중단했습니다. 다시 시도해주세요.');
               return null;
             }
             const isPinned = !sessions[sessionIndex].isPinned;
@@ -5809,10 +5858,7 @@ document.addEventListener('DOMContentLoaded', function() {
         );
       };
       
-      const handleCopySessionUrls = async (sessionId) => {
-        const sessionData = findSessionDataOrShowError(sessionId);
-        if (!sessionData) return;
-        const { session } = sessionData;
+      const handleCopySessionUrls = async (session) => {
         const urlsToCopy = session.tabs.map(tab => tab.url).join('\n');
         if (!urlsToCopy) {
             showToast(CONSTANTS.MESSAGES.NO_URLS_TO_COPY);
@@ -5832,10 +5878,7 @@ document.addEventListener('DOMContentLoaded', function() {
           // The options restore holds this lock through the local write, sync
           // commit and any rollback. Never read its provisional session data.
           const inspected = await runWithLocalDataStorageLock(async () => {
-            const pending = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
-            if (pending[SESSION_RESTORE_PENDING_KEY]) {
-              throw new Error('전체 복원 후 세션 데이터의 복구를 확인할 수 없습니다. 옵션에서 전체 복원을 다시 완료해주세요.');
-            }
+            await assertSessionRestoreSettled();
             const storedSessions = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
             return inspectStoredSessions(storedSessions);
           }, { requireLock: true });
@@ -5966,7 +6009,7 @@ document.addEventListener('DOMContentLoaded', function() {
           } catch (error) {
             const message = String(error?.message || '');
             showToast(
-              message.startsWith('저장 공간') || message.startsWith('저장 제한 초과') || message.startsWith('가져오기 제한 초과') || message === CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS
+              message.startsWith('저장 공간') || message.startsWith('저장 제한 초과') || message.startsWith('가져오기 제한 초과') || message === SESSION_RESTORE_UNRESOLVED_MESSAGE || message === CONSTANTS.MESSAGES.IMPORT_NO_VALID_SESSIONS
                 ? `❌ ${message}`
                 : CONSTANTS.MESSAGES.IMPORT_INVALID_FORMAT
             );
@@ -5991,8 +6034,28 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
           await withLoadingState(allActionButtons, async () => {
             switch (btn.dataset.action) {
-              case CONSTANTS.ACTIONS.RESTORE: await handleRestoreSession(sessionId); break;
-              case CONSTANTS.ACTIONS.COPY: await handleCopySessionUrls(sessionId); break;
+              case CONSTANTS.ACTIONS.RESTORE:
+              case CONSTANTS.ACTIONS.COPY: {
+                // Capture the selected record before waiting for a full restore.
+                // A matching ID is not enough if the backup replaced its contents.
+                const selectedSession = findSessionById(sessionId);
+                try {
+                  const committedSession = await runWithLocalDataStorageLock(async () => {
+                    await assertSessionRestoreSettled();
+                    const stored = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
+                    const current = inspectStoredSessions(stored).sessions.find(s => String(s.id) === sessionId);
+                    if (!selectedSession || !current || JSON.stringify(current) !== JSON.stringify(selectedSession)) {
+                      throw new Error('세션이 변경되었습니다. 현재 목록을 확인한 뒤 다시 시도해주세요.');
+                    }
+                    return current;
+                  }, { requireLock: true });
+                  if (btn.dataset.action === CONSTANTS.ACTIONS.RESTORE) await handleRestoreSession(committedSession);
+                  else await handleCopySessionUrls(committedSession);
+                } catch (error) {
+                  showToast(`❌ ${error.message}`);
+                }
+                break;
+              }
               case CONSTANTS.ACTIONS.UPDATE: await handleUpdateSession(sessionId); break;
               case CONSTANTS.ACTIONS.RENAME: await handleRenameSession(sessionId); break;
               case CONSTANTS.ACTIONS.PIN: await handlePinSession(sessionId); break;
@@ -6021,14 +6084,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const initialize = async () => {
         sessionInput.maxLength = CONSTANTS.UI.SESSION_NAME_MAX_LENGTH;
 
-        const sessions = await storage.get(CONSTANTS.STORAGE_KEYS.SESSIONS, []);
-        const inspectedSessions = inspectStoredSessions(sessions);
-        allSessions = inspectedSessions.sessions;
-        
-        renderSessions();
-        if (inspectedSessions.hasInvalidData) {
-          showToast(CONSTANTS.MESSAGES.SESSION_DATA_WARNING, CONSTANTS.UI.TOAST_DURATION * 2);
-        }
+        await refreshCommittedSessions();
         
         saveCurrentWindowBtn.addEventListener('click', () => {
           withLoadingState(saveCurrentWindowBtn, () => handleSaveSession(CONSTANTS.SAVE_SCOPES.CURRENT_WINDOW));

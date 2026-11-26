@@ -801,10 +801,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const { syncData, localData } = await runWithLocalDataStorageLock(async () => ({
-                syncData: await chrome.storage.sync.get(SYNC_KEYS),
-                localData: await chrome.storage.local.get(LOCAL_KEYS)
-            }));
+            const { syncData, localData } = await runWithLocalDataStorageLock(async () => {
+                const pending = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
+                if (pending[SESSION_RESTORE_PENDING_KEY]) {
+                    throw new Error('전체 복원 후 세션 데이터의 복구를 확인할 수 없습니다. 기존 백업을 보존하고 전체 복원을 다시 완료해주세요.');
+                }
+                return {
+                    syncData: await chrome.storage.sync.get(SYNC_KEYS),
+                    localData: await chrome.storage.local.get(LOCAL_KEYS)
+                };
+            }, { requireLock: true });
 
             const backupData = {
                 formatVersion: BACKUP_FORMAT_VERSION,
