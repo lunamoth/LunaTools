@@ -1694,6 +1694,19 @@ chrome.commands.onCommand.addListener((command, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === 'waitForDuplicateTabOperations' && !sender?.tab &&
+      sender?.id === chrome.runtime.id && Number.isInteger(message.windowId) && message.windowId >= 0) {
+    // A tab may disappear before its confirmed removal notification arrives.
+    // Wait for already-running cleanup in this window, without starting a new
+    // deduplication pass or treating arbitrary missing tabs as duplicates.
+    const prefix = `${message.windowId}\u0000`;
+    Promise.allSettled([...tabManager.duplicateOperationQueues.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, operation]) => operation))
+      .then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
   if (message?.action === RECONCILE_TAB_REFERENCES_ACTION) {
     tabManager.reconcileTabReferences(message.tabs)
       .then((tabs) => sendResponse({ ok: true, tabs }))

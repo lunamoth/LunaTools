@@ -34,7 +34,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const SYNC_KEYS = [STORAGE_KEYS.LOCKED, STORAGE_KEYS.BLOCKED, STORAGE_KEYS.DISABLED_DRAG];
     const LOCAL_KEYS = [STORAGE_KEYS.MULTI_URL_OPTIONS, STORAGE_KEYS.SAVED_URL_LISTS, STORAGE_KEYS.SESSIONS];
     const LOCAL_DATA_STORAGE_LOCK = 'lunatools-local-data-storage';
-    const SESSION_RESTORE_PENDING_KEY = 'lunatools-session-restore-pending';
+    const SESSION_RESTORE_PENDING_KEY = 'lunatools-session-restore-pending'; // legacy session marker
+    const LOCAL_RESTORE_PENDING_KEY = 'lunatools-local-restore-pending';
+
+    const readPendingLocalRestoreKeys = async () => {
+        const stored = await chrome.storage.local.get(LOCAL_RESTORE_PENDING_KEY);
+        const value = stored[LOCAL_RESTORE_PENDING_KEY];
+        // An unexpected marker is not evidence of a completed transaction.
+        let keys = value === undefined ? [] : Array.isArray(value) &&
+            value.every(key => LOCAL_KEYS.includes(key)) ? value : LOCAL_KEYS;
+        const legacy = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
+        if (legacy[SESSION_RESTORE_PENDING_KEY]) keys = [...keys, STORAGE_KEYS.SESSIONS];
+        return [...new Set(keys)];
+    };
+
+    const writePendingLocalRestoreKeys = async (keys) => {
+        if (keys.length) await chrome.storage.local.set({ [LOCAL_RESTORE_PENDING_KEY]: keys });
+        else await chrome.storage.local.remove(LOCAL_RESTORE_PENDING_KEY);
+    };
 
     const runWithLocalDataStorageLock = async (operation, { requireLock = false } = {}) => {
         const lockManager = globalThis.navigator?.locks;
@@ -802,9 +819,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const { syncData, localData } = await runWithLocalDataStorageLock(async () => {
-                const pending = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
-                if (pending[SESSION_RESTORE_PENDING_KEY]) {
-                    throw new Error('전체 복원 후 세션 데이터의 복구를 확인할 수 없습니다. 기존 백업을 보존하고 전체 복원을 다시 완료해주세요.');
+                if ((await readPendingLocalRestoreKeys()).length) {
+                    throw new Error('전체 복원 후 로컬 데이터의 복구를 확인할 수 없습니다. 기존 백업을 보존하고 해당 데이터를 다시 복원해주세요.');
                 }
                 return {
                     syncData: await chrome.storage.sync.get(SYNC_KEYS),
@@ -904,14 +920,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Commit sync last. A sync rate/size rejection cannot leave
                     // changed remote settings that would need another quota-limited write.
                     const localKeys = backupData.localKeysToReplace;
-                    const restoresSessions = localKeys.includes(STORAGE_KEYS.SESSIONS);
-                    let previouslyPending = false;
-                    if (restoresSessions) {
-                        // Shared across extension pages. If rollback itself fails,
-                        // session export must not treat provisional data as committed.
-                        const pending = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
-                        previouslyPending = Boolean(pending[SESSION_RESTORE_PENDING_KEY]);
-                        await chrome.storage.session.set({ [SESSION_RESTORE_PENDING_KEY]: true });
+                    const previouslyPending = await readPendingLocalRestoreKeys();
+                    if (localKeys.length) {
+                        // Persist the marker before changing any local data. It also
+                        // survives closing the options page, a browser restart and
+                        // a failed rollback, unlike chrome.storage.session.
+                        await writePendingLocalRestoreKeys([...new Set([...previouslyPending, ...localKeys])]);
                     }
                     let localResult;
                     let committed = false;
@@ -951,11 +965,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         throw restoreWriteError;
                     } finally {
                         // A rejected initial atomic write leaves old data intact.
-                        // An earlier unresolved restore is cleared only by a new
-                        // successful session restore, not by another failed attempt.
-                        if (restoresSessions && (committed ||
-                            (!previouslyPending && (!localResult?.changed || rollbackSucceeded)))) {
-                            await chrome.storage.session.remove(SESSION_RESTORE_PENDING_KEY);
+                        // Clear only the keys committed by this restore; successful
+                        // rollback must not clear an earlier unresolved transaction.
+                        if (localKeys.length) {
+                            if (committed) {
+                                if (localKeys.includes(STORAGE_KEYS.SESSIONS)) {
+                                    await chrome.storage.session.remove(SESSION_RESTORE_PENDING_KEY);
+                                }
+                                await writePendingLocalRestoreKeys(previouslyPending.filter(key => !localKeys.includes(key)));
+                            } else if (!localResult?.changed || rollbackSucceeded) {
+                                await writePendingLocalRestoreKeys(previouslyPending);
+                            }
                         }
                     }
                 }, { requireLock: true });

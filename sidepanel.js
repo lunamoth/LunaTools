@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const LOCAL_DATA_STORAGE_LOCK = 'lunatools-local-data-storage';
     const SESSION_RESTORE_PENDING_KEY = 'lunatools-session-restore-pending';
+    const LOCAL_RESTORE_PENDING_KEY = 'lunatools-local-restore-pending';
     const runWithLocalDataStorageLock = async (operation, { requireLock = false } = {}) => {
         const lockManager = globalThis.navigator?.locks;
         if (!lockManager || typeof lockManager.request !== 'function') {
@@ -31,7 +32,18 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     const SESSION_RESTORE_UNRESOLVED_MESSAGE = '전체 복원 후 세션 데이터의 복구를 확인할 수 없습니다. 옵션에서 전체 복원을 다시 완료해주세요.';
+    const LOCAL_RESTORE_UNRESOLVED_MESSAGE = '전체 복원 후 로컬 데이터의 복구를 확인할 수 없습니다. 옵션에서 해당 데이터를 다시 복원해주세요.';
+    const assertLocalRestoreSettled = async (key) => {
+        const pending = await chrome.storage.local.get(LOCAL_RESTORE_PENDING_KEY);
+        const value = pending[LOCAL_RESTORE_PENDING_KEY];
+        if (value !== undefined && (!Array.isArray(value) ||
+            value.some(item => !['sessions', 'savedUrlLists', 'multiOpenUrlOptions'].includes(item)) ||
+            value.includes(key))) {
+            throw new Error(key === 'sessions' ? SESSION_RESTORE_UNRESOLVED_MESSAGE : LOCAL_RESTORE_UNRESOLVED_MESSAGE);
+        }
+    };
     const assertSessionRestoreSettled = async () => {
+        await assertLocalRestoreSettled('sessions');
         const pending = await chrome.storage.session.get(SESSION_RESTORE_PENDING_KEY);
         if (pending[SESSION_RESTORE_PENDING_KEY]) throw new Error(SESSION_RESTORE_UNRESOLVED_MESSAGE);
     };
@@ -1973,12 +1985,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const getSavedListData = async () => {
             try {
+                await assertLocalRestoreSettled(CONFIG.URL_LISTS_KEY);
                 const data = await chrome.storage.local.get(CONFIG.URL_LISTS_KEY);
                 const rawLists = data[CONFIG.URL_LISTS_KEY];
                 return { lists: parseStoredListMap(rawLists), rawLists };
             } catch (e) {
                 console.error('Error getting saved lists:', e);
-                Toast.show('저장된 목록을 불러오지 못했습니다. 기존 데이터를 보호하기 위해 작업을 중단했습니다.', 'error', 5000);
+                Toast.show(e.message === LOCAL_RESTORE_UNRESOLVED_MESSAGE
+                    ? e.message : '저장된 목록을 불러오지 못했습니다. 기존 데이터를 보호하기 위해 작업을 중단했습니다.', 'error', 5000);
                 return null;
             }
         };
@@ -2019,12 +2033,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 const saved = await saveLists(lists);
                 return { ...result, saved, lists };
-            })
-        );
+            }, { requireLock: true })
+        ).catch(error => {
+            Toast.show(error.message || '저장된 목록을 변경할 수 없습니다.', 'error', 5000);
+            return { saved: false, unavailable: true, lists: null };
+        });
 
         const readSavedListsAfterPendingOperations = async () => {
-            const data = await enqueueSavedListMutation(() => runWithLocalDataStorageLock(getSavedListData));
-            return data?.lists ?? null;
+            try {
+                const data = await enqueueSavedListMutation(() => runWithLocalDataStorageLock(getSavedListData, { requireLock: true }));
+                return data?.lists ?? null;
+            } catch (error) {
+                Toast.show(error.message || '저장된 목록을 확인할 수 없습니다.', 'error', 5000);
+                return null;
+            }
         };
 
         const mergeIncomingLists = async (incoming, askAboutConflicts, editingName = null, expectedUrls = null) => {
@@ -2074,6 +2096,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // legacy records without createdAt, so comparing its synthesized value
         // across reads would incorrectly block an unchanged legacy list.
         const getSavedListSnapshot = async (listName) => {
+            await assertLocalRestoreSettled(CONFIG.URL_LISTS_KEY);
             const data = await chrome.storage.local.get(CONFIG.URL_LISTS_KEY);
             const rawLists = data[CONFIG.URL_LISTS_KEY];
             const lists = parseStoredListMap(rawLists);
@@ -2088,7 +2111,7 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         const readSavedListSnapshotAfterPendingOperations = (listName) =>
-            enqueueSavedListMutation(() => runWithLocalDataStorageLock(() => getSavedListSnapshot(listName)));
+            enqueueSavedListMutation(() => runWithLocalDataStorageLock(() => getSavedListSnapshot(listName), { requireLock: true }));
 
         const loadSavedLists = async () => {
             const loadGeneration = ++savedListLoadGeneration;
@@ -3081,7 +3104,49 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             let createdTab = null;
+            const confirmedRemovals = new Map();
+            const onDuplicateRemoved = (message, sender, sendResponse) => {
+                if (message?.action !== 'duplicateTabRemoved' ||
+                    sender?.id !== chrome.runtime.id || sender?.tab ||
+                    message.windowId !== targetWindowId ||
+                    !Number.isInteger(message.tabId) || !Number.isInteger(message.keptTabId) ||
+                    message.tabId === message.keptTabId) return false;
+                confirmedRemovals.set(message.tabId, {
+                    tabId: message.keptTabId, url: normalizeUrlForOpening(message.url || '')
+                });
+                sendResponse({ ok: true });
+                return false;
+            };
+            const hasConfirmedLiveDuplicateSurvivor = async (tabId) => {
+                if (!Number.isInteger(tabId)) return false;
+                // The common cleaner emits this event only after tabs.remove()
+                // succeeds. Wait for notification delivery if the missing-tab
+                // rejection reached the panel before that event.
+                if (!confirmedRemovals.has(tabId)) {
+                    try {
+                        await chrome.runtime.sendMessage({
+                            action: 'waitForDuplicateTabOperations', windowId: targetWindowId
+                        });
+                    } catch (_) {}
+                }
+                const visited = new Set();
+                let replacement = confirmedRemovals.get(tabId);
+                if (!replacement) return false;
+                while (confirmedRemovals.has(replacement.tabId)) {
+                    if (visited.has(replacement.tabId)) return false;
+                    visited.add(replacement.tabId);
+                    replacement = confirmedRemovals.get(replacement.tabId);
+                }
+                try {
+                    const survivor = await chrome.tabs.get(replacement.tabId);
+                    return survivor.windowId === targetWindowId && !survivor.pendingUrl &&
+                        Boolean(replacement.url) && normalizeUrlForOpening(survivor.url || '') === replacement.url;
+                } catch (_) {
+                    return false;
+                }
+            };
 
+            chrome.runtime.onMessage.addListener(onDuplicateRemoved);
             try {
                 const newTab = await chrome.tabs.create({
                     windowId: targetWindowId, url: normalizedUrl, active: false
@@ -3125,15 +3190,30 @@ document.addEventListener('DOMContentLoaded', function() {
                     // snapshot, not a later result that already includes user changes.
                     return { tab: createdTab, allowRedirectedCleanup };
                 } catch (discardError) {
+                    // A missing tab is not an inactive tab that can be left
+                    // loaded. Apply the confirmed-duplicate check below.
+                    if (/no tab with id|invalid tab id|tab id not found/i.test(String(discardError?.message || discardError))) {
+                        throw discardError;
+                    }
                     console.warn(`Discard failed for tab ${tabId}. Keeping the inactive tab instead:`, discardError);
                     return { tab: createdTab, allowRedirectedCleanup };
                 }
             } catch (error) {
+                const missingTab = /no tab with id|invalid tab id|tab id not found/i
+                    .test(String(error?.message || error));
+                if (missingTab && await hasConfirmedLiveDuplicateSurvivor(createdTab?.id)) {
+                    // The requested page is already open. Return only the
+                    // original creation ID: cancellation must never remove the
+                    // existing survivor, which belongs to the user.
+                    return { tab: createdTab, allowRedirectedCleanup: false };
+                }
                 console.error(`Error creating delay-loaded tab for ${normalizedUrl}:`, error);
                 // A lookup/assignment error does not prove that the tab is still
                 // ours to close. Use the same live-state guard as cancellation.
                 await removeCancelledRunTabIfUnchanged(createdTab, normalizedUrl, interactionTracker);
                 throw error;
+            } finally {
+                chrome.runtime.onMessage.removeListener(onDuplicateRemoved);
             }
         }
 
@@ -3522,11 +3602,12 @@ document.addEventListener('DOMContentLoaded', function() {
             updateButtonState();
             try {
                 await runWithLocalDataStorageLock(async () => {
+                    await assertLocalRestoreSettled(CONFIG.STORAGE_KEY);
                     const data = await chrome.storage.local.get(CONFIG.STORAGE_KEY);
                     const latestOptions = normalizeRunOptions(data[CONFIG.STORAGE_KEY]);
                     latestOptions[changedKey] = options[changedKey];
                     await chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: latestOptions });
-                });
+                }, { requireLock: true });
             } catch (e) {
                 console.error('Failed to save options:', e);
                 Toast.show('실행 옵션 저장에 실패했습니다. 저장 공간 또는 권한 상태를 확인해주세요.', 'error', 5000);
@@ -3551,9 +3632,10 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 // Backup restoration can remove and then replace keys while
                 // holding this lock. Read only after that transaction ends.
-                const data = await runWithLocalDataStorageLock(() =>
-                    chrome.storage.local.get(CONFIG.STORAGE_KEY)
-                );
+                const data = await runWithLocalDataStorageLock(async () => {
+                    await assertLocalRestoreSettled(CONFIG.STORAGE_KEY);
+                    return chrome.storage.local.get(CONFIG.STORAGE_KEY);
+                }, { requireLock: true });
                 if (refreshGeneration !== runOptionRefreshGeneration) return;
                 if (pendingRunOptionWrites > 0 || state.currentView !== 'input' ||
                     document.activeElement === UI.intervalInput) {
@@ -3573,7 +3655,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (refreshGeneration !== runOptionRefreshGeneration) return;
                 state.runOptionsReady = false;
                 console.error('Failed to load options:', e);
-                Toast.show('실행 옵션을 불러오지 못해 기존 설정 보호를 위해 실행과 옵션 변경을 중단했습니다. 패널을 다시 열어주세요.', 'error', 5000);
+                Toast.show(e.message === LOCAL_RESTORE_UNRESOLVED_MESSAGE
+                    ? e.message : '실행 옵션을 불러오지 못해 기존 설정 보호를 위해 실행과 옵션 변경을 중단했습니다. 패널을 다시 열어주세요.', 'error', 5000);
             } finally {
                 if (UI.optionsList) UI.optionsList.querySelectorAll('input, button').forEach(el => {
                     el.disabled = !state.runOptionsReady || state.currentView !== 'input';
@@ -3699,12 +3782,14 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             chrome.storage.onChanged.addListener((changes, area) => {
                 if (area !== 'local') return;
-                if (Object.prototype.hasOwnProperty.call(changes, CONFIG.URL_LISTS_KEY)) {
+                if (Object.prototype.hasOwnProperty.call(changes, CONFIG.URL_LISTS_KEY) ||
+                    Object.prototype.hasOwnProperty.call(changes, LOCAL_RESTORE_PENDING_KEY)) {
                     // Refresh through the same storage queue/lock as writes so
                     // a restored or removed list is reflected in the editor.
                     void loadSavedLists();
                 }
-                if (Object.prototype.hasOwnProperty.call(changes, CONFIG.STORAGE_KEY)) {
+                if (Object.prototype.hasOwnProperty.call(changes, CONFIG.STORAGE_KEY) ||
+                    Object.prototype.hasOwnProperty.call(changes, LOCAL_RESTORE_PENDING_KEY)) {
                     runOptionRefreshNeeded = true;
                     updateButtonState();
                     void loadOptions();
@@ -4470,7 +4555,7 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       chrome.storage.onChanged.addListener((changes, area) => {
-        if ((area === 'local' && changes[CONSTANTS.STORAGE_KEYS.SESSIONS]) ||
+        if ((area === 'local' && (changes[CONSTANTS.STORAGE_KEYS.SESSIONS] || changes[LOCAL_RESTORE_PENDING_KEY])) ||
             (area === 'session' && changes[SESSION_RESTORE_PENDING_KEY])) {
           void refreshCommittedSessions();
         }
