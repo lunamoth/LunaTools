@@ -343,6 +343,16 @@
             return false;
         }
 
+        #hasDocumentAnchor(hash) {
+            let name = hash.slice(1).split(':~:', 1)[0];
+            try {
+                name = decodeURIComponent(name);
+            } catch {
+                // 잘못된 퍼센트 인코딩도 실제 요소의 이름일 수 있습니다.
+            }
+            return Boolean(name && (document.getElementById(name) || document.anchors?.namedItem(name)));
+        }
+
         #getLinkUrl(link) {
             // HTML 앵커의 href는 문자열이지만 SVG 앵커는 SVGAnimatedString입니다.
             // 두 경우 모두 같은 기준 주소로 해석해 링크 하나의 형식 차이가
@@ -353,7 +363,21 @@
             if (typeof href !== 'string' || !href.trim()) return null;
 
             try {
-                return new URL(href, link.baseURI || document.baseURI);
+                const url = new URL(href, link.baseURI || document.baseURI);
+                const hashIndex = url.href.indexOf('#');
+                if (hashIndex >= 0) {
+                    const currentHref = window.location.href;
+                    const documentHref = currentHref.split('#', 1)[0];
+                    if (url.href.slice(0, hashIndex) === documentHref) {
+                        if (url.href === currentHref || !url.hash || /^#(?:top$|:~:text=)/i.test(url.hash)) return null;
+                        // 문서 목차와 해시로 화면을 바꾸는 앱을 구분합니다.
+                        if (!/^#!?\//.test(url.hash) && (currentHref === documentHref ||
+                            this.#hasDocumentAnchor(url.hash) || this.#hasDocumentAnchor(currentHref.slice(documentHref.length)))) {
+                            return null;
+                        }
+                    }
+                }
+                return url;
             } catch {
                 return null;
             }
@@ -426,8 +450,7 @@
                             return task.links;
                         }
                         const url = this.#getLinkUrl(element);
-                        if (url && !url.href.startsWith(window.location.href + '#') &&
-                            ['http:', 'https:'].includes(url.protocol) && this.#hasVisibleLinkRect(element)) {
+                        if (url && ['http:', 'https:'].includes(url.protocol) && this.#hasVisibleLinkRect(element)) {
                             task.links.push(element);
                         }
                     }
@@ -464,8 +487,7 @@
                     if (element.shadowRoot) queue.push(element.shadowRoot);
                     if (element.matches('a[href]')) {
                         const url = this.#getLinkUrl(element);
-                        if (url && !url.href.startsWith(window.location.href + '#') &&
-                            ['http:', 'https:'].includes(url.protocol) &&
+                        if (url && ['http:', 'https:'].includes(url.protocol) &&
                             !url.username && !url.password && url.hostname &&
                             url.href.length <= MAX_URL_LENGTH && !seenUrls.has(url.href) &&
                             this.#hasVisibleLinkRect(element, selectionRect)) {

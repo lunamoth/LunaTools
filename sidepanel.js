@@ -508,6 +508,7 @@ document.addEventListener('DOMContentLoaded', function() {
             targetWindowId: null,
             isPreparingRun: false,
             runOptionsReady: false,
+            runEditorSnapshot: null,
             processingRunId: null,
             completionRunId: null,
             unprocessedInputCount: 0
@@ -1823,7 +1824,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const canResetCompletedAdHocRunWithoutWarning = () => (
             state.currentView === 'complete' &&
-            state.loadedListName === null &&
+            state.runEditorSnapshot?.loadedListName === null &&
+            isListEditorUnchanged(state.runEditorSnapshot) &&
             state.urlsToProcess.length > 0 &&
             state.currentUrlIndex === state.urlsToProcess.length &&
             state.errorCount === 0 &&
@@ -1832,38 +1834,49 @@ document.addEventListener('DOMContentLoaded', function() {
             state.completionRunId === null
         );
 
-        const resetToIdle = async (message = CONFIG.TEXT.IDLE, isError = false) => {
-            // 저장 목록을 불러오지 않은 일회성 입력은 성공적으로 실행한 뒤 바로
-            // 비울 수 있습니다. 저장 목록을 편집한 경우에는 실행 성공 여부와
-            // 무관하게 미저장 변경사항을 계속 보호합니다.
-            if (!state.isInitialLoad && state.isDirty && !canResetCompletedAdHocRunWithoutWarning()) {
-                 const safeListName = escapeHtml(state.loadedListName || '현재');
-                 const confirmed = await Modal.show({
+        const resetToIdle = async (message = CONFIG.TEXT.IDLE, preserveEditor = false) => {
+            const runId = state.currentRunId;
+            if (!preserveEditor && state.currentView === 'complete' && state.loadedListName && !state.isDirty) {
+                // 전체 복원으로 원본 목록이 사라져도 저장소 변경 알림보다 먼저 입력을 지우지 않습니다.
+                const refreshed = await loadSavedLists();
+                if (state.currentRunId !== runId || state.currentView !== 'complete') return;
+                if (!refreshed) preserveEditor = true;
+            }
+            if (!preserveEditor && !state.isInitialLoad && state.isDirty && !canResetCompletedAdHocRunWithoutWarning()) {
+                const editorSnapshot = captureListEditorState();
+                const safeListName = escapeHtml(state.loadedListName || '현재');
+                const choice = await Modal.show({
                     title: '저장되지 않은 변경사항',
-                    body: `<strong>${safeListName}</strong> 목록에 저장되지 않은 변경사항이 있습니다. 정말 새로 시작하시겠습니까? (모든 내용이 초기화됩니다)`,
-                    danger: true,
-                    confirmText: '새로 시작'
+                    body: `<strong>${safeListName}</strong> 목록에 저장되지 않은 내용이 있습니다. 입력을 유지하고 편집을 계속하시겠습니까?`,
+                    buttons: [
+                        { text: '취소', value: 'cancel', isDefaultCancel: true },
+                        { text: '편집 계속하기', value: 'edit', isDefaultConfirm: true },
+                        { text: '입력 지우기', value: 'discard', isDanger: true }
+                    ]
                 });
-                if (!confirmed) return;
+                if (state.currentRunId !== runId || (choice !== 'edit' && choice !== 'discard')) return;
+                preserveEditor = choice === 'edit' || !isListEditorUnchanged(editorSnapshot);
             }
 
-            listEditorGeneration++;
             listLoadGeneration++;
+            if (!preserveEditor) {
+                listEditorGeneration++;
+                Object.assign(state, { isDirty: false, loadedListName: null, originalLoadedListUrls: null });
+                if (UI.urlInput) UI.urlInput.value = '';
+                if (UI.savedListsDropdown) UI.savedListsDropdown.value = '';
+            }
             Object.assign(state, {
                 urlsToProcess: [], currentUrlIndex: 0, isPaused: false, errorCount: 0,
-                isDirty: false, loadedListName: null, originalLoadedListUrls: null,
-                processingRunId: null, completionRunId: null, unprocessedInputCount: 0
+                processingRunId: null, completionRunId: null, unprocessedInputCount: 0, runEditorSnapshot: null
             });
             state.currentRunId += 1;
             clearTimeout(state.intervalId); state.intervalId = null;
 
-            if(UI.urlInput) UI.urlInput.value = '';
             if(UI.urlQueue) UI.urlQueue.replaceChildren();
             if(UI.progressBar) UI.progressBar.value = 0;
-            if (UI.savedListsDropdown) UI.savedListsDropdown.value = '';
             if(UI.progressStats) {
                 UI.progressStats.textContent = message;
-                UI.progressStats.className = isError ? 'error' : '';
+                UI.progressStats.className = '';
             }
 
             setView('input');
@@ -1874,27 +1887,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
 
-        const handleStopProcess = () => {
-            clearTimeout(state.intervalId);
-            state.intervalId = null;
-            state.isPaused = false;
-            state.currentRunId += 1;
-            state.processingRunId = null;
-            state.completionRunId = null;
-            state.urlsToProcess = [];
-            state.currentUrlIndex = 0;
-            state.errorCount = 0;
-            state.unprocessedInputCount = 0;
-
-            if(UI.urlQueue) UI.urlQueue.replaceChildren();
-            if(UI.progressBar) UI.progressBar.value = 0;
-            if(UI.progressStats) UI.progressStats.textContent = CONFIG.TEXT.STOPPED_BY_USER;
-
-            setView('input');
-            setControlsEnabled(true);
-            if (runOptionRefreshNeeded) void loadOptions();
-            void loadSavedLists();
-        };
+        const handleStopProcess = () => resetToIdle(CONFIG.TEXT.STOPPED_BY_USER, true);
 
         const updateCurrentListIndicator = () => {
             if (!UI.currentListIndicator) return;
@@ -2095,6 +2088,12 @@ document.addEventListener('DOMContentLoaded', function() {
         // metadata. parseStoredListMap() supplies a current timestamp for
         // legacy records without createdAt, so comparing its synthesized value
         // across reads would incorrectly block an unchanged legacy list.
+        const getStoredListSignature = (rawLists, listName) => {
+            const rawName = Object.keys(rawLists).find(name => normalizeListName(name) === listName);
+            if (rawName === undefined) throw new Error('저장된 목록을 확인할 수 없습니다.');
+            return JSON.stringify([rawName, rawLists[rawName]]);
+        };
+
         const getSavedListSnapshot = async (listName) => {
             await assertLocalRestoreSettled(CONFIG.URL_LISTS_KEY);
             const data = await chrome.storage.local.get(CONFIG.URL_LISTS_KEY);
@@ -2102,11 +2101,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const lists = parseStoredListMap(rawLists);
             if (!hasOwnListKey(lists, listName)) return null;
 
-            const rawName = Object.keys(rawLists).find(name => normalizeListName(name) === listName);
-            if (rawName === undefined) throw new Error('저장된 목록을 확인할 수 없습니다.');
             return {
                 urls: lists[listName].urls,
-                signature: JSON.stringify([rawName, rawLists[rawName]])
+                signature: getStoredListSignature(rawLists, listName)
             };
         };
 
@@ -2563,6 +2560,23 @@ document.addEventListener('DOMContentLoaded', function() {
             const oldName = UI.savedListsDropdown ? UI.savedListsDropdown.value : null;
             if (!oldName) return;
 
+            const editorSnapshot = captureListEditorState();
+            const stillSelected = () => state.currentView === 'input' && UI.savedListsDropdown.value === oldName &&
+                isSameListEditor(editorSnapshot);
+            let stored;
+            try {
+                stored = await readSavedListSnapshotAfterPendingOperations(oldName);
+            } catch (error) {
+                Toast.show('저장된 목록을 확인하지 못해 이름 변경을 중단했습니다.', 'error', 5000);
+                return;
+            }
+            if (!stillSelected()) return;
+            if (!stored || (state.loadedListName === oldName && state.originalLoadedListUrls !== stored.urls)) {
+                Toast.show('저장된 목록이 바뀌어 이름 변경을 중단했습니다. 현재 목록을 다시 확인해 주세요.', 'info', 5000);
+                await loadSavedLists();
+                return;
+            }
+
             const result = await Modal.show({
                 title: '이름 변경',
                 body: `<input type="text" id="modal-input" value="${escapeHtml(oldName)}" />`,
@@ -2579,9 +2593,12 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!assertSafeListName(newName)) return;
             if (newName === oldName) return;
 
-            const mutationResult = await mutateSavedLists((lists) => {
+            const mutationResult = await mutateSavedLists((lists, rawLists) => {
                 if (!hasOwnListKey(lists, oldName)) {
                     return { skipSave: true, missing: true };
+                }
+                if (!stillSelected() || getStoredListSignature(rawLists, oldName) !== stored.signature) {
+                    return { skipSave: true, changed: true };
                 }
                 if (hasOwnListKey(lists, newName)) {
                     return { skipSave: true, alreadyExists: true };
@@ -2591,6 +2608,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 delete lists[oldName];
                 return {};
             });
+            if (mutationResult.changed) {
+                Toast.show('이름을 입력하는 동안 목록이 바뀌어 기존 이름을 유지했습니다.', 'info', 5000);
+                await loadSavedLists();
+                return;
+            }
             if (mutationResult.missing) {
                 Toast.show(`'${oldName}' 목록을 찾을 수 없어 이름을 변경하지 못했습니다.`, 'error');
                 await loadSavedLists();
@@ -2602,24 +2624,41 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             if (mutationResult.saved) {
-                if (state.loadedListName === oldName) {
+                if (state.loadedListName === oldName && isSameListEditor(editorSnapshot)) {
+                    listEditorGeneration++;
                     state.loadedListName = newName;
                 }
+                if (UI.savedListsDropdown?.value === oldName) UI.savedListsDropdown.value = newName;
                 Toast.show('이름이 변경되었습니다.', 'success');
                 await loadSavedLists();
-                if(UI.savedListsDropdown) UI.savedListsDropdown.value = newName;
                 if (UI.savedListsDropdown) UI.savedListsDropdown.blur();
             }
         };
 
-        const handleCancelEdit = () => {
-            if (state.loadedListName && state.originalLoadedListUrls !== null && state.isDirty) {
-                if (UI.urlInput) UI.urlInput.value = state.originalLoadedListUrls;
-                state.isDirty = false;
-                updateButtonState();
-                Toast.show(`'${state.loadedListName}' 목록의 변경사항이 취소되었습니다.`, 'info');
-                scheduleSetCardHeight();
+        const handleCancelEdit = async () => {
+            if (state.currentView !== 'input' || !state.loadedListName || !state.isDirty) return;
+            const editorSnapshot = captureListEditorState();
+            const runId = state.currentRunId;
+            let stored;
+            try {
+                stored = await readSavedListSnapshotAfterPendingOperations(editorSnapshot.loadedListName);
+            } catch (error) {
+                Toast.show('저장된 목록을 확인하지 못해 편집 내용을 유지했습니다.', 'error', 5000);
+                return;
             }
+            if (!isListEditorUnchanged(editorSnapshot) || state.currentView !== 'input' ||
+                state.currentRunId !== runId || !state.isDirty) return;
+            if (!stored) {
+                await loadSavedLists();
+                return;
+            }
+            listEditorGeneration++;
+            state.originalLoadedListUrls = stored.urls;
+            UI.urlInput.value = stored.urls;
+            state.isDirty = false;
+            updateButtonState();
+            Toast.show(`'${state.loadedListName}' 목록의 변경사항이 취소되었습니다.`, 'info');
+            scheduleSetCardHeight();
         };
 
         const showTabImportCancelledNotice = () => Toast.show(
@@ -3444,6 +3483,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 Object.assign(state, {
                     currentUrlIndex: 0, isPaused: false, errorCount: 0,
                     targetWindowId: targetWindow.id,
+                    runEditorSnapshot: editorSnapshot,
                     processingRunId: null, completionRunId: null
                 });
                 state.currentRunId += 1;
@@ -5304,10 +5344,6 @@ document.addEventListener('DOMContentLoaded', function() {
             break;
           }
 
-          if (createdWindowIds.length > 0) {
-            await chrome.windows.update(createdWindowIds[0], { focused: true });
-          }
-          showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
         } catch (error) {
           let rollbackFailureCount = 0;
           let preservedChangedTabCount = 0;
@@ -5443,6 +5479,17 @@ document.addEventListener('DOMContentLoaded', function() {
           if (chrome.tabs.onReplaced) chrome.tabs.onReplaced.removeListener(handleRestoreTabReplaced);
           tabInteractionTracker.stop();
         }
+
+        if (createdWindowIds.length > 0) {
+          try {
+            await chrome.windows.update(createdWindowIds[0], { focused: true });
+          } catch (error) {
+            console.warn('LunaTools: 복원 후 창 활성화 실패', error);
+            showToast('탭 복원을 마쳤습니다. 첫 번째 창을 활성화하지 못했습니다.');
+            return;
+          }
+        }
+        showToast(CONSTANTS.MESSAGES.SESSION_RESTORED);
       };
 
       const generateUniqueSessionName = (

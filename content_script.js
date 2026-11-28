@@ -1779,26 +1779,30 @@ async function lunaToolsWriteTextToClipboard(text) {
                 { names: ['ft²', 'ft2', 'sq ft', 'sqft', 'square foot', 'square feet', '제곱피트'], target_unit_code: 'm²', factor: 0.09290304, to_base_unit_factor: 0.09290304, regex: /([\d\.,]+)\s*(ft(?:²|2|\^\s*2)|sq\.?\s*ft|sqft|square\s+(?:foot|feet)|제곱피트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, additional_outputs: [{ unit: '평', from_base_unit_factor: 0.3025, precision: 2 }], category: 'area', target_precision: 2 }
             ],
             digital_storage: [
-                { names: ['KB', 'kilobyte', 'kilobytes', '킬로바이트'], target_unit_code: 'KiB', factor: 1000/1024, regex: /([\d\.,]+)\s*(KB|[Kk]ilobytes?|킬로바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['MB', 'megabyte', 'megabytes', '메가바이트'], target_unit_code: 'MiB', factor: 1000000/1048576, regex: /([\d\.,]+)\s*(MB|[Mm]egabytes?|메가바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['GB', 'gigabyte', 'gigabytes', '기가바이트'], target_unit_code: 'GiB', factor: 1000000000/1073741824, regex: /([\d\.,]+)\s*(GB|[Gg]igabytes?|기가바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['TB', 'terabyte', 'terabytes', '테라바이트'], target_unit_code: 'TiB', factor: 1000000000000/1099511627776, regex: /([\d\.,]+)\s*(TB|[Tt]erabytes?|테라바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['PB', 'petabyte', 'petabytes', '페타바이트'], target_unit_code: 'PiB', factor: 1000000000000000/1125899906842624, regex: /([\d\.,]+)\s*(PB|[Pp]etabytes?|페타바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['KiB', 'kibibyte', 'kibibytes', '키비바이트'], target_unit_code: 'KB', factor: 1024/1000, regex: /([\d\.,]+)\s*(KiB|[Kk]ibibytes?|키비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['MiB', 'mebibyte', 'mebibytes', '메비바이트'], target_unit_code: 'MB', factor: 1048576/1000000, regex: /([\d\.,]+)\s*(MiB|[Mm]ebibytes?|메비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['GiB', 'gibibyte', 'gibibytes', '기비바이트'], target_unit_code: 'GB', factor: 1073741824/1000000000, regex: /([\d\.,]+)\s*(GiB|[Gg]ibibytes?|기비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['TiB', 'tebibyte', 'tebibytes', '테비바이트'], target_unit_code: 'GB', factor: 1099511627776/1000000000, regex: /([\d\.,]+)\s*(TiB|[Tt]ebibytes?|테비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 },
-                { names: ['PiB', 'pebibyte', 'pebibytes', '페비바이트'], target_unit_code: 'TB', factor: 1125899906842624/1000000000000, regex: /([\d\.,]+)\s*(PiB|[Pp]ebibytes?|페비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:(?:s|sec(?:ond)?s?)\b|초)|p(?:s)?\b|per\s+sec(?:ond)?s?\b|초당))/gu, category: 'digital_storage', target_precision: 2 }
+                { names: ['킬로비트'], per_second: { target_unit_code: 'KB/s' }, target_unit_code: 'KB', factor: 0.125, regex: /([\d\.,]+)\s*(킬로비트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['메가비트'], per_second: { target_unit_code: 'MB/s' }, target_unit_code: 'MB', factor: 0.125, regex: /([\d\.,]+)\s*(메가비트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['기가비트'], per_second: { target_unit_code: 'MB/s' }, target_unit_code: 'MB', factor: 125, regex: /([\d\.,]+)\s*(기가비트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['테라비트'], per_second: { target_unit_code: 'GB/s' }, target_unit_code: 'GB', factor: 125, regex: /([\d\.,]+)\s*(테라비트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['KB', 'kilobyte', 'kilobytes', '킬로바이트'], per_second: { target_unit_code: 'Kbps', factor: 8 }, target_unit_code: 'KiB', factor: 1000/1024, regex: /([\d\.,]+)\s*(KB|[Kk]ilobytes?|킬로바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['MB', 'megabyte', 'megabytes', '메가바이트'], per_second: { target_unit_code: 'Mbps', factor: 8 }, target_unit_code: 'MiB', factor: 1000000/1048576, regex: /([\d\.,]+)\s*(MB|[Mm]egabytes?|메가바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['GB', 'gigabyte', 'gigabytes', '기가바이트'], per_second: { target_unit_code: 'Gbps', factor: 8 }, target_unit_code: 'GiB', factor: 1000000000/1073741824, regex: /([\d\.,]+)\s*(GB|[Gg]igabytes?|기가바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['TB', 'terabyte', 'terabytes', '테라바이트'], per_second: { target_unit_code: 'Tbps', factor: 8 }, target_unit_code: 'TiB', factor: 1000000000000/1099511627776, regex: /([\d\.,]+)\s*(TB|[Tt]erabytes?|테라바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['PB', 'petabyte', 'petabytes', '페타바이트'], per_second: { target_unit_code: 'Pbps', factor: 8 }, target_unit_code: 'PiB', factor: 1000000000000000/1125899906842624, regex: /([\d\.,]+)\s*(PB|[Pp]etabytes?|페타바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['KiB', 'kibibyte', 'kibibytes', '키비바이트'], per_second: { target_unit_code: 'Kbps', factor: 8 * (1024 / 1000) ** 1 }, target_unit_code: 'KB', factor: 1024/1000, regex: /([\d\.,]+)\s*(KiB|[Kk]ibibytes?|키비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['MiB', 'mebibyte', 'mebibytes', '메비바이트'], per_second: { target_unit_code: 'Mbps', factor: 8 * (1024 / 1000) ** 2 }, target_unit_code: 'MB', factor: 1048576/1000000, regex: /([\d\.,]+)\s*(MiB|[Mm]ebibytes?|메비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['GiB', 'gibibyte', 'gibibytes', '기비바이트'], per_second: { target_unit_code: 'Gbps', factor: 8 * (1024 / 1000) ** 3 }, target_unit_code: 'GB', factor: 1073741824/1000000000, regex: /([\d\.,]+)\s*(GiB|[Gg]ibibytes?|기비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['TiB', 'tebibyte', 'tebibytes', '테비바이트'], per_second: { target_unit_code: 'Tbps', factor: 8 * (1024 / 1000) ** 4 }, target_unit_code: 'GB', factor: 1099511627776/1000000000, regex: /([\d\.,]+)\s*(TiB|[Tt]ebibytes?|테비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 },
+                { names: ['PiB', 'pebibyte', 'pebibytes', '페비바이트'], per_second: { target_unit_code: 'Pbps', factor: 8 * (1024 / 1000) ** 5 }, target_unit_code: 'TB', factor: 1125899906842624/1000000000000, regex: /([\d\.,]+)\s*(PiB|[Pp]ebibytes?|페비바이트)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])(?!\s*(?:\/\s*(?:s|sec(?:ond)?s?)\b|p(?:s)?\b|per\s+sec(?:ond)?s?\b))/gu, category: 'digital_storage', target_precision: 2 }
             ],
             data_rate: [
-                { names: ['Kbps', 'kbps', 'kb/s', 'Kbit/s', '킬로비트/초'], target_unit_code: 'KB/s', factor: 0.125, regex: /([\d\.,]+)\s*(Kbps|kbps|kb\/s|[Kk]bits?\/s|[Kk]ilobits?\s+per\s+second|킬로비트(?:\/초)?|킬로bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
-                { names: ['Mbps', 'mbps', 'Mb/s', 'Mbit/s', '메가비트/초'], target_unit_code: 'MB/s', factor: 0.125, regex: /([\d\.,]+)\s*(Mbps|mbps|Mb\/s|[Mm]bits?\/s|[Mm]egabits?\s+per\s+second|메가비트(?:\/초)?|메가bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
-                { names: ['Gbps', 'gbps', 'Gb/s', 'Gbit/s', '기가비트/초'], target_unit_code: 'MB/s', factor: 125, regex: /([\d\.,]+)\s*(Gbps|gbps|Gb\/s|[Gg]bits?\/s|[Gg]igabits?\s+per\s+second|기가비트(?:\/초)?|기가bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
-                { names: ['Tbps', 'tbps', 'Tb/s', 'Tbit/s', '테라비트/초'], target_unit_code: 'GB/s', factor: 125, regex: /([\d\.,]+)\s*(Tbps|tbps|Tb\/s|[Tt]bits?\/s|[Tt]erabits?\s+per\s+second|테라비트(?:\/초)?|테라bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
-                { names: ['KB/s', 'KBps', '킬로바이트/초'], target_unit_code: 'Kbps', factor: 8, regex: /([\d\.,]+)\s*(KB\/s|KBps|[Kk]ilobytes?\s+per\s+second|킬로바이트(?:\/초|초당))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
-                { names: ['MB/s', 'MBps', '메가바이트/초'], target_unit_code: 'Mbps', factor: 8, regex: /([\d\.,]+)\s*(MB\/s|MBps|[Mm]egabytes?\s+per\s+second|메가바이트(?:\/초|초당))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
-                { names: ['GB/s', 'GBps', '기가바이트/초'], target_unit_code: 'Gbps', factor: 8, regex: /([\d\.,]+)\s*(GB\/s|GBps|[Gg]igabytes?\s+per\s+second|기가바이트(?:\/초|초당))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
-                { names: ['TB/s', 'TBps', '테라바이트/초'], target_unit_code: 'Tbps', factor: 8, regex: /([\d\.,]+)\s*(TB\/s|TBps|[Tt]erabytes?\s+per\s+second|테라바이트(?:\/초|초당))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 }
+                { names: ['Kbps', 'kbps', 'kb/s', 'Kbit/s', '킬로비트/초'], target_unit_code: 'KB/s', factor: 0.125, regex: /([\d\.,]+)\s*(Kbps|kbps|kb\/s|[Kk]bits?\/s|[Kk]ilobits?\s+per\s+second|킬로비트초당|킬로bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['Mbps', 'mbps', 'Mb/s', 'Mbit/s', '메가비트/초'], target_unit_code: 'MB/s', factor: 0.125, regex: /([\d\.,]+)\s*(Mbps|mbps|Mb\/s|[Mm]bits?\/s|[Mm]egabits?\s+per\s+second|메가비트초당|메가bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['Gbps', 'gbps', 'Gb/s', 'Gbit/s', '기가비트/초'], target_unit_code: 'MB/s', factor: 125, regex: /([\d\.,]+)\s*(Gbps|gbps|Gb\/s|[Gg]bits?\/s|[Gg]igabits?\s+per\s+second|기가비트초당|기가bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['Tbps', 'tbps', 'Tb/s', 'Tbit/s', '테라비트/초'], target_unit_code: 'GB/s', factor: 125, regex: /([\d\.,]+)\s*(Tbps|tbps|Tb\/s|[Tt]bits?\/s|[Tt]erabits?\s+per\s+second|테라비트초당|테라bps)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['KB/s', 'KBps', '킬로바이트/초'], target_unit_code: 'Kbps', factor: 8, regex: /([\d\.,]+)\s*(KB\/s|KBps|[Kk]ilobytes?\s+per\s+second|킬로바이트초당)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['MB/s', 'MBps', '메가바이트/초'], target_unit_code: 'Mbps', factor: 8, regex: /([\d\.,]+)\s*(MB\/s|MBps|[Mm]egabytes?\s+per\s+second|메가바이트초당)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['GB/s', 'GBps', '기가바이트/초'], target_unit_code: 'Gbps', factor: 8, regex: /([\d\.,]+)\s*(GB\/s|GBps|[Gg]igabytes?\s+per\s+second|기가바이트초당)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 },
+                { names: ['TB/s', 'TBps', '테라바이트/초'], target_unit_code: 'Tbps', factor: 8, regex: /([\d\.,]+)\s*(TB\/s|TBps|[Tt]erabytes?\s+per\s+second|테라바이트초당)(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/gu, category: 'data_rate', target_precision: 2 }
             ],
             speed: [
                 { names: ['mph', 'mi/h', 'mile per hour', 'miles per hour', '마일/시'], target_unit_code: 'km/h', factor: 1.609344, regex: /([\d\.,]+)\s*(mph|mi\/h|miles?\s+per\s+hour|마일(?:\/시|시속))(?![a-zA-Z0-9ㄱ-ㅎㅏ-ㅣ가-힣])/giu, category: 'speed', target_precision: 2 },
@@ -1847,6 +1851,11 @@ async function lunaToolsWriteTextToClipboard(text) {
     const UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE = String.raw`(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+\-\u2212\uFE63\uFF0D]?\d+)?`;
     const NUMERIC_TOKEN_PATTERN_SOURCE = String.raw`[+\-\u2212\uFE63\uFF0D]?${UNSIGNED_NUMERIC_TOKEN_PATTERN_SOURCE}`;
     const NUMERIC_TOKEN_START_BOUNDARY_SOURCE = String.raw`(?<![\d.,eE+\-\u2212\uFE63\uFF0D/×xX±∓\u2010-\u2015~～])`;
+    const DIGITAL_PERIOD_SOURCE = String.raw`(?:(?<amount>${NUMERIC_TOKEN_PATTERN_SOURCE})[^\S\r\n]*)?(?<unit>밀리초|초|분|시간)`;
+    const DIGITAL_PERIOD_PREFIX = new RegExp(String.raw`${DIGITAL_PERIOD_SOURCE}[^\S\r\n]*당\s*$`, 'u');
+    const DIGITAL_PERIOD_SUFFIX = new RegExp(String.raw`^[^\S\r\n]*[/⁄∕][^\S\r\n]*${DIGITAL_PERIOD_SOURCE}(?![\p{L}\p{M}\p{N}_])`, 'u');
+    const DIGITAL_TRAILING_PER_SECOND = /^[^\S\r\n]+(?<unit>초)당(?![\p{L}\p{M}\p{N}_])(?!\s*[+\-−.\d])/u;
+    const UNCONSUMED_UNIT_SUFFIX = /^\s*(?:[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]|\^\s*[+\-−]?\s*\d|(?:[\/⁄∕·⋅*×]|per\b)\s*(?:[\p{L}µμ°Ω%]|\())/iu;
     // Uncertainty and ratio expressions are not standalone scalar values.
     // Reject both operands of "10 ± 2 kg" / "USD 1:2" instead of silently
     // converting only the number next to the unit or currency token.
@@ -3413,6 +3422,60 @@ async function lunaToolsWriteTextToClipboard(text) {
                 physicalUnitRangesToIgnore: TextExtractor._getPhysicalUnitCurrencyRanges([details])
             };
         },
+        _getDigitalPeriodSeconds: function(period) {
+            const { amount, unit } = period.groups;
+            const duration = amount === undefined ? 1 : Utils.parseFloatLenient(amount);
+            if (duration === null || duration <= 0) return null;
+            if (unit === '초') return duration;
+            if (unit === '밀리초') return duration / 1000;
+            return null;
+        },
+        _extractDigitalUnit: function(text, match, value, unit) {
+            const before = text.slice(0, match.index);
+            const end = match.index + match[0].length;
+            const after = text.slice(end);
+            const prefix = before.trimEnd().endsWith('당') ? DIGITAL_PERIOD_PREFIX.exec(before) : null;
+            const slashPeriod = DIGITAL_PERIOD_SUFFIX.exec(after);
+            const suffix = slashPeriod || DIGITAL_TRAILING_PER_SECOND.exec(after);
+            const consumedTail = suffix?.[0].length || 0;
+            const remainder = after.slice(consumedTail);
+            if (UNCONSUMED_UNIT_SUFFIX.test(remainder) || /^\s*[/⁄∕]/u.test(remainder)) return null;
+
+            let originalUnit = match[2].trim();
+            let unitInfo = unit;
+            const period = prefix || suffix;
+            if (period) {
+                const seconds = TextExtractor._getDigitalPeriodSeconds(period);
+                if (seconds === null || seconds <= 0) return null;
+                if (prefix && suffix && (seconds !== 1 || TextExtractor._getDigitalPeriodSeconds(suffix) !== 1)) return null;
+
+                if (prefix) {
+                    const left = before.slice(0, prefix.index);
+                    const amount = prefix.groups.amount;
+                    // 끊긴 숫자, 범위 또는 복합 시간에서 마지막 숫자만 분모로 사용하지 않습니다.
+                    if ((!amount && /[\p{L}\p{M}\p{N}_]$/u.test(left)) ||
+                        /\d[.,]?$/u.test(left) ||
+                        /\d[^\S\r\n]*(?:시간|분|초)[^\S\r\n]*(?:[–—~～-][^\S\r\n]*)?$/u.test(left)) return null;
+                    if (amount && TextExtractor._isCompoundNumericCandidate(text, {
+                        amountText: amount, startOffset: prefix.index, endOffset: prefix.index + amount.length
+                    })) return null;
+                }
+                if (slashPeriod && (/^[^\S\r\n]*\d+(?:\.\d+)?[^\S\r\n]*(?:밀리초|초|분|시간)/u.test(remainder) ||
+                    /^[^\S\r\n]*[~～–—−±∓-][^\S\r\n]*[+.\d]/u.test(remainder))) return null;
+
+                if (unit.category === 'digital_storage') {
+                    const factor = (unit.per_second.factor ?? unit.factor) / seconds;
+                    if (!Number.isFinite(factor) || !Number.isFinite(value * factor)) return null;
+                    unitInfo = { ...unit, ...unit.per_second, category: 'data_rate', factor };
+                    originalUnit += `/${period.groups.amount || ''}${period.groups.unit}`;
+                } else if (!prefix || seconds !== 1) {
+                    // Mbps 등 이미 초당인 값에 다른 시간 분모까지 있는 표기는 모호합니다.
+                    return null;
+                }
+            }
+            const originalText = text.slice(prefix ? prefix.index : match.index, end + consumedTail).trim();
+            return { value, unitInfo, originalUnit, originalText };
+        },
         extractPhysicalUnitDetails: function(inputText, ignoredRanges = []) {
             if (Utils.isInvalidString(inputText)) return [];
             const foundMatches = [];
@@ -3445,7 +3508,8 @@ async function lunaToolsWriteTextToClipboard(text) {
                                 RATIO_NUMERIC_RIGHT_CONTEXT_REGEX.test(followingText))) {
                             continue;
                         }
-                        if (/^\s*(?:[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]|\^\s*[+\-−]?\s*\d|(?:[\/⁄∕·⋅*×]|per\b)\s*(?:[\p{L}µμ°Ω%]|\())/iu.test(followingText)) {
+                        const digital = unit.category === 'digital_storage' || unit.category === 'data_rate';
+                        if (!digital && UNCONSUMED_UNIT_SUFFIX.test(followingText)) {
                             continue;
                         }
 
@@ -3469,9 +3533,11 @@ async function lunaToolsWriteTextToClipboard(text) {
 
                         const unitStr = match[2];
                         const value = Utils.parseFloatLenient(valueStr);
-                        if (value !== null && typeof unitStr === 'string') {
-                             foundMatches.push({ value, unitInfo: unit, originalText: originalMatchedSegment, originalUnit: unitStr.trim() });
-                        }
+                        if (value === null || typeof unitStr !== 'string') continue;
+                        const details = digital
+                            ? TextExtractor._extractDigitalUnit(trimmedText, match, value, unit)
+                            : { value, unitInfo: unit, originalText: originalMatchedSegment, originalUnit: unitStr.trim() };
+                        if (details) foundMatches.push(details);
                     }
                 }
             }
